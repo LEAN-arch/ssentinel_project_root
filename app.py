@@ -1,38 +1,46 @@
-# sentinel_project_root/main/main/app.py
-# Main Streamlit application file for the "Sentinel Health Co-Pilot" System Overview.
-
+# Minimal main/main/app.py for testing
 import streamlit as st
 import sys
 import os
 import logging
 
-# --- Robust Path Setup for Imports ---
-# app.py is now in sentinel_project_root/main/main/
-# We need sentinel_project_root to be in sys.path to import config, visualization, etc.
+# --- Robust Path Setup ---
 _current_file_dir_app_main = os.path.dirname(os.path.abspath(__file__))
-# Go up two levels to reach sentinel_project_root: main/main -> main -> sentinel_project_root
 _project_root_dir_app_main = os.path.abspath(os.path.join(_current_file_dir_app_main, os.pardir, os.pardir))
-
 if _project_root_dir_app_main not in sys.path:
     sys.path.insert(0, _project_root_dir_app_main)
+    print(f"INFO: Added to sys.path: {_project_root_dir_app_main}", file=sys.stderr) # Log path add
 
+# Attempt to import settings first, as it's fundamental
 try:
     from config import settings
-    # from visualization.ui_elements import render_kpi_card # Not used on this page directly
-    from visualization.plots import set_sentinel_plotly_theme
-except ImportError as e_import_app_main_main:
-    critical_error_msg_app = (
-        f"CRITICAL IMPORT ERROR in main/main/app.py: {e_import_app_main_main}. Python Path: {sys.path}. "
-        f"Project Root (attempted add): {_project_root_dir_app_main}. "
-        f"Ensure 'config/settings.py' and other core modules are correctly placed "
-        "and all dependencies from requirements.txt are installed."
-    )
-    print(critical_error_msg_app, file=sys.stderr)
-    if 'st' in globals() and hasattr(st, 'error'):
-        st.error(critical_error_msg_app)
-        st.stop()
-    else:
-        raise ImportError(critical_error_msg_app) from e_import_app_main_main
+    print(f"INFO: Successfully imported config.settings. APP_NAME: {settings.APP_NAME}", file=sys.stderr)
+except ImportError as e_cfg:
+    print(f"FATAL: Failed to import config.settings: {e_cfg}", file=sys.stderr)
+    # st.error(f"FATAL: Failed to import config.settings: {e_cfg}") # Might not be available if st fails
+    sys.exit(1) # Hard exit if config can't load
+except Exception as e_other_cfg:
+    print(f"FATAL: Error during config.settings import or access: {e_other_cfg}", file=sys.stderr)
+    sys.exit(1)
+
+st.set_page_config(page_title=f"Test - {settings.APP_NAME}", layout="wide")
+st.title(f"Minimal Test App - {settings.APP_NAME}")
+st.write("If you see this, Streamlit server started and basic config loaded.")
+st.write(f"Project Root (determined): {_project_root_dir_app_main}")
+st.write(f"Python sys.path: {sys.path}")
+
+# Try importing other modules one by one to find the culprit
+try:
+    from visualization import plots
+    st.write("Successfully imported visualization.plots")
+    # plots.set_sentinel_plotly_theme() # Call functions if needed
+    # st.write("Plotly theme applied.")
+except ImportError as e:
+    st.error(f"Failed to import visualization.plots: {e}")
+    print(f"ERROR: Failed to import visualization.plots: {e}", file=sys.stderr)
+except Exception as e_viz:
+    st.error(f"Error during visualization import/setup: {e_viz}")
+    print(f"ERROR: Error during visualization import/setup: {e_viz}", file=sys.stderr)
 
 # --- Global Logging Configuration ---
 logging.basicConfig(
