@@ -1,0 +1,20 @@
+# sentinel_project_root/pages/district_components/__init__.py
+# This file makes the 'district_components' directory a Python package.
+
+from .comparison_data import prepare_district_zonal_comparison_data # Renamed
+from .intervention_planning import ( # Renamed module
+    get_district_intervention_criteria_options, # Renamed
+    identify_priority_zones_for_intervention_planning # Renamed
+)
+from .kpi_structuring import structure_district_summary_kpis # Renamed
+from .map_display import render_district_map_visualization # Renamed
+from .trend_analysis import calculate_district_wide_trends # Renamed
+
+__all__ = [
+    "prepare_district_zonal_comparison_data",
+    "get_district_intervention_criteria_options",
+    "identify_priority_zones_for_intervention_planning",
+    "structure_district_summary_kpis",
+    "render_district_map_visualization",
+    "calculate_district_wide_trends"
+]
