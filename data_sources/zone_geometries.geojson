@@ -1,0 +1,109 @@
+{
+  "type": "FeatureCollection",
+  "name": "DistrictOperationalZones_Simulated",
+  "crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:EPSG::4326" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "zone_id": "ZoneA",
+        "name": "Alpha Central District",
+        "description": "Densely populated urban center with mixed residential and commercial areas."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [ 36.80, -1.25 ], [ 36.80, -1.20 ], [ 36.85, -1.20 ],
+            [ 36.85, -1.25 ], [ 36.80, -1.25 ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "zone_id": "ZoneB",
+        "name": "Beta Southern Plains",
+        "description": "Expansive agricultural plains with scattered rural settlements and seasonal riverbeds."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [ 36.75, -1.30 ], [ 36.75, -1.25 ], [ 36.85, -1.25 ],
+            [ 36.85, -1.30 ], [ 36.75, -1.30 ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "zone_id": "ZoneC",
+        "name": "Gamma Eastern Hills",
+        "description": "Hilly terrain with informal settlements and some protected forest areas."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [ 36.85, -1.25 ], [ 36.85, -1.20 ], [ 36.90, -1.20 ],
+            [ 36.90, -1.25 ], [ 36.85, -1.25 ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "zone_id": "ZoneD",
+        "name": "Delta Western Coast",
+        "description": "Coastal strip with fishing villages, tourist spots, and some light industry."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [ 36.75, -1.20 ], [ 36.75, -1.15 ], [ 36.80, -1.15 ],
+            [ 36.80, -1.20 ], [ 36.75, -1.20 ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "zone_id": "ZoneE",
+        "name": "Epsilon Northern Valley",
+        "description": "Remote valley region, primarily pastoral lands with limited infrastructure."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [ 36.80, -1.15 ], [ 36.80, -1.10 ], [ 36.85, -1.10 ],
+            [ 36.85, -1.15 ], [ 36.80, -1.15 ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "zone_id": "ZoneF",
+        "name": "Foxtrot Industrial Park",
+        "description": "Designated industrial zone with factories and warehousing."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [ 36.90, -1.30 ], [ 36.90, -1.25 ], [ 36.95, -1.25 ],
+            [ 36.95, -1.30 ], [ 36.90, -1.30 ]
+          ]
+        ]
+      }
+    }
+  ]
+}
