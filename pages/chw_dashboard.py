@@ -3,517 +3,558 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np # For np.nan
 import logging
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta
 from typing import Optional, Dict, Any, List, Tuple
-import os # For checking logo path
+import os # For checking logo path in sidebar
 
-# --- Sentinel System Imports ---
-# Ensure robust pathing for imports if this file is run directly or by Streamlit
-# (Streamlit usually handles paths well if app.py is at project root)
+# --- Sentinel System Imports from Refactored Structure ---
 try:
-    from config import settings # Use new settings module
+    from config import settings
     from data_processing.loaders import load_health_records
-    from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator # Use new UI elements
-    from visualization.plots import plot_annotated_line_chart # Use new plotting functions
-    # CHW specific components - ensure paths are correct if they are moved/refactored
-    from .chw_components.summary_metrics import calculate_chw_daily_summary_metrics # Adjusted import
-    from .chw_components.alert_generation import generate_chw_alerts # Adjusted import, renamed component
-    from .chw_components.epi_signals import extract_chw_epi_signals # Adjusted import
-    # from .chw_components.task_processing import generate_chw_tasks # Adjusted import, renamed component
-    from .chw_components.activity_trends import calculate_chw_activity_trends_data # Adjusted import
-except ImportError as e:
-    # This structure helps diagnose import errors better
+    from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator
+    from visualization.plots import plot_annotated_line_chart
+    
+    # CHW specific components from the new structure
+    from .chw_components.summary_metrics import calculate_chw_daily_summary_metrics
+    from .chw_components.alert_generation import generate_chw_alerts # Note: was alert_generator.py
+    from .chw_components.epi_signals import extract_chw_epi_signals # Note: was epi_signal_extractor.py
+    from .chw_components.task_processing import generate_chw_tasks # Note: was task_processor.py
+    from .chw_components.activity_trends import calculate_chw_activity_trends_data # Note: was activity_trend_calculator.py
+except ImportError as e_chw_dash:
     import sys
-    st.error(f"Import Error in CHW Dashboard: {e}. Check module paths and ensure all dependencies are installed. Python sys.path: {sys.path}")
-    st.stop() # Stop execution if core modules can't be loaded
+    # Provide a more informative error message in Streamlit if imports fail
+    st.error(
+        f"CHW Dashboard Import Error: {e_chw_dash}. "
+        f"Please ensure all modules are correctly placed and dependencies installed. "
+        f"Relevant Python Path: {sys.path}"
+    )
+    logger = logging.getLogger(__name__) # Attempt to get a logger for console output
+    logger.error(f"CHW Dashboard Import Error: {e_chw_dash}", exc_info=True)
+    st.stop() # Halt execution of this page if essential imports fail
 
 # --- Page Specific Logger ---
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # Get logger for this specific page
 
-# --- Page Configuration (Handled by Streamlit based on filename & app.py) ---
-# st.set_page_config is usually called once in the main app.py.
-# Individual pages inherit global settings but can override some via st.title, etc.
+# --- Page Title and Introduction ---
+# Page config is set in app.py
 st.title("🧑‍🏫 CHW Supervisor Operations View")
-st.markdown(f"**Team Performance Monitoring for {settings.APP_NAME}**")
+st.markdown(f"**Team Performance Monitoring & Field Support - {settings.APP_NAME}**")
 st.divider()
 
-# --- Utility Function for Filter Options (can be moved to a shared utils if used elsewhere) ---
-def _create_filter_options(df: pd.DataFrame, column_name: str, default_options: List[str], display_name_plural: str) -> List[str]:
-    """Creates a list of filter options for a selectbox, including an 'All' option."""
-    options = [f"All {display_name_plural}"] # "All" is always the first option
-    if isinstance(df, pd.DataFrame) and not df.empty and column_name in df.columns:
-        unique_values = sorted(df[column_name].dropna().unique().tolist())
-        if unique_values:
-            options.extend(unique_values)
-        else: # Column exists but no unique values (e.g., all NaN or empty after dropna)
-            logger.warning(f"Column '{column_name}' for {display_name_plural} filter has no unique, non-null values. Using defaults.")
-            options.extend(default_options)
+# --- Utility Function for Filter Options ---
+# (Could be moved to a shared utils if used by multiple dashboard pages)
+def _create_filter_dropdown_options(
+    df_for_options: pd.DataFrame,
+    column_name_in_df: str,
+    default_fallback_options: List[str],
+    display_name_plural_for_all: str
+) -> List[str]:
+    """Creates a list of filter options for a selectbox, including an 'All ...' option."""
+    all_option_label = f"All {display_name_plural_for_all}"
+    options_list = [all_option_label] # 'All' is always the first default option
+    
+    if isinstance(df_for_options, pd.DataFrame) and not df_for_options.empty and column_name_in_df in df_for_options.columns:
+        unique_values_from_df = sorted(df_for_options[column_name_in_df].dropna().unique().tolist())
+        if unique_values_from_df:
+            options_list.extend(unique_values_from_df)
+        else:
+            logger.warning(f"Filter options: Column '{column_name_in_df}' for '{display_name_plural_for_all}' has no unique, non-null values. Using defaults.")
+            options_list.extend(default_fallback_options) # Use fallback if column empty after dropna
     else:
-        logger.warning(f"Column '{column_name}' not found or DataFrame empty for {display_name_plural} filter. Using default options.")
-        # st.sidebar.caption(f"No {display_name_plural} data for filter.") # User feedback
-        options.extend(default_options)
-    return options
+        logger.warning(f"Filter options: Column '{column_name_in_df}' not found or DataFrame empty for '{display_name_plural_for_all}'. Using default options.")
+        options_list.extend(default_fallback_options) # Use fallback if column not found or df empty
+    return options_list
 
-# --- Data Loading Functions ---
+# --- Data Loading Function for this Dashboard ---
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, show_spinner="Loading CHW operational data...")
-def get_chw_dashboard_processed_data(
-    selected_date_view: date, # Renamed for clarity
-    trend_range_start_date: date, # Renamed
-    trend_range_end_date: date,   # Renamed
-    filter_chw_id: Optional[str] = None, # Renamed
-    filter_zone_id: Optional[str] = None  # Renamed
+def get_chw_dashboard_display_data(
+    selected_view_date: date,
+    selected_trend_start_date: date,
+    selected_trend_end_date: date,
+    selected_chw_id_filter: Optional[str] = None,
+    selected_zone_id_filter: Optional[str] = None
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
     """
     Loads and filters health records for the CHW dashboard for a specific date and trend period.
+    Returns daily data, period data, and any pre-calculated daily KPIs.
     """
-    log_prefix = "CHWDashboardData"
-    logger.info(f"({log_prefix}) Loading data for view_date: {selected_date_view}, trend: {trend_range_start_date}-{trend_range_end_date}, CHW: {filter_chw_id}, Zone: {filter_zone_id}")
+    log_ctx = "CHWDashboardDataLoad"
+    logger.info(
+        f"({log_ctx}) Loading data for view: {selected_view_date}, trend: {selected_trend_start_date}-{selected_trend_end_date}, "
+        f"CHW: {selected_chw_id_filter or 'All'}, Zone: {selected_zone_id_filter or 'All'}"
+    )
 
     try:
-        # Load all health records once. Filtering will happen below.
-        # Specify only necessary columns to reduce memory, if known and stable.
-        # For dynamic dashboards, loading more columns and then selecting is often safer.
-        health_records_df_all = load_health_records(source_context=f"{log_prefix}/LoadAllHealthRecs")
-    except Exception as e_load:
-        logger.error(f"({log_prefix}) CRITICAL: Failed to load health records: {e_load}", exc_info=True)
-        st.error("Fatal Error: Could not load primary health data. Dashboard cannot proceed.")
-        return pd.DataFrame(), pd.DataFrame(), {} # Return empty structures
+        # Load all health records once; filtering will be applied subsequently.
+        # For very large datasets, consider server-side filtering if possible.
+        all_health_records_df = load_health_records(source_context=f"{log_ctx}/LoadAllRecs")
+    except Exception as e_load_all:
+        logger.error(f"({log_ctx}) CRITICAL FAILURE: Could not load health records: {e_load_all}", exc_info=True)
+        st.error("Fatal Error: Could not load primary health data for the dashboard. Please contact support.")
+        return pd.DataFrame(), pd.DataFrame(), {} # Return empty structures to prevent further errors
 
-    if health_records_df_all.empty:
-        logger.warning(f"({log_prefix}) No health records loaded. Dashboard will be empty.")
-        st.warning("No health data available to display for the CHW dashboard.")
+    if all_health_records_df.empty:
+        logger.warning(f"({log_ctx}) No health records were loaded. Dashboard will display no data.")
+        st.warning("No health data is currently available. Please check data sources or try again later.")
         return pd.DataFrame(), pd.DataFrame(), {}
 
-    # Ensure 'encounter_date' is datetime
-    if 'encounter_date' not in health_records_df_all.columns or not pd.api.types.is_datetime64_any_dtype(health_records_df_all['encounter_date']):
-        logger.error(f"({log_prefix}) 'encounter_date' column missing or not datetime. Cannot filter data.")
-        st.error("Data Error: 'encounter_date' is missing or invalid in health records.")
+    # Critical check: 'encounter_date' must exist and be datetime
+    if 'encounter_date' not in all_health_records_df.columns or \
+       not pd.api.types.is_datetime64_any_dtype(all_health_records_df['encounter_date']):
+        logger.error(f"({log_ctx}) 'encounter_date' column is missing or not in datetime format. Cannot filter data effectively.")
+        st.error("Data Integrity Error: 'encounter_date' in health records is invalid. Dashboard cannot proceed.")
         return pd.DataFrame(), pd.DataFrame(), {}
 
     # --- Filter for Daily Snapshot ---
-    daily_snapshot_df = health_records_df_all[health_records_df_all['encounter_date'].dt.date == selected_date_view].copy()
-    if filter_chw_id:
-        daily_snapshot_df = daily_snapshot_df[daily_snapshot_df.get('chw_id', pd.Series(dtype=str)) == filter_chw_id]
-    if filter_zone_id:
-        daily_snapshot_df = daily_snapshot_df[daily_snapshot_df.get('zone_id', pd.Series(dtype=str)) == filter_zone_id]
+    df_for_daily_snapshot = all_health_records_df[
+        all_health_records_df['encounter_date'].dt.date == selected_view_date
+    ].copy() # Use .copy() to avoid SettingWithCopyWarning on subsequent filters
+    
+    if selected_chw_id_filter and 'chw_id' in df_for_daily_snapshot.columns:
+        df_for_daily_snapshot = df_for_daily_snapshot[df_for_daily_snapshot['chw_id'] == selected_chw_id_filter]
+    if selected_zone_id_filter and 'zone_id' in df_for_daily_snapshot.columns:
+        df_for_daily_snapshot = df_for_daily_snapshot[df_for_daily_snapshot['zone_id'] == selected_zone_id_filter]
 
     # --- Filter for Trend Period ---
-    period_trend_df = health_records_df_all[
-        (health_records_df_all['encounter_date'].dt.date >= trend_range_start_date) &
-        (health_records_df_all['encounter_date'].dt.date <= trend_range_end_date)
+    df_for_trend_period = all_health_records_df[
+        (all_health_records_df['encounter_date'].dt.date >= selected_trend_start_date) &
+        (all_health_records_df['encounter_date'].dt.date <= selected_trend_end_date)
     ].copy()
-    if filter_chw_id:
-        period_trend_df = period_trend_df[period_trend_df.get('chw_id', pd.Series(dtype=str)) == filter_chw_id]
-    if filter_zone_id:
-        period_trend_df = period_trend_df[period_trend_df.get('zone_id', pd.Series(dtype=str)) == filter_zone_id]
-
-    # Pre-calculate specific KPIs if needed by components (e.g., worker fatigue if not from encounter_type)
-    # This was in original logic, can be useful if direct calculation is more efficient than full DF pass in component.
-    pre_calculated_kpis_for_day: Dict[str, Any] = {}
-    if filter_chw_id and not daily_snapshot_df.empty:
-        # Example: Max fatigue score from WORKER_SELF_CHECK encounters for the selected CHW on that day
-        worker_self_check_records = daily_snapshot_df[
-            (daily_snapshot_df.get('chw_id') == filter_chw_id) &
-            (daily_snapshot_df.get('encounter_type') == 'WORKER_SELF_CHECK')
-        ]
-        if not worker_self_check_records.empty:
-            # Use a relevant score column that indicates fatigue
-            fatigue_score_col = next((col for col in ['ai_followup_priority_score', 'rapid_psychometric_distress_score', 'stress_level_score'] if col in worker_self_check_records.columns and worker_self_check_records[col].notna().any()), None)
-            if fatigue_score_col:
-                pre_calculated_kpis_for_day['worker_self_fatigue_index_today'] = worker_self_check_records[fatigue_score_col].max()
-            else:
-                pre_calculated_kpis_for_day['worker_self_fatigue_index_today'] = np.nan
-        else:
-            pre_calculated_kpis_for_day['worker_self_fatigue_index_today'] = np.nan # No self-check data
     
-    logger.info(f"({log_prefix}) Data loaded and filtered: Daily Snapshot - {len(daily_snapshot_df)} recs, Trend Period - {len(period_trend_df)} recs.")
-    return daily_snapshot_df, period_trend_df, pre_calculated_kpis_for_day
+    if selected_chw_id_filter and 'chw_id' in df_for_trend_period.columns:
+        df_for_trend_period = df_for_trend_period[df_for_trend_period['chw_id'] == selected_chw_id_filter]
+    if selected_zone_id_filter and 'zone_id' in df_for_trend_period.columns:
+        df_for_trend_period = df_for_trend_period[df_for_trend_period['zone_id'] == selected_zone_id_filter]
+
+    # Pre-calculate specific KPIs if needed (e.g., worker fatigue from self-check for the day)
+    # This can optimize calls to summary metric calculators if they accept pre-calculated values.
+    pre_calculated_daily_kpis_map: Dict[str, Any] = {}
+    if selected_chw_id_filter and not df_for_daily_snapshot.empty:
+        # Example: Max fatigue score from WORKER_SELF_CHECK encounters for the selected CHW on that day
+        worker_self_check_df = df_for_daily_snapshot[
+            (df_for_daily_snapshot.get('chw_id') == selected_chw_id_filter) & # Ensure chw_id column exists
+            (df_for_daily_snapshot.get('encounter_type', pd.Series(dtype=str)) == 'WORKER_SELF_CHECK') # Ensure encounter_type column exists
+        ]
+        if not worker_self_check_df.empty:
+            # Try to find a fatigue-related score column
+            fatigue_score_col_options = ['ai_followup_priority_score', 'rapid_psychometric_distress_score', 'stress_level_score']
+            actual_fatigue_col_found = next((col for col in fatigue_score_col_options if col in worker_self_check_df.columns and worker_self_check_df[col].notna().any()), None)
+            
+            if actual_fatigue_col_found:
+                pre_calculated_daily_kpis_map['worker_self_fatigue_index_today'] = worker_self_check_df[actual_fatigue_col_found].max()
+            else: # No relevant score column found in self-check data
+                pre_calculated_daily_kpis_map['worker_self_fatigue_index_today'] = np.nan # Explicitly NaN
+        else: # No self-check records found for this CHW today
+            pre_calculated_daily_kpis_map['worker_self_fatigue_index_today'] = np.nan
+    
+    logger.info(
+        f"({log_ctx}) Data loading and filtering complete. Daily Snapshot: {len(df_for_daily_snapshot)} records, "
+        f"Trend Period: {len(df_for_trend_period)} records."
+    )
+    return df_for_daily_snapshot, df_for_trend_period, pre_calculated_daily_kpis_map
 
 
-# --- Sidebar Filters ---
-# Use a cached function to load data just for populating filter options, if full dataset is large.
-@st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS)
-def load_data_for_filters():
-    logger.debug("Loading minimal data for CHW dashboard filters.")
-    # Load only 'chw_id' and 'zone_id' for efficiency if possible, or a sample.
-    # For simplicity here, still loads more, but ideally optimized.
-    return load_health_records(source_context="CHWDashboard/SidebarFilterPopulation")
+# --- Sidebar Filters Setup ---
+@st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS) # Cache data for filter population
+def load_dropdown_filter_data():
+    logger.debug("CHW Dashboard: Loading minimal data for filter dropdowns.")
+    # Optimize by loading only 'chw_id' and 'zone_id' if data source allows partial loads.
+    # For current CSV loader, it loads all then we select.
+    return load_health_records(source_context="CHWDash/FilterDataPopulation")
 
-filter_data_df = load_data_for_filters()
+df_for_filter_options = load_dropdown_filter_data()
 
 # Sidebar Header with Logo
 if os.path.exists(settings.APP_LOGO_SMALL_PATH):
-    st.sidebar.image(settings.APP_LOGO_SMALL_PATH, width=150)
+    st.sidebar.image(settings.APP_LOGO_SMALL_PATH, width=120) # Slightly smaller logo
 else:
-    st.sidebar.markdown("🌍 Sentinel", help="Sentinel Health Co-Pilot Logo") # Fallback text/icon
+    st.sidebar.markdown(f"#### {settings.APP_NAME}", help="App Logo Placeholder")
 
-st.sidebar.header("🗓️ View Filters")
+st.sidebar.header("Dashboard Filters")
 
 # CHW ID Filter
-chw_id_options_list = _create_filter_options(filter_data_df, 'chw_id', ["CHW001", "CHW002", "CHW003"], "CHWs")
-# Ensure session state for selectbox to prevent reset on rerun if not explicitly handled by key changes
-if 'chw_dashboard_selected_chw_id' not in st.session_state:
-    st.session_state.chw_dashboard_selected_chw_id = chw_id_options_list[0] # Default to "All CHWs"
+chw_filter_options = _create_filter_dropdown_options(df_for_filter_options, 'chw_id', ["CHW001", "CHW002", "CHW003"], "CHWs")
+# Session state key for CHW ID filter
+chw_id_session_key = "chw_dashboard_chw_id_selection"
+if chw_id_session_key not in st.session_state:
+    st.session_state[chw_id_session_key] = chw_filter_options[0] # Default to "All CHWs"
 
-selected_chw_id_filter_val = st.sidebar.selectbox(
-    "Filter by CHW ID:",
-    options=chw_id_options_list,
-    key="chw_dashboard_selected_chw_id_widget", # Unique key for the widget
-    # index=chw_id_options_list.index(st.session_state.chw_dashboard_selected_chw_id) # Set index from session state
+selected_chw_id_ui = st.sidebar.selectbox(
+    "Filter by CHW ID:", options=chw_filter_options,
+    key=f"{chw_id_session_key}_widget", # Widget key
+    index=chw_filter_options.index(st.session_state[chw_id_session_key]) # Set from session state
 )
-st.session_state.chw_dashboard_selected_chw_id = selected_chw_id_filter_val # Update session state
-actual_chw_id_for_query = None if selected_chw_id_filter_val.startswith("All ") else selected_chw_id_filter_val
+st.session_state[chw_id_session_key] = selected_chw_id_ui # Update session state
+actual_chw_id_query_param = None if selected_chw_id_ui.startswith("All ") else selected_chw_id_ui
 
 # Zone Filter
-zone_id_options_list = _create_filter_options(filter_data_df, 'zone_id', ["ZoneA", "ZoneB"], "Zones")
-if 'chw_dashboard_selected_zone_id' not in st.session_state:
-    st.session_state.chw_dashboard_selected_zone_id = zone_id_options_list[0]
+zone_filter_options = _create_filter_dropdown_options(df_for_filter_options, 'zone_id', ["ZoneA", "ZoneB", "ZoneC"], "Zones")
+zone_id_session_key = "chw_dashboard_zone_id_selection"
+if zone_id_session_key not in st.session_state:
+    st.session_state[zone_id_session_key] = zone_filter_options[0]
 
-selected_zone_id_filter_val = st.sidebar.selectbox(
-    "Filter by Zone:",
-    options=zone_id_options_list,
-    key="chw_dashboard_selected_zone_id_widget",
-    # index=zone_id_options_list.index(st.session_state.chw_dashboard_selected_zone_id)
+selected_zone_id_ui = st.sidebar.selectbox(
+    "Filter by Zone:", options=zone_filter_options,
+    key=f"{zone_id_session_key}_widget",
+    index=zone_filter_options.index(st.session_state[zone_id_session_key])
 )
-st.session_state.chw_dashboard_selected_zone_id = selected_zone_id_filter_val
-actual_zone_id_for_query = None if selected_zone_id_filter_val.startswith("All ") else selected_zone_id_filter_val
+st.session_state[zone_id_session_key] = selected_zone_id_ui
+actual_zone_id_query_param = None if selected_zone_id_ui.startswith("All ") else selected_zone_id_ui
 
 
-# Date Pickers
-# Determine overall min/max dates from the data if possible, else use wide range.
-min_allowable_date = date.today() - timedelta(days=max(180, settings.WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND * 4))
-max_allowable_date = date.today()
+# Date Pickers for Dashboard Scope
+# Define overall min/max allowable dates for date pickers
+abs_min_date_for_pickers = date.today() - timedelta(days=max(180, settings.WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND * 5)) # Wider historical range
+abs_max_date_for_pickers = date.today() # Cannot select future dates
 
 # Daily Snapshot Date Picker
-selected_daily_snapshot_date = st.sidebar.date_input(
+# Session state for daily date picker
+daily_date_session_key = "chw_dashboard_daily_date_selection"
+if daily_date_session_key not in st.session_state:
+    st.session_state[daily_date_session_key] = abs_max_date_for_pickers # Default to today
+
+selected_daily_date_ui = st.sidebar.date_input(
     "View Daily Activity For:",
-    value=max_allowable_date, # Default to today or most recent data
-    min_value=min_allowable_date,
-    max_value=max_allowable_date,
-    key="chw_dashboard_daily_snapshot_datepicker"
+    value=st.session_state[daily_date_session_key],
+    min_value=abs_min_date_for_pickers,
+    max_value=abs_max_date_for_pickers,
+    key=f"{daily_date_session_key}_widget"
 )
+st.session_state[daily_date_session_key] = selected_daily_date_ui # Update session state
+
 
 # Trend Date Range Picker
-default_trend_end_date = selected_daily_snapshot_date # Align trend end with snapshot date initially
-default_trend_start_date = default_trend_end_date - timedelta(days=settings.WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND - 1)
-if default_trend_start_date < min_allowable_date:
-    default_trend_start_date = min_allowable_date
+# Session state for trend date range picker (stores a list/tuple of two dates)
+trend_date_range_session_key = "chw_dashboard_trend_date_range_selection"
+# Default trend range calculation
+default_trend_end_ui = selected_daily_date_ui # Align with daily snapshot initially
+default_trend_start_ui = default_trend_end_ui - timedelta(days=settings.WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND - 1)
+if default_trend_start_ui < abs_min_date_for_pickers: # Ensure start doesn't go before absolute min
+    default_trend_start_ui = abs_min_date_for_pickers
 
-# Ensure date_input for range gets a list/tuple of two dates
-trend_date_range_selection = st.sidebar.date_input(
+if trend_date_range_session_key not in st.session_state:
+    st.session_state[trend_date_range_session_key] = [default_trend_start_ui, default_trend_end_ui]
+
+selected_trend_date_range_ui = st.sidebar.date_input(
     "Select Trend Date Range:",
-    value=[default_trend_start_date, default_trend_end_date], # Pass as list/tuple
-    min_value=min_allowable_date,
-    max_value=max_allowable_date,
-    key="chw_dashboard_trend_datepicker"
+    value=st.session_state[trend_date_range_session_key], # Must be a list/tuple of two dates
+    min_value=abs_min_date_for_pickers,
+    max_value=abs_max_date_for_pickers,
+    key=f"{trend_date_range_session_key}_widget"
 )
-# Unpack the date range selection
-selected_trend_start_date_val: date
-selected_trend_end_date_val: date
-if isinstance(trend_date_range_selection, (list, tuple)) and len(trend_date_range_selection) == 2:
-    selected_trend_start_date_val, selected_trend_end_date_val = trend_date_range_selection
-else: # Fallback if somehow it's not a range (should not happen with st.date_input for range)
-    selected_trend_start_date_val = default_trend_start_date
-    selected_trend_end_date_val = default_trend_end_date
-    st.sidebar.warning("Trend date range error. Using defaults.")
+# Ensure it's a list/tuple of two dates after selection
+if isinstance(selected_trend_date_range_ui, (list, tuple)) and len(selected_trend_date_range_ui) == 2:
+    st.session_state[trend_date_range_session_key] = selected_trend_date_range_ui
+    trend_start_date_query_param, trend_end_date_query_param = selected_trend_date_range_ui
+else: # Fallback if date_input for range doesn't return two dates (should not happen)
+    st.sidebar.warning("Trend date range selection error. Reverting to default range.")
+    st.session_state[trend_date_range_session_key] = [default_trend_start_ui, default_trend_end_ui]
+    trend_start_date_query_param, trend_end_date_query_param = default_trend_start_ui, default_trend_end_ui
 
-if selected_trend_start_date_val > selected_trend_end_date_val:
-    st.sidebar.error("Trend Start Date must be on or before Trend End Date.")
-    # Potentially revert to defaults or stop, here we just show error and proceed with invalid range for now
-    # For robustness, could force end_date = start_date or use previous valid range.
-    selected_trend_end_date_val = selected_trend_start_date_val # Simple fix: make range one day
+# Validate that trend start is not after trend end
+if trend_start_date_query_param > trend_end_date_query_param:
+    st.sidebar.error("Trend Start Date must be on or before Trend End Date. Adjusting to single day.")
+    trend_end_date_query_param = trend_start_date_query_param # Make it a single day range
 
-# --- Load Data Based on Filters ---
+
+# --- Load Data Based on Selected Filters ---
+# This is the main data loading call for the dashboard content.
 try:
-    daily_df_chw, period_df_chw, daily_pre_calc_kpis = get_chw_dashboard_processed_data(
-        selected_date_view=selected_daily_snapshot_date,
-        trend_range_start_date=selected_trend_start_date_val,
-        trend_range_end_date=selected_trend_end_date_val,
-        filter_chw_id=actual_chw_id_for_query,
-        filter_zone_id=actual_zone_id_for_query
+    daily_df_for_display, period_df_for_display, daily_pre_calculated_kpis_map = get_chw_dashboard_display_data(
+        selected_view_date=selected_daily_date_ui,
+        selected_trend_start_date=trend_start_date_query_param,
+        selected_trend_end_date=trend_end_date_query_param,
+        selected_chw_id_filter=actual_chw_id_query_param,
+        selected_zone_id_filter=actual_zone_id_query_param
     )
-except Exception as e_data_load_main:
-    logger.error(f"CHW Dashboard: Failed to load or process main dashboard data: {e_data_load_main}", exc_info=True)
-    st.error(f"Error loading CHW dashboard data: {str(e_data_load_main)}. Please try again or contact support.")
-    st.stop() # Stop execution if data loading fails catastrophically
+except Exception as e_main_data_load:
+    logger.error(f"CHW Dashboard: Main data loading/processing failed: {e_main_data_load}", exc_info=True)
+    st.error(f"An error occurred while loading CHW dashboard data: {str(e_main_data_load)}. Please check logs or contact support.")
+    # Stop execution for this page if main data fails to load, providing empty placeholders.
+    daily_df_for_display, period_df_for_display, daily_pre_calculated_kpis_map = pd.DataFrame(), pd.DataFrame(), {}
+    # st.stop() # Could stop here, or let sections below handle empty DFs.
 
-# --- Display Filter Context ---
-filter_context_parts = [f"Date: **{selected_daily_snapshot_date.strftime('%d %b %Y')}**"]
-if actual_chw_id_for_query:
-    filter_context_parts.append(f"CHW: **{actual_chw_id_for_query}**")
-if actual_zone_id_for_query:
-    filter_context_parts.append(f"Zone: **{actual_zone_id_for_query}**")
-st.info(f"Displaying data for: {', '.join(filter_context_parts)}")
+# --- Display Filter Context to User ---
+filter_context_display_parts = [f"Snapshot Date: **{selected_daily_date_ui.strftime('%d %b %Y')}**"]
+if actual_chw_id_query_param:
+    filter_context_display_parts.append(f"CHW: **{actual_chw_id_query_param}**")
+if actual_zone_id_query_param:
+    filter_context_display_parts.append(f"Zone: **{actual_zone_id_query_param}**")
+st.info(f"Displaying data for: {', '.join(filter_context_display_parts)}")
 
 
 # --- Section 1: Daily Performance Snapshot ---
 st.header("📊 Daily Performance Snapshot")
-if not daily_df_chw.empty:
+if not daily_df_for_display.empty:
     try:
-        # Pass the pre-calculated KPIs (like fatigue) to the summary metrics function
-        daily_summary_metrics_chw = calculate_chw_daily_summary_metrics(
-            chw_daily_encounter_df=daily_df_chw, # Pass the already filtered daily_df
-            for_date=selected_daily_snapshot_date, # Pass the target date
-            chw_daily_kpi_input_data=daily_pre_calc_kpis # Pass pre-calculated values
+        chw_daily_summary_metrics_map = calculate_chw_daily_summary_metrics(
+            chw_daily_encounter_df=daily_df_for_display,
+            for_date=selected_daily_date_ui,
+            chw_daily_kpi_input_data=daily_pre_calculated_kpis_map, # Pass pre-calcs
+            source_context="CHWDash/DailySummary"
         )
-    except Exception as e_metrics:
-        logger.error(f"Error calculating CHW daily summary metrics: {e_metrics}", exc_info=True)
-        st.warning("Could not calculate daily summary metrics. Some KPIs may be missing.")
-        daily_summary_metrics_chw = {} # Fallback to empty dict
+    except Exception as e_daily_summary:
+        logger.error(f"Error calculating CHW daily summary metrics for dashboard: {e_daily_summary}", exc_info=True)
+        st.warning("Could not calculate daily summary metrics. Some KPIs may be missing or inaccurate.")
+        chw_daily_summary_metrics_map = {} # Fallback to empty dict on error
 
-    kpi_cols = st.columns(4)
-    with kpi_cols[0]:
+    # Display KPIs in columns
+    kpi_cols_daily_snapshot = st.columns(4)
+    with kpi_cols_daily_snapshot[0]:
         render_kpi_card(
-            title="Visits Today", value_str=str(daily_summary_metrics_chw.get("visits_count", 0)),
-            icon="👥", help_text="Total unique patients encountered by the CHW/team today."
+            title="Visits Today", value_str=str(chw_daily_summary_metrics_map.get("visits_count", 0)),
+            icon="👥", help_text="Total unique patients encountered by the CHW/team for the selected date."
         )
     
-    high_prio_followups = daily_summary_metrics_chw.get("high_ai_prio_followups_count", 0)
-    prio_status = "ACCEPTABLE" if high_prio_followups <= 2 else ("MODERATE_CONCERN" if high_prio_followups <= 5 else "HIGH_CONCERN")
-    with kpi_cols[1]:
+    high_prio_followups_val = chw_daily_summary_metrics_map.get("high_ai_prio_followups_count", 0)
+    prio_status_level = "ACCEPTABLE" if high_prio_followups_val <= 2 else \
+                        ("MODERATE_CONCERN" if high_prio_followups_val <= 5 else "HIGH_CONCERN")
+    with kpi_cols_daily_snapshot[1]:
         render_kpi_card(
-            title="High Prio Follow-ups", value_str=str(high_prio_followups),
-            icon="🎯", status_level=prio_status,
-            help_text=f"Patients needing urgent follow-up based on AI priority scores (≥{settings.FATIGUE_INDEX_HIGH_THRESHOLD})."
+            title="High Prio Follow-ups", value_str=str(high_prio_followups_val),
+            icon="🎯", status_level=prio_status_level,
+            help_text=f"Patients needing urgent follow-up based on AI priority scores (e.g., score ≥ {settings.FATIGUE_INDEX_HIGH_THRESHOLD})." # Example threshold in help
         )
     
-    critical_spo2_cases = daily_summary_metrics_chw.get("critical_spo2_cases_identified_count", 0)
-    spo2_status = "HIGH_CONCERN" if critical_spo2_cases > 0 else "ACCEPTABLE"
-    with kpi_cols[2]:
+    critical_spo2_cases_val = chw_daily_summary_metrics_map.get("critical_spo2_cases_identified_count", 0)
+    spo2_status_level = "HIGH_CONCERN" if critical_spo2_cases_val > 0 else "ACCEPTABLE"
+    with kpi_cols_daily_snapshot[2]:
         render_kpi_card(
-            title="Critical SpO2 Cases", value_str=str(critical_spo2_cases),
-            icon="💨", status_level=spo2_status,
-            help_text=f"Patients identified with SpO2 < {settings.ALERT_SPO2_CRITICAL_LOW_PCT}%."
+            title="Critical SpO2 Cases", value_str=str(critical_spo2_cases_val),
+            icon="💨", status_level=spo2_status_level,
+            help_text=f"Patients identified with SpO2 < {settings.ALERT_SPO2_CRITICAL_LOW_PCT}% on the selected date."
         )
 
-    high_fever_cases = daily_summary_metrics_chw.get("high_fever_cases_identified_count", 0) # Ensure this key matches output
-    fever_status = "HIGH_CONCERN" if high_fever_cases > 0 else "ACCEPTABLE"
-    with kpi_cols[3]:
+    high_fever_cases_val = chw_daily_summary_metrics_map.get("high_fever_cases_identified_count", 0)
+    fever_status_level = "HIGH_CONCERN" if high_fever_cases_val > 0 else "ACCEPTABLE"
+    with kpi_cols_daily_snapshot[3]:
         render_kpi_card(
-            title="High Fever Cases", value_str=str(high_fever_cases),
-            icon="🔥", status_level=fever_status,
-            help_text=f"Patients identified with temperature ≥ {settings.ALERT_BODY_TEMP_HIGH_FEVER_C}°C."
+            title="High Fever Cases", value_str=str(high_fever_cases_val),
+            icon="🔥", status_level=fever_status_level,
+            help_text=f"Patients identified with temperature ≥ {settings.ALERT_BODY_TEMP_HIGH_FEVER_C}°C on the selected date."
         )
-else:
-    st.markdown("No activity data available for the selected date/filters to display daily performance snapshot.")
+else: # daily_df_for_display is empty
+    st.markdown("_No activity data available for the selected date and/or filters to display daily performance snapshot._")
 st.divider()
 
 
 # --- Section 2: Key Alerts & Actionable Tasks ---
 st.header("🚦 Key Alerts & Tasks")
-# Key Alerts
-# The component generate_chw_alerts should handle empty df internally
+# Key Alerts Display
 try:
-    chw_patient_alerts_list = generate_chw_alerts( # Renamed component
-        patient_encounter_data_df=daily_df_chw,
-        for_date=selected_daily_snapshot_date,
-        chw_zone_context_str=actual_zone_id_for_query or "All Zones", # Pass actual zone or "All"
-        max_alerts_to_return=8 # Limit for dashboard display
+    chw_alerts_list_for_display = generate_chw_alerts(
+        patient_encounter_data_df=daily_df_for_display, # Use daily data for today's alerts
+        for_date=selected_daily_date_ui,
+        chw_zone_context_str=actual_zone_id_query_param or "All Zones",
+        max_alerts_to_return=10 # Limit for UI display
     )
-except ValueError as ve_alerts: # Catch specific error if component raises it for no data
-    logger.warning(f"Value error generating CHW alerts: {ve_alerts}")
-    chw_patient_alerts_list = []
-    st.caption(f"Alert generation note: {ve_alerts}")
-except Exception as e_alerts:
-    logger.error(f"Error generating CHW patient alerts: {e_alerts}", exc_info=True)
+except ValueError as ve_alerts_display: # Catch specific error if component raises for no data
+    logger.warning(f"CHW Dashboard: Value error generating alerts for display: {ve_alerts_display}")
+    chw_alerts_list_for_display = []
+    st.caption(f"Alert generation note: {str(ve_alerts_display)}")
+except Exception as e_alerts_display:
+    logger.error(f"CHW Dashboard: Error generating patient alerts for display: {e_alerts_display}", exc_info=True)
     st.warning("Could not generate patient alerts. Alert list may be incomplete.")
-    chw_patient_alerts_list = []
+    chw_alerts_list_for_display = []
 
-
-if chw_patient_alerts_list:
-    st.subheader("Priority Patient Alerts:")
-    critical_alerts_found_today = False
-    for alert_item in chw_patient_alerts_list:
-        if alert_item.get("alert_level") == "CRITICAL":
-            critical_alerts_found_today = True
+if chw_alerts_list_for_display:
+    st.subheader("Priority Patient Alerts (Today):")
+    critical_alerts_exist = False
+    for alert_item_disp in chw_alerts_list_for_display:
+        if alert_item_disp.get("alert_level") == "CRITICAL":
+            critical_alerts_exist = True
             render_traffic_light_indicator(
-                message=f"Pt. {alert_item.get('patient_id', 'N/A')}: {alert_item.get('primary_reason', 'Critical Alert')}",
-                status_level="HIGH_RISK", # Use a status level understood by the renderer
+                message=f"Pt. {alert_item_disp.get('patient_id', 'N/A')}: {alert_item_disp.get('primary_reason', 'Critical Alert')}",
+                status_level="HIGH_RISK", # This should map to CSS classes for red
                 details_text=(
-                    f"Details: {alert_item.get('brief_details','N/A')} | "
-                    f"Context: {alert_item.get('context_info','N/A')} | "
-                    f"Action: {alert_item.get('suggested_action_code','REVIEW_IMMEDIATELY')}"
+                    f"Details: {alert_item_disp.get('brief_details','N/A')} | "
+                    f"Context: {alert_item_disp.get('context_info','N/A')} | "
+                    f"Action Suggestion: {alert_item_disp.get('suggested_action_code','REVIEW_IMMEDIATELY')}"
                 )
             )
-    if not critical_alerts_found_today:
-        st.info("No CRITICAL patient alerts for this selection.")
+    if not critical_alerts_exist:
+        st.info("No CRITICAL patient alerts identified for this selection today.")
 
-    warning_alerts_list = [a for a in chw_patient_alerts_list if a.get("alert_level") == "WARNING"]
-    if warning_alerts_list:
-        st.markdown("###### Warning Alerts:")
-        for warn_item in warning_alerts_list:
+    warning_alerts_for_display = [a for a in chw_alerts_list_for_display if a.get("alert_level") == "WARNING"]
+    if warning_alerts_for_display:
+        st.markdown("###### Warning Level Alerts:")
+        for warn_item_disp in warning_alerts_for_display:
             render_traffic_light_indicator(
-                message=f"Pt. {warn_item.get('patient_id', 'N/A')}: {warn_item.get('primary_reason', 'Warning')}",
-                status_level="MODERATE_CONCERN", # Use a status level for renderer
-                details_text=f"Details: {warn_item.get('brief_details','N/A')} | Context: {warn_item.get('context_info','N/A')}"
+                message=f"Pt. {warn_item_disp.get('patient_id', 'N/A')}: {warn_item_disp.get('primary_reason', 'Warning')}",
+                status_level="MODERATE_CONCERN", # Maps to amber/yellow
+                details_text=f"Details: {warn_item_disp.get('brief_details','N/A')} | Context: {warn_item_disp.get('context_info','N/A')}"
             )
-    elif not critical_alerts_found_today : # No critical and no warnings
-        st.info("Only informational alerts (if any) were generated. No urgent patient alerts.")
+    elif not critical_alerts_exist : # No critical AND no warnings
+        st.info("Only informational alerts (if any) were generated. No urgent patient alerts requiring immediate attention.")
+elif not daily_df_for_display.empty: # Data exists, but alert list is empty
+    st.success("✅ No significant patient alerts needing immediate attention were generated for today's selection.")
+else:
+    st.markdown("_No activity data to generate patient alerts for today._")
 
-elif not daily_df_chw.empty: # Data exists but no alerts generated
-    st.success("✅ No significant patient alerts generated for the current selection.")
-else: # No data to generate from
-    st.markdown("No activity data to generate patient alerts.")
+# Actionable Tasks Display (integrating the refactored component)
+try:
+    chw_tasks_list_for_display = generate_chw_tasks(
+        source_patient_data_df=daily_df_for_display, # Based on today's findings
+        for_date=selected_daily_date_ui,
+        chw_id_context=actual_chw_id_query_param,
+        zone_context_str=actual_zone_id_query_param or "All Zones",
+        max_tasks_to_return_for_summary=10
+    )
+except ValueError as ve_tasks_display:
+    logger.warning(f"CHW Dashboard: Value error generating tasks for display: {ve_tasks_display}")
+    chw_tasks_list_for_display = []
+    st.caption(f"Task generation note: {str(ve_tasks_display)}")
+except Exception as e_tasks_display:
+    logger.error(f"CHW Dashboard: Error generating CHW tasks for display: {e_tasks_display}", exc_info=True)
+    st.warning("Could not generate the prioritized tasks list for display.")
+    chw_tasks_list_for_display = []
 
-
-# Actionable Tasks (Placeholder - Task generation logic to be refined)
-# try:
-#     prioritized_chw_tasks_list = generate_chw_tasks(
-#         source_patient_data_df=daily_df_chw, # Use daily data for today's tasks
-#         for_date=selected_daily_snapshot_date,
-#         chw_id_context=actual_chw_id_for_query,
-#         zone_context_str=actual_zone_id_for_query or "All Zones",
-#         max_tasks_to_return_for_summary=10
-#     )
-# except ValueError as ve_tasks: # If component raises ValueError for no data
-#     logger.warning(f"Value error generating CHW tasks: {ve_tasks}")
-#     prioritized_chw_tasks_list = []
-#     st.caption(f"Task generation note: {ve_tasks}")
-# except Exception as e_tasks:
-#     logger.error(f"Error generating CHW prioritized tasks: {e_tasks}", exc_info=True)
-#     st.warning("Could not generate prioritized tasks list.")
-#     prioritized_chw_tasks_list = []
-
-# if prioritized_chw_tasks_list:
-#     st.subheader("Top Priority Tasks:")
-#     # Display tasks in a more user-friendly way, perhaps a styled table or list
-#     tasks_df_display = pd.DataFrame(prioritized_chw_tasks_list)
-#     # Define columns to show in the dashboard task table
-#     task_display_cols = ['patient_id', 'task_description', 'priority_score', 'due_date', 'status', 'key_patient_context', 'assigned_chw_id', 'alert_source_info']
-#     actual_task_cols_to_show = [col for col in task_display_cols if col in tasks_df_display.columns]
+if chw_tasks_list_for_display:
+    st.subheader("Top Priority Tasks (Today/Next Day):")
+    tasks_df_for_table = pd.DataFrame(chw_tasks_list_for_display)
+    # Select and order columns for the task table display
+    task_table_cols_order = ['patient_id', 'task_description', 'priority_score', 'due_date', 
+                             'status', 'key_patient_context', 'assigned_chw_id'] 
+    # Filter to only those columns that actually exist in the DataFrame
+    actual_cols_for_task_table = [col for col in task_table_cols_order if col in tasks_df_for_table.columns]
     
-#     if not tasks_df_display.empty and actual_task_cols_to_show:
-#         st.dataframe(
-#             tasks_df_display[actual_task_cols_to_show],
-#             use_container_width=True,
-#             height=min(380, len(tasks_df_display) * 40 + 60), # Dynamic height
-#             hide_index=True
-#         )
-#     else:
-#         st.info("Task data is available but could not be displayed (column mismatch or empty after selection).")
-# elif not daily_df_chw.empty:
-#      st.info("No high-priority tasks identified for the current selection.")
-# else:
-#      st.markdown("No activity data to generate tasks.")
-# st.divider()
-# Temporarily disabling task section display due to ongoing refactor of task_processor
-st.subheader("Prioritized Tasks (Under Review)")
-st.caption("Task generation and display component is currently under review and will be updated.")
+    if not tasks_df_for_table.empty and actual_cols_for_task_table:
+        st.dataframe(
+            tasks_df_for_table[actual_cols_for_task_table],
+            use_container_width=True,
+            height=min(420, len(tasks_df_for_table) * 38 + 58), # Dynamic height with a max
+            hide_index=True,
+            column_config={ # Example of specific column configurations for better display
+                "priority_score": st.column_config.NumberColumn(format="%.1f"),
+                "due_date": st.column_config.DateColumn(format="YYYY-MM-DD")
+            }
+        )
+    elif not tasks_df_for_table.empty: # Columns mismatch
+        st.warning("Task data available but cannot be displayed due to column configuration issues.")
+        logger.debug(f"Task table display issue: Expected cols {task_table_cols_order}, available {tasks_df_for_table.columns.tolist()}")
+elif not daily_df_for_display.empty: # Data exists, but task list is empty
+     st.info("No high-priority tasks identified requiring action today or tomorrow based on current data.")
+else:
+     st.markdown("_No activity data to generate tasks for today._")
 st.divider()
 
 
 # --- Section 3: Local Epi Signals Watch ---
-st.header("🔬 Local Epi Signals Watch")
-if not daily_df_chw.empty:
+st.header("🔬 Local Epi Signals Watch (Today)")
+if not daily_df_for_display.empty:
     try:
-        chw_epi_signals_data = extract_chw_epi_signals(
-            chw_daily_encounter_df=daily_df_chw,
-            pre_calculated_chw_kpis=daily_pre_calc_kpis, # Pass pre-calculated KPIs
-            for_date=selected_daily_snapshot_date,
-            chw_zone_context=actual_zone_id_for_query or "All Zones",
+        chw_epi_signals_map = extract_chw_epi_signals(
+            chw_daily_encounter_df=daily_df_for_display, # Today's data
+            pre_calculated_chw_kpis=daily_pre_calculated_kpis_map,
+            for_date=selected_daily_date_ui,
+            chw_zone_context=actual_zone_id_query_param or "All Zones",
             max_symptom_clusters_to_report=3
         )
-    except ValueError as ve_epi: # If component raises this
-        logger.warning(f"Value error extracting CHW epi signals: {ve_epi}")
-        chw_epi_signals_data = {}
-        st.caption(f"Epi signal extraction note: {ve_epi}")
-    except Exception as e_epi:
-        logger.error(f"Error extracting CHW epi signals: {e_epi}", exc_info=True)
-        st.warning("Could not extract local epidemiological signals.")
-        chw_epi_signals_data = {}
+    except ValueError as ve_epi_display:
+        logger.warning(f"CHW Dashboard: Value error extracting epi signals for display: {ve_epi_display}")
+        chw_epi_signals_map = {}
+        st.caption(f"Epi signal extraction note: {str(ve_epi_display)}")
+    except Exception as e_epi_display:
+        logger.error(f"CHW Dashboard: Error extracting epi signals for display: {e_epi_display}", exc_info=True)
+        st.warning("Could not extract local epidemiological signals for display.")
+        chw_epi_signals_map = {}
 
-    epi_kpi_cols = st.columns(3)
-    with epi_kpi_cols[0]:
-        sympt_key_cond = chw_epi_signals_data.get("symptomatic_patients_key_conditions_count", 0)
+    # Display Epi KPIs
+    epi_kpi_cols_display = st.columns(3)
+    with epi_kpi_cols_display[0]:
+        sympt_key_cond_val = chw_epi_signals_map.get("symptomatic_patients_key_conditions_count", 0)
         render_kpi_card(
-            title="Symptomatic (Key Cond.)", value_str=str(sympt_key_cond),
+            title="Symptomatic (Key Cond.)", value_str=str(sympt_key_cond_val),
             icon="🤒", units="cases today",
-            help_text=f"Patients presenting with symptoms related to key conditions (e.g., {', '.join(settings.KEY_CONDITIONS_FOR_ACTION[:2])}, etc.)."
+            help_text=f"Patients seen today presenting with symptoms related to key conditions (e.g., {', '.join(settings.KEY_CONDITIONS_FOR_ACTION[:2])}, etc.)."
         )
-    with epi_kpi_cols[1]:
-        new_malaria = chw_epi_signals_data.get("newly_identified_malaria_patients_count", 0)
-        malaria_status = "HIGH_CONCERN" if new_malaria > 1 else ("MODERATE_CONCERN" if new_malaria == 1 else "ACCEPTABLE")
+    with epi_kpi_cols_display[1]:
+        new_malaria_val = chw_epi_signals_map.get("newly_identified_malaria_patients_count", 0)
+        malaria_status_level = "HIGH_CONCERN" if new_malaria_val > 1 else ("MODERATE_CONCERN" if new_malaria_val == 1 else "ACCEPTABLE")
         render_kpi_card(
-            title="New Malaria Cases", value_str=str(new_malaria),
-            icon="🦟", units="cases today", status_level=malaria_status,
-            help_text="New malaria cases (e.g., RDT positive) identified today."
+            title="New Malaria Cases", value_str=str(new_malaria_val),
+            icon="🦟", units="cases today", status_level=malaria_status_level,
+            help_text="New malaria cases (e.g., based on RDT positive or clinical diagnosis) identified today."
         )
-    with epi_kpi_cols[2]:
-        pending_tb_contacts = chw_epi_signals_data.get("pending_tb_contact_tracing_tasks_count", 0)
-        tb_contact_status = "MODERATE_CONCERN" if pending_tb_contacts > 0 else "ACCEPTABLE"
+    with epi_kpi_cols_display[2]:
+        pending_tb_contacts_val = chw_epi_signals_map.get("pending_tb_contact_tracing_tasks_count", 0)
+        tb_contact_status_level = "MODERATE_CONCERN" if pending_tb_contacts_val > 0 else "ACCEPTABLE"
         render_kpi_card(
-            title="Pending TB Contacts", value_str=str(pending_tb_contacts),
-            icon="👥", units="to trace", status_level=tb_contact_status,
-            help_text="Number of TB contacts still requiring follow-up tracing."
+            title="Pending TB Contacts", value_str=str(pending_tb_contacts_val),
+            icon="👥", units="to trace", status_level=tb_contact_status_level,
+            help_text="Number of TB contacts (related to today's CHW activity or existing tasks) still requiring follow-up."
         )
 
-    detected_symptom_clusters = chw_epi_signals_data.get("detected_symptom_clusters", [])
-    if detected_symptom_clusters:
-        st.markdown("###### Detected Symptom Clusters (Requires Verification):")
-        for cluster_item in detected_symptom_clusters:
-            st.warning(
-                f"⚠️ **{cluster_item.get('symptoms_pattern', 'Unknown Pattern')}**: "
-                f"{cluster_item.get('patient_count', 'N/A')} cases in {cluster_item.get('location_hint', 'area')}. "
-                f"Consider investigation."
+    # Display Detected Symptom Clusters
+    detected_symptom_clusters_list = chw_epi_signals_map.get("detected_symptom_clusters", [])
+    if detected_symptom_clusters_list:
+        st.markdown("###### Detected Symptom Clusters (Requires Verification by Supervisor):")
+        for cluster_item_data in detected_symptom_clusters_list:
+            st.warning( # Use st.warning for visibility
+                f"⚠️ **Pattern: {cluster_item_data.get('symptoms_pattern', 'Unknown Symptom Pattern')}** - "
+                f"{cluster_item_data.get('patient_count', 'N/A')} cases identified in "
+                f"{cluster_item_data.get('location_hint', 'CHW operational area')}. Supervisor to verify and potentially escalate."
             )
-    elif 'patient_reported_symptoms' in daily_df_chw.columns and daily_df_chw['patient_reported_symptoms'].notna().any(): # Only if relevant col exists
-        st.info("No significant symptom clusters detected based on current data and criteria.")
-else:
-    st.markdown("No activity data available for the selected date/filters to extract epi signals.")
+    elif 'patient_reported_symptoms' in daily_df_for_display.columns and daily_df_for_display['patient_reported_symptoms'].notna().any():
+        st.info("No significant symptom clusters detected today based on current data and criteria.")
+else: # daily_df_for_display is empty
+    st.markdown("_No activity data available for the selected date/filters to extract local epi signals._")
 st.divider()
 
 
 # --- Section 4: CHW Team Activity Trends ---
 st.header("📈 CHW Team Activity Trends")
-trend_period_display_str = f"{selected_trend_start_date_val.strftime('%d %b %Y')} - {selected_trend_end_date_val.strftime('%d %b %Y')}"
-trend_filter_context_str = ""
-if actual_chw_id_for_query: trend_filter_context_str += f" for CHW **{actual_chw_id_for_query}**"
-if actual_zone_id_for_query: trend_filter_context_str += f" in Zone **{actual_zone_id_for_query}**"
-st.markdown(f"Trends from **{trend_period_display_str}**{trend_filter_context_str if trend_filter_context_str else ' (All CHWs/Zones in Period)'}.")
+trend_period_display_text = f"{trend_start_date_query_param.strftime('%d %b %Y')} - {trend_end_date_query_param.strftime('%d %b %Y')}"
+trend_filter_context_text = ""
+if actual_chw_id_query_param: trend_filter_context_text += f" for CHW **{actual_chw_id_query_param}**"
+if actual_zone_id_query_param: trend_filter_context_text += f" in Zone **{actual_zone_id_query_param}**"
+st.markdown(f"Displaying trends from **{trend_period_display_text}**{trend_filter_context_text if trend_filter_context_text else ' (All CHWs/Zones in selected period)'}.")
 
-if not period_df_chw.empty:
+if not period_df_for_display.empty:
     try:
-        chw_activity_trends = calculate_chw_activity_trends_data(
-            chw_historical_health_df=period_df_chw, # Pass the already filtered period_df
-            trend_start_date_input=selected_trend_start_date_val, # For context if needed by component
-            trend_end_date_input=selected_trend_end_date_val,     # For context if needed by component
-            zone_filter=actual_zone_id_for_query, # Pass zone filter for component's internal use
-            time_period_aggregation='D' # Daily trends typically useful for CHW supervisor
+        chw_activity_trends_map = calculate_chw_activity_trends_data(
+            chw_historical_health_df=period_df_for_display, # Pass the period-filtered data
+            trend_start_date_input=trend_start_date_query_param, # For context or internal use by component
+            trend_end_date_input=trend_end_date_query_param,
+            zone_filter=actual_zone_id_query_param, # Allow component to re-filter if necessary (though period_df is already filtered)
+            time_period_aggregation='D' # Daily trends are common for CHW supervisor view
         )
-    except Exception as e_trends:
-        logger.error(f"Error calculating CHW activity trends: {e_trends}", exc_info=True)
-        st.warning("Could not calculate activity trends. Trend charts may be unavailable.")
-        chw_activity_trends = {} # Fallback
+    except Exception as e_trends_display:
+        logger.error(f"CHW Dashboard: Error calculating activity trends for display: {e_trends_display}", exc_info=True)
+        st.warning("Could not calculate CHW activity trends. Trend charts may be unavailable.")
+        chw_activity_trends_map = {} # Fallback to empty dict
 
-    trend_plot_cols = st.columns(2)
-    with trend_plot_cols[0]:
-        visits_trend_series = chw_activity_trends.get("patient_visits_trend")
-        if isinstance(visits_trend_series, pd.Series) and not visits_trend_series.empty:
+    trend_plot_cols_display = st.columns(2) # Two columns for trend plots
+    with trend_plot_cols_display[0]:
+        patient_visits_trend_series = chw_activity_trends_map.get("patient_visits_trend")
+        if isinstance(patient_visits_trend_series, pd.Series) and not patient_visits_trend_series.empty:
             st.plotly_chart(
-                plot_annotated_line_chart(
-                    data_series=visits_trend_series, chart_title="Daily Patient Visits Trend",
-                    y_axis_label="# Patients Visited", y_values_are_counts=True
+                plot_annotated_line_chart( # Use new plotting function
+                    data_series=patient_visits_trend_series, chart_title="Daily Patient Visits Trend",
+                    y_axis_label="# Unique Patients Visited", y_values_are_counts=True
                 ), use_container_width=True
             )
         else:
             st.caption("No patient visit trend data available for this selection.")
             
-    with trend_plot_cols[1]:
-        high_prio_followups_trend_series = chw_activity_trends.get("high_priority_followups_trend")
-        if isinstance(high_prio_followups_trend_series, pd.Series) and not high_prio_followups_trend_series.empty:
+    with trend_plot_cols_display[1]:
+        high_prio_followups_trend_srs = chw_activity_trends_map.get("high_priority_followups_trend")
+        if isinstance(high_prio_followups_trend_srs, pd.Series) and not high_prio_followups_trend_srs.empty:
             st.plotly_chart(
                 plot_annotated_line_chart(
-                    data_series=high_prio_followups_trend_series, chart_title="Daily High Prio. Follow-ups Trend",
-                    y_axis_label="# High Prio Follow-ups", y_values_are_counts=True
+                    data_series=high_prio_followups_trend_srs, chart_title="Daily High Prio. Follow-ups Trend",
+                    y_axis_label="# High Prio. Follow-ups", y_values_are_counts=True
                 ), use_container_width=True
             )
         else:
             st.caption("No high-priority follow-up trend data available for this selection.")
-else:
-    st.markdown("No historical data available for the selected trend period/filters.")
+else: # period_df_for_display is empty
+    st.markdown("_No historical data available for the selected trend period and/or filters._")
 
 logger.info(
-    f"CHW Supervisor View loaded for Date: {selected_daily_snapshot_date}, "
-    f"CHW: {actual_chw_id_for_query or 'All'}, Zone: {actual_zone_id_for_query or 'All'}"
+    f"CHW Supervisor Dashboard page loaded. Filters: Date={selected_daily_date_ui}, "
+    f"CHW={actual_chw_id_query_param or 'All'}, Zone={actual_zone_id_query_param or 'All'}, "
+    f"Trend Range=({trend_start_date_query_param} to {trend_end_date_query_param})."
 )
