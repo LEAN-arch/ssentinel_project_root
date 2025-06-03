@@ -1,0 +1,117 @@
+# sentinel_project_root/.streamlit/config.toml
+# Streamlit application configuration for Sentinel Health Co-Pilot.
+
+# --- Server Configuration ---
+[server]
+# Port to run Streamlit on. Default is 8501.
+port = 8501
+
+# When running locally, Streamlit typically opens a browser tab. Set to true to disable.
+headless = false
+
+# Automatically rerun the script when a source file is saved. Highly recommended for development.
+runOnSave = true
+
+# Maximum upload size for st.file_uploader, in megabytes.
+# Default is 200MB. Adjust based on expected file upload needs.
+maxUploadSize = 50
+
+# Timeout for websocket connections in seconds. Default is 20s.
+# Increase if your app has very long-running computations on the backend per interaction
+# that might cause the frontend to time out.
+# websocketTimeout = 30
+
+# Enable Cross-Origin Resource Sharing (CORS) if embedding or calling from other domains.
+# Default is true, generally good to keep unless specific security policies dictate otherwise.
+enableCORS = true
+
+# Enable XSRF (Cross-Site Request Forgery) protection.
+# Default is true, critical for security.
+enableXsrfProtection = true
+
+# enableWatchdog = true # Deprecated in favor of runOnSave for file watching.
+
+# address = "localhost" # Address to bind to. Default is fine for local dev.
+
+# --- Browser / Client-Side Configuration ---
+[browser]
+# If true, gather usage statistics and send to Streamlit.
+# For a sensitive health application, setting this to false is often preferred for privacy.
+gatherUsageStats = false
+
+# Initial state of the sidebar. Options: "auto", "expanded", "collapsed".
+# This can also be set via st.set_page_config in app.py, which usually takes precedence
+# for the very first load of the main page.
+initialSidebarState = "expanded" # Ensures sidebar is open by default for navigation.
+
+# Toolbar items (e.g., "View app source", "Report a bug") in deployed apps.
+# These can be customized or disabled.
+# For a production/enterprise app, you might want to disable some.
+# [toolbar]
+# # Example: Disable the "Deploy" button if Streamlit detects it can be deployed
+# # (often relevant for local dev when connected to Streamlit Community Cloud account)
+# showDeployButton = false
+# # Example: customize items
+# # items = ["Report a Bug", "Documentation", "About"] # This requires custom handling in Streamlit >1.1.0
+
+# --- Logger Configuration ---
+[logger]
+# Level of logging for Streamlit's own internal logger: error, warning, info, debug.
+# This can influence how much detail Streamlit itself outputs.
+# Your application's logging (configured in app.py via Python's logging module)
+# is separate but can be affected by global Python logging state.
+level = "info" # Good default for deployed apps. Use "debug" for development troubleshooting.
+# messageFormat = "%(asctime)s %(levelname)s %(name)s: %(message)s" # Default is simpler.
+
+# --- Runner Configuration ---
+[runner]
+# Allow execution of "unsafe" functions which are not audited for security.
+# This is generally required if you use st.markdown(..., unsafe_allow_html=True) extensively
+# for custom CSS injection or complex HTML rendering, which Sentinel's UI helpers do.
+# Default is true, so explicitly setting it is often for clarity or if policies change.
+# unsafeMode = true # Property name might change, check Streamlit docs. Fast Reruns is related.
+
+# Fast Reruns: Attempts to rerun only the necessary parts of the script on changes.
+# Default is true and generally beneficial for development speed.
+# fastReruns = true
+
+# clientMaxBufferSize = 10 # Max number of messages to buffer if client is temporarily disconnected.
+
+# --- Theme Configuration ---
+# This allows setting a base theme and overriding specific colors for Streamlit's native UI components.
+# This complements the custom Plotly theme (set in visualization/plots.py) and
+# custom CSS (in assets/style_web_reports.css).
+# Colors should align with your CSS variables and config/settings.py for visual consistency.
+[theme]
+# Primary accent color for interactive elements (widgets like sliders, buttons, selectboxes).
+primaryColor = "#1976D2" # Matches settings.COLOR_ACTION_PRIMARY (Sentinel's primary blue)
+
+# Background color for the main content area of the Streamlit app.
+backgroundColor = "#FFFFFF" # Matches settings.COLOR_BACKGROUND_CONTENT (Clean white)
+
+# Background color for sidebar, expanders, and most other UI container elements.
+secondaryBackgroundColor = "#f8f9fa" # Matches settings.COLOR_BACKGROUND_PAGE (Light grey)
+
+# Text color for the main content area and most text elements.
+textColor = "#343a40" # Matches settings.COLOR_TEXT_DARK
+
+# Font family for all text in Streamlit components.
+# Options: "sans serif" (default), "serif", "monospace".
+font = "sans serif" # Default is usually best for readability and aligns with system font stack in CSS.
+
+# --- Mapbox Configuration ---
+[mapbox]
+# You can set your Mapbox access token here. If set, Streamlit uses this for st.map.
+# Plotly Express mapbox figures (used in Sentinel) will preferentially use the token set by
+# `px.set_mapbox_access_token()` (from visualization/plots.py, which reads from ENV or could read this).
+# Using an environment variable (MAPBOX_ACCESS_TOKEN) is generally more secure and flexible,
+# especially for deployments like Streamlit Cloud where you can set secrets.
+# token = "YOUR_MAPBOX_ACCESS_TOKEN_IF_SET_HERE_INSTEAD_OF_ENV" # Not recommended to hardcode actual token.
+
+# --- Embedding Configuration (If app is embedded in an iframe) ---
+# These settings control behavior when Streamlit app is embedded.
+# [embedding]
+# allowRunOnSave = false  # Disable runOnSave when embedded
+# hideTopBar = true       # Hide the Streamlit header bar when embedded
+# hideSidebarNav = true   # Hide the multipage navigation in sidebar when embedded
+# disableScroll = false   # Allow or disallow scrolling of embedded app content
