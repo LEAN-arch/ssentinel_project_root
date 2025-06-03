@@ -1,0 +1,339 @@
+/* sentinel_project_root/assets/style_web_reports.css */
+/* Styles for Sentinel Health Co-Pilot Web Dashboards & Reports (Tiers 2/3) */
+
+:root {
+    /* Risk & Status Colors (Mirrors config.settings COLOR_RISK_*) */
+    --sentinel-color-risk-high: #D32F2F;
+    --sentinel-color-risk-moderate: #FBC02D;
+    --sentinel-color-risk-low: #388E3C;
+    --sentinel-color-risk-neutral: #757575;
+
+    /* Action & Accent Colors (Mirrors config.settings COLOR_ACTION_*, COLOR_ACCENT_*) */
+    --sentinel-color-action-primary: #1976D2;
+    --sentinel-color-action-secondary: #546E7A;
+    --sentinel-color-accent-bright: #4D7BF3;
+
+    /* Text Colors (Mirrors config.settings COLOR_TEXT_*, COLOR_HEADINGS_*) */
+    --sentinel-color-text-dark: #343a40;
+    --sentinel-color-text-headings-main: #1A2557;
+    --sentinel-color-text-headings-sub: #2C3E50;
+    --sentinel-color-text-muted: #6c757d;
+    --sentinel-color-text-link-default: var(--sentinel-color-action-primary);
+
+    /* Background Colors (Mirrors config.settings COLOR_BACKGROUND_*) */
+    --sentinel-color-background-page: #f8f9fa;
+    --sentinel-color-background-content: #ffffff;
+    --sentinel-color-background-subtle: #e9ecef;
+    --sentinel-color-background-white: #FFFFFF;
+
+
+    /* Border Colors (Mirrors config.settings COLOR_BORDER_*) */
+    --sentinel-color-border-light: #dee2e6;
+    --sentinel-color-border-medium: #ced4da;
+
+    /* Delta/Change Indicators (Mirrors config.settings COLOR_POSITIVE_DELTA, COLOR_NEGATIVE_DELTA) */
+    --sentinel-color-delta-positive: #27AE60;
+    --sentinel-color-delta-negative: #C0392B;
+}
+
+/* ----- Base Styles & Typography ----- */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+    background-color: var(--sentinel-color-background-page);
+    color: var(--sentinel-color-text-dark);
+    line-height: 1.6;
+    font-size: 14px; 
+    margin: 0; 
+}
+
+.stApp { 
+    padding: 1rem 1.5rem; 
+}
+
+/* ----- Headings & Titles ----- */
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 700;
+    letter-spacing: -0.01em; 
+    margin-top: 1.2em; 
+    margin-bottom: 0.6em; 
+}
+h1 {
+    color: var(--sentinel-color-text-headings-main);
+    font-size: 2.0rem; 
+    border-bottom: 3px solid var(--sentinel-color-accent-bright);
+    padding-bottom: 0.4rem;     
+    margin-bottom: 1.2rem;    
+}
+h2 {
+    color: var(--sentinel-color-text-headings-sub);
+    font-size: 1.6rem;        
+    margin-top: 1.8rem;       
+    margin-bottom: 0.8rem;    
+    border-bottom: 1px solid var(--sentinel-color-border-light);
+    padding-bottom: 0.3rem;   
+}
+h3 {
+    color: var(--sentinel-color-action-primary);
+    font-size: 1.3rem;        
+    margin-top: 1.5rem;
+    margin-bottom: 0.7rem;
+}
+h4 {font-size: 1.15rem; color: var(--sentinel-color-text-headings-sub); margin-bottom: 0.5rem;}
+h5 {font-size: 1.05rem; color: var(--sentinel-color-text-dark); font-weight: 600;}
+h6 {font-size: 0.95rem; color: var(--sentinel-color-text-muted); font-weight: 500;}
+
+
+/* ----- KPI Card Styling (for render_kpi_card) ----- */
+.kpi-card {
+    background-color: var(--sentinel-color-background-content);
+    border-radius: 6px; 
+    padding: 1.0rem 1.2rem; 
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06); 
+    border-left: 4px solid var(--sentinel-color-risk-neutral); 
+    margin-bottom: 1rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 100%; 
+    transition: box-shadow 0.2s ease-in-out, transform 0.15s ease-in-out; 
+}
+.kpi-card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.09); 
+    transform: translateY(-1px); 
+}
+
+/* KPI Card Status Variants - kebab-case CSS classes derived from Pythonic status_level names */
+.kpi-card.status-high-risk, .kpi-card.status-critical, .kpi-card.status-high-concern { 
+    border-left-color: var(--sentinel-color-risk-high); 
+}
+.kpi-card.status-high-risk .kpi-icon, .kpi-card.status-critical .kpi-icon, .kpi-card.status-high-concern .kpi-icon { 
+    color: var(--sentinel-color-risk-high); 
+}
+
+.kpi-card.status-moderate-risk, .kpi-card.status-moderate-concern, .kpi-card.status-warning { 
+    border-left-color: var(--sentinel-color-risk-moderate); 
+}
+.kpi-card.status-moderate-risk .kpi-icon, .kpi-card.status-moderate-concern .kpi-icon, .kpi-card.status-warning .kpi-icon { 
+    color: var(--sentinel-color-risk-moderate); 
+}
+
+.kpi-card.status-low-risk, .kpi-card.status-acceptable, .kpi-card.status-good-performance, .kpi-card.status-ok { 
+    border-left-color: var(--sentinel-color-risk-low); 
+}
+.kpi-card.status-low-risk .kpi-icon, .kpi-card.status-acceptable .kpi-icon, .kpi-card.status-good-performance .kpi-icon, .kpi-card.status-ok .kpi-icon { 
+    color: var(--sentinel-color-risk-low); 
+}
+
+.kpi-card.status-neutral, .kpi-card.status-no-data, .kpi-card.status-unknown { 
+    border-left-color: var(--sentinel-color-risk-neutral); 
+}
+.kpi-card.status-neutral .kpi-icon, .kpi-card.status-no-data .kpi-icon, .kpi-card.status-unknown .kpi-icon { 
+    color: var(--sentinel-color-risk-neutral); 
+}
+
+.kpi-card-header { display: flex; align-items: center; margin-bottom: 0.5rem; } 
+.kpi-icon {
+    font-size: 1.8rem; 
+    margin-right: 0.8rem;
+    color: var(--sentinel-color-text-headings-sub); 
+    line-height: 1.1; padding-top: 0.1em; flex-shrink: 0; 
+}
+.kpi-title { 
+    font-size: 0.8rem; color: var(--sentinel-color-text-muted);
+    margin-bottom: 0.15rem; font-weight: 600; line-height: 1.25;
+    text-transform: uppercase; letter-spacing: 0.03em;
+}
+.kpi-body { text-align: left; margin-top: auto; }
+.kpi-value {
+    font-size: 1.8rem; font-weight: 700; color: var(--sentinel-color-text-headings-main);
+    margin-bottom: 0.2rem; line-height: 1.1; word-wrap: break-word; 
+}
+.kpi-units { font-size: 0.75rem; color: var(--sentinel-color-text-muted); margin-left: 0.25em; font-weight: 500; }
+.kpi-delta { font-size: 0.78rem; font-weight: 600; display: inline-flex; align-items: center; margin-top: 0.1rem;}
+.kpi-delta.positive { color: var(--sentinel-color-delta-positive); }
+.kpi-delta.positive::before { content: "▲ "; margin-right: 0.15em; }
+.kpi-delta.negative { color: var(--sentinel-color-delta-negative); }
+.kpi-delta.negative::before { content: "▼ "; margin-right: 0.15em; }
+.kpi-delta.neutral { color: var(--sentinel-color-risk-neutral); }
+
+
+/* ----- Traffic Light Indicator Styling (for render_traffic_light_indicator) ----- */
+.traffic-light-indicator {
+    display: flex; align-items: center; padding: 0.6rem 0.8rem; 
+    border-radius: 6px; background-color: var(--sentinel-color-background-content);
+    margin-bottom: 0.6rem; border: 1px solid var(--sentinel-color-border-light);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+.traffic-light-dot { width: 0.8rem; height: 0.8rem; border-radius: 50%; margin-right: 0.7rem; flex-shrink: 0; }
+.traffic-light-dot.status-high-risk, .traffic-light-dot.status-critical, .traffic-light-dot.status-high-concern { background-color: var(--sentinel-color-risk-high); }
+.traffic-light-dot.status-moderate-risk, .traffic-light-dot.status-moderate-concern, .traffic-light-dot.status-warning { background-color: var(--sentinel-color-risk-moderate); }
+.traffic-light-dot.status-low-risk, .traffic-light-dot.status-acceptable, .traffic-light-dot.status-good-performance, .traffic-light-dot.status-ok { background-color: var(--sentinel-color-risk-low); }
+.traffic-light-dot.status-neutral, .traffic-light-dot.status-no-data, .traffic-light-dot.status-unknown { background-color: var(--sentinel-color-risk-neutral); }
+
+.traffic-light-message { font-size: 0.85rem; color: var(--sentinel-color-text-dark); font-weight: 500; }
+.traffic-light-details { font-size: 0.75rem; color: var(--sentinel-color-text-muted); margin-left: auto; padding-left: 0.7rem; font-style: normal; }
+
+/* ----- Streamlit Component Overrides & Enhancements ----- */
+section[data-testid="stSidebar"] {
+    background-color: var(--sentinel-color-background-page); 
+    border-right: 1px solid var(--sentinel-color-border-medium);
+    padding-top: 0.7rem;
+}
+section[data-testid="stSidebar"] h1 { 
+    font-size: 1.25rem; text-align: center; margin-bottom: 0.7rem;
+    padding-bottom: 0.35rem; border-bottom: 1px solid var(--sentinel-color-border-light);
+    color: var(--sentinel-color-text-headings-main);
+}
+section[data-testid="stSidebar"] .stImage > img { margin-bottom: 0.6rem; } 
+section[data-testid="stSidebar"] .stMarkdown p, section[data-testid="stSidebar"] .stCaption {
+    font-size: 0.8rem; color: #506678; 
+}
+section[data-testid="stSidebar"] label { 
+    font-weight: 500; font-size: 0.88rem; color: var(--sentinel-color-text-headings-sub);
+}
+
+/* st.metric - Native Streamlit Metric styling adjustments */
+div[data-testid="stMetric"] {
+    background-color: var(--sentinel-color-background-content); border-radius: 6px;
+    padding: 0.8rem 1.0rem; box-shadow: 0 2px 5px rgba(0,0,0,0.04);
+    border-left: 4px solid var(--sentinel-color-action-primary); margin-bottom: 0.8rem;
+}
+div[data-testid="stMetric"] > div:first-child { 
+    font-size: 0.8rem; color: var(--sentinel-color-text-muted); font-weight: 600; margin-bottom: 0.2rem; 
+}
+div[data-testid="stMetricValue"] { font-size: 1.7rem; font-weight: 700; color: var(--sentinel-color-text-headings-main); }
+div[data-testid="stMetricDelta"] { font-size: 0.8rem; font-weight: 500; padding-top: 0.15rem; }
+div[data-testid="stMetricDelta"] .positive { color: var(--sentinel-color-delta-positive) !important; } 
+div[data-testid="stMetricDelta"] .negative { color: var(--sentinel-color-delta-negative) !important; }
+
+/* Expander */
+div[data-testid="stExpander"] {
+    border: 1px solid var(--sentinel-color-border-light); border-radius: 6px; margin-bottom: 1.0rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03); overflow: hidden; 
+}
+div[data-testid="stExpander"] summary {
+    font-weight: 600; color: var(--sentinel-color-text-headings-sub);
+    padding: 0.7rem 1.0rem; background-color: var(--sentinel-color-background-page);
+    border-bottom: 1px solid var(--sentinel-color-border-light); cursor: pointer;
+}
+div[data-testid="stExpander"] summary:hover { background-color: var(--sentinel-color-background-subtle); }
+div[data-testid="stExpander"] > div[data-testid="stExpanderDetails"] { padding: 1.0rem; background-color: var(--sentinel-color-background-content); }
+
+/* Tabs */
+div[data-testid="stTabs"] button { 
+    font-weight: 600; color: var(--sentinel-color-text-muted);
+    padding: 0.6rem 0.9rem; border-radius: 5px 5px 0 0;
+    border-bottom: 2px solid transparent; margin-right: 1px;
+    background-color: var(--sentinel-color-background-subtle); 
+}
+div[data-testid="stTabs"] button:hover {
+    background-color: #dde1e5; 
+    color: var(--sentinel-color-text-headings-main);
+    border-bottom-color: var(--sentinel-color-border-medium);
+}
+div[data-testid="stTabs"] button[aria-selected="true"] {
+    color: var(--sentinel-color-action-primary);
+    border-bottom: 2px solid var(--sentinel-color-action-primary);
+    background-color: var(--sentinel-color-background-content); 
+}
+div[data-testid="stTabs"] div[data-testid^="stVerticalBlock"] { 
+    border: 1px solid var(--sentinel-color-border-light); border-top: none;
+    padding: 1.3rem; border-radius: 0 0 6px 6px;
+    background-color: var(--sentinel-color-background-content);
+}
+
+/* DataFrame Styling (st.dataframe) */
+.stDataFrame { border: 1px solid var(--sentinel-color-border-light); border-radius: 5px; font-size: 0.82rem; } 
+.stDataFrame thead th {
+    background-color: var(--sentinel-color-background-page); color: var(--sentinel-color-text-headings-sub);
+    font-weight: 600; text-transform: none; 
+    font-size: 0.8rem; letter-spacing: 0.01em; border-bottom: 2px solid var(--sentinel-color-border-medium);
+    padding: 0.5rem 0.4rem; 
+}
+.stDataFrame tbody td { padding: 0.4rem 0.4rem; border-bottom: 1px solid var(--sentinel-color-border-light); }
+.stDataFrame tbody tr:nth-of-type(odd) { background-color: var(--sentinel-color-background-subtle); } 
+.stDataFrame tbody tr:hover { background-color: #dde1e5; } 
+
+
+/* General UI Elements */
+a { color: var(--sentinel-color-text-link-default); text-decoration: none; font-weight: 500; }
+a:hover { text-decoration: underline; color: color-mix(in srgb, var(--sentinel-color-text-link-default) 70%, black); } 
+hr { border-top: 1px solid var(--sentinel-color-border-medium); margin: 1.3rem 0; }
+
+.stButton>button {
+    border-radius: 4px; padding: 0.45rem 0.85rem; font-weight: 500; font-size: 0.9rem; /* Slightly larger padding/font */
+    transition: background-color 0.1s ease, transform 0.1s ease, border-color 0.1s ease;
+}
+.stButton button.st-emotion-cache- Ủyjz9c, /* Example of Streamlit's generated class for primary */
+.stButton>button[kind="primary"] { 
+    background-color: var(--sentinel-color-action-primary);
+    color: white; border: 1px solid var(--sentinel-color-action-primary);
+}
+.stButton button.st-emotion-cache- Ủyjz9c:hover,
+.stButton>button[kind="primary"]:hover {
+    background-color: color-mix(in srgb, var(--sentinel-color-action-primary) 85%, black); 
+    border-color: color-mix(in srgb, var(--sentinel-color-action-primary) 80%, black);
+}
+.stButton button.st-emotion-cache-uzeiqp, /* Example of Streamlit's generated class for secondary */
+.stButton>button[kind="secondary"] {
+    background-color: var(--sentinel-color-background-content);
+    color: var(--sentinel-color-action-primary);
+    border: 1px solid var(--sentinel-color-action-primary);
+}
+.stButton button.st-emotion-cache-uzeiqp:hover,
+.stButton>button[kind="secondary"]:hover {
+    background-color: var(--sentinel-color-background-subtle);
+    border-color: color-mix(in srgb, var(--sentinel-color-action-primary) 85%, black);
+    color: color-mix(in srgb, var(--sentinel-color-action-primary) 90%, black);
+}
+
+div[data-testid="stProgress"] > div { background-color: var(--sentinel-color-action-primary); border-radius: 3px; }
+
+/* Styles for Custom Markdown KPI Boxes (as in Population Dashboard) */
+.custom-markdown-kpi-box {
+    background-color: var(--sentinel-color-background-content);
+    border-radius: 8px; padding: 1.2rem;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
+    border-left: 5px solid var(--sentinel-color-risk-neutral); /* Default edge color */
+    margin-bottom: 1rem; display: flex; flex-direction: column; height: 100%; text-align: left;
+}
+.custom-markdown-kpi-box.highlight-red-edge { border-left-color: var(--sentinel-color-risk-high) !important; }
+.custom-markdown-kpi-box.highlight-amber-edge { border-left-color: var(--sentinel-color-risk-moderate) !important; }
+.custom-markdown-kpi-box.highlight-green-edge { border-left-color: var(--sentinel-color-risk-low) !important; }
+
+.custom-kpi-label-top-condition {
+    font-size: 0.78rem; color: var(--sentinel-color-text-muted); font-weight: 600; 
+    margin-bottom: 0.25rem; line-height: 1.2; text-transform: uppercase;
+}
+.custom-kpi-value-large {
+    font-size: 1.65rem; font-weight: 700; color: var(--sentinel-color-text-headings-main);
+    line-height: 1.1; margin-bottom: 0.1rem; word-wrap: break-word;
+}
+.custom-kpi-subtext-small { 
+    font-size: 0.75rem; color: var(--sentinel-color-text-muted); margin-top: 0.05rem; 
+}
+
+/* Improved Table styling for non-Streamlit DataFrames (e.g., custom HTML tables if needed) */
+.sentinel-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+}
+.sentinel-table th, .sentinel-table td {
+    border: 1px solid var(--sentinel-color-border-light);
+    padding: 0.5rem 0.6rem;
+    text-align: left;
+    vertical-align: top;
+}
+.sentinel-table th {
+    background-color: var(--sentinel-color-background-subtle);
+    font-weight: 600;
+    color: var(--sentinel-color-text-headings-sub);
+}
+.sentinel-table tbody tr:nth-of-type(even) {
+    background-color: var(--sentinel-color-background-page); 
+}
+.sentinel-table tbody tr:hover {
+    background-color: #dde1e5; 
+}
