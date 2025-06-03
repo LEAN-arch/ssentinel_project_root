@@ -56,3 +56,4 @@ font = "sans serif"
 [mapbox]
 # Mapbox access token should be set via environment variable (MAPBOX_ACCESS_TOKEN) for security.
 # Streamlit's st.map and Plotly Express will use the environment variable if set.
+# token = "YOUR_MAPBOX_TOKEN" # Avoid hardcoding tokens here.
