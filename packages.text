@@ -1,0 +1,37 @@
+# sentinel_project_root/packages.txt
+# System-level package dependencies for Sentinel Health Co-Pilot (Debian/Ubuntu syntax)
+# These are often required for Python packages with C extensions, especially geospatial ones.
+# To install on Debian/Ubuntu: sudo apt-get update && sudo apt-get install -y $(cat packages.txt | grep -v '^#')
+
+build-essential
+python3-dev    # For compiling Python C extensions
+pkg-config     # Helper tool used to find compile/link flags for libraries
+
+# Geospatial dependencies (even without GeoPandas, some might be needed by light alternatives or for future features)
+# If truly no geospatial Python libraries are used that need these, they can be removed.
+# However, for a system dealing with "zones", some level of geo-capability is often implied.
+# If using libraries like `shapely` (often a geopandas dep, but can be used standalone)
+# or `pyproj`, these system libs might still be relevant.
+# If using `rasterio` or `fiona` directly, GDAL would be needed.
+# For now, keeping them as a precaution or for future system library needs.
+# If a very minimal deployment is targeted and confirmed no Python lib needs them, prune this list.
+
+# libgdal-dev    # GDAL development files (if fiona or rasterio were used directly, or for GDAL command-line tools)
+# gdal-bin       # GDAL command-line utilities (useful for geo data prep, might not be needed by app runtime)
+# libproj-dev    # PROJ library development files (for coordinate reference systems, used by pyproj)
+# libgeos-dev    # GEOS library development files (for geometry operations, used by shapely)
+# libspatialindex-dev # For RTree spatial indexing (if rtree Python package is used)
+
+
+# --- Notes for this refactored packages.txt ---
+# 1. GeoPandas related direct dependencies (like libgdal-dev for Fiona which GeoPandas uses heavily)
+#    are commented out as GeoPandas itself is removed.
+# 2. If lightweight libraries like `shapely` (for geometry objects without GeoPandas) or `pyproj`
+#    are still used (they are common dependencies for geospatial tasks even without full GeoPandas),
+#    then `libgeos-dev` and `libproj-dev` respectively might still be needed.
+#    The `requirements.txt` should be the primary driver for what Python packages are installed,
+#    and their individual docs would specify system dependencies.
+# 3. `build-essential`, `python3-dev`, and `pkg-config` are generally good to have for any Python
+#    environment where packages with C extensions might be compiled.
+# 4. This file is critical for services like Streamlit Cloud which use it to install system deps.
+#    For local dev, the user needs to manage these installations manually based on OS.
