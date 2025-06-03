@@ -41,6 +41,12 @@ except ImportError as e:
 except Exception as e_viz:
     st.error(f"Error during visualization import/setup: {e_viz}")
     print(f"ERROR: Error during visualization import/setup: {e_viz}", file=sys.stderr)
+    print(f"DEBUG: main/main/app.py - _current_file_dir_app_main: {_current_file_dir_app_main}", file=sys.stderr)
+    print(f"DEBUG: main/main/app.py - _project_root_dir_app_main: {_project_root_dir_app_main}", file=sys.stderr)
+    if _project_root_dir_app_main not in sys.path:
+    sys.path.insert(0, _project_root_dir_app_main)
+    print(f"DEBUG: main/main/app.py - Added to sys.path: {_project_root_dir_app_main}", file=sys.stderr)
+    print(f"DEBUG: main/main/app.py - Current sys.path: {sys.path}", file=sys.stderr)
 
 # --- Global Logging Configuration ---
 logging.basicConfig(
