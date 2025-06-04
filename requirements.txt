@@ -3,9 +3,12 @@
 
 # Core Streamlit and Data Handling
 streamlit>=1.38.0 # Or latest stable version
-pandas>=2.0.0,<2.2.0 # Specify a compatible range
+pandas>=2.1.4 # Specify a compatible range
 numpy>=1.23.0,<1.27.0
-
+fiona==1.9.5
+shapely==2.0.2
+pyproj==3.6.1
+rtree==1.1.0
 # Plotting and Visualization
 plotly>=5.10.0,<5.21.0
 
