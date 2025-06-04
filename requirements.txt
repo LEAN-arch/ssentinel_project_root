@@ -2,16 +2,14 @@
 # Python package dependencies for Sentinel Health Co-Pilot
 
 # Core Streamlit and Data Handling
-streamlit>=1.38.0 # Or latest stable version
-pandas>=2.1.4 # Specify a compatible range
-numpy>=1.23.0,<1.27.0
-fiona==1.9.5
-shapely==2.0.2
-pyproj==3.6.1
-rtree==1.1.0
-# Plotting and Visualization
-plotly>=5.10.0,<5.21.0
+streamlit==1.30.0 # Or latest stable version
+pandas==2.1.4 # Specify a compatible range
+numpy>=1.24.0
+fiona==1.9.4
+shapely==2.0.1
 
+# Plotting and Visualization
+plotly==5.18.0
 # Geospatial - Lightweight Alternatives (if basic geometry handling or CRS is still needed)
 # shapely>=2.0.0 # For working with geometry objects (often a dependency of GeoPandas, but can be used standalone)
 # pyproj>=3.4.0  # For coordinate reference system transformations (if needed)
