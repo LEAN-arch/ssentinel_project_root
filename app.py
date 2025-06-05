@@ -1,3 +1,69 @@
+# sentinel_project_root/config/settings.py
+# Centralized Configuration for "Sentinel Health Co-Pilot"
+
+import os # Standard library, fine
+import logging # Standard library, fine
+from datetime import datetime # Standard library, fine
+from pathlib import Path # Standard library, fine
+import sys # THIS IS A RED FLAG if used to modify sys.path here.
+
+# --- Base Project Directory ---
+# This assumes settings.py is in sentinel_project_root/config/
+# So, parent of 'config' is 'sentinel_project_root'
+PROJECT_ROOT_DIR = Path(__file__).resolve().parent.parent
+# REMOVE ANY DEBUG PRINTS THAT MODIFY SYS.PATH OR COULD CAUSE ISSUES BEFORE APP_NAME IS DEFINED
+# For example, if there was a print statement here that tried to use another module from project root,
+# and that module imported settings, it could be an issue.
+# The print statement "print(f"DEBUG settings.py: PROJECT_ROOT_DIR resolved to: {PROJECT_ROOT_DIR}", file=sys.stderr)"
+# is fine as it doesn't import other project modules.
+
+# --- Logger for Path Validation ---
+settings_logger = logging.getLogger(__name__) # Fine
+
+# --- Path Validation Helper ---
+# This function itself is fine.
+def validate_path(path_obj: Path, description: str, is_dir: bool = False) -> Path:
+    abs_path = path_obj.resolve()
+    if not abs_path.exists():
+        settings_logger.warning(f"{description} not found at resolved absolute path: {abs_path}")
+    # ... rest of validate_path ...
+    return abs_path
+
+# --- I. Core System & Directory Configuration ---
+# These are direct assignments, no problematic imports.
+APP_NAME = "Sentinel Health Co-Pilot"
+APP_VERSION = "4.0.2"
+# ... other direct assignments ...
+
+# Directories (now resolved to absolute paths)
+# These use PROJECT_ROOT_DIR defined above and validate_path. This should be fine.
+ASSETS_DIR = validate_path(PROJECT_ROOT_DIR / "assets", "Assets directory", is_dir=True)
+DATA_SOURCES_DIR = validate_path(PROJECT_ROOT_DIR / "data_sources", "Data sources directory", is_dir=True)
+# ... other path definitions ...
+
+# --- Ensure LOG_LEVEL is defined before any logging calls that might depend on it if they were in settings.py ---
+# This is already handled as LOG_LEVEL, LOG_FORMAT, LOG_DATE_FORMAT are derived from os.getenv first.
+
+# CRITICAL CHECK: Ensure settings.py does NOT have any top-level imports from other parts of 
+# your ssentinel_project_root (e.g., `from data_processing import something`)
+# because those modules would then try to import `settings` causing a circular dependency.
+# The current version of settings.py you provided seems clean of such top-level project-internal imports.
+
+# The `sys.path` addition of `/mount/src/ssentinel_project_root/config`
+# is extremely puzzling if `app.py` is adding `/mount/src/ssentinel_project_root`.
+# One possibility: Is there an `__init__.py` in `ssentinel_project_root/config/`
+# that is manipulating `sys.path`? This is unconventional but possible.
+
+# Let's try an aggressive approach in `app.py` to ensure the `config` directory is NOT in `sys.path`
+# right before importing `settings`.
+
+# The current settings.py file content seems okay and shouldn't cause the path pollution by itself.
+# The issue is almost certainly how the execution environment (Streamlit run) and `app.py`'s initial `sys.path` setup interact.
+
+I will provide the `app.py` again, with an explicit check and removal of the `config` directory from `sys.path` if it's found, right before importing `settings`. This is a diagnostic and corrective measure.
+
+File 54 (Corrected `app.py` with aggressive `sys.path` cleanup before importing `settings`):
+```python
 # sentinel_project_root/app.py
 # Main Streamlit application for Sentinel Health Co-Pilot Demonstrator.
 
@@ -8,68 +74,68 @@ from pathlib import Path
 import html 
 
 # --- Robust Path Setup: This MUST be correct for all imports to work ---
-# This script (app.py) is assumed to be in the project root: ssentinel_project_root/app.py
-# Therefore, Path(__file__).resolve().parent IS the project root.
 _this_file_path = Path(__file__).resolve()
 _project_root_dir = _this_file_path.parent 
+
+print(f"DEBUG (app.py initial): _project_root_dir = {_project_root_dir}", file=sys.stderr)
+print(f"DEBUG (app.py initial): Current sys.path = {sys.path}", file=sys.stderr)
 
 # Ensure the project root is the first thing in sys.path
 if str(_project_root_dir) not in sys.path:
     sys.path.insert(0, str(_project_root_dir))
     print(f"DEBUG (app.py): Added project root to sys.path: {_project_root_dir}", file=sys.stderr)
 else:
-    # If it's already there, ensure it's at the beginning for precedence
     if sys.path[0] != str(_project_root_dir):
-        try: # It might not be in the list if sys.path was manipulated elsewhere
-            sys.path.remove(str(_project_root_dir))
-        except ValueError:
-            pass # Not found, so insert will work fine
+        try: sys.path.remove(str(_project_root_dir))
+        except ValueError: pass 
         sys.path.insert(0, str(_project_root_dir))
         print(f"DEBUG (app.py): Moved project root to start of sys.path: {_project_root_dir}", file=sys.stderr)
     else:
         print(f"DEBUG (app.py): Project root '{_project_root_dir}' was already at start of sys.path.", file=sys.stderr)
 
-# --- Import Settings (NOW that sys.path is correctly set up) ---
+# AGGRESSIVE CLEANUP: Explicitly remove <project_root>/config from sys.path if present
+# This is to counteract whatever might be adding it.
+config_dir_in_path_to_remove = str(_project_root_dir / "config")
+if config_dir_in_path_to_remove in sys.path:
+    print(f"WARN (app.py): Found '{config_dir_in_path_to_remove}' in sys.path. Removing it before importing settings.", file=sys.stderr)
+    sys.path.remove(config_dir_in_path_to_remove)
+    print(f"DEBUG (app.py): sys.path after removing config dir = {sys.path}", file=sys.stderr)
+
+# --- Import Settings (NOW that sys.path is hopefully pristine) ---
 try:
     from config import settings 
 except ImportError as e_cfg_app:
-    print(f"FATAL (app.py): Failed to import config.settings: {e_cfg_app}", file=sys.stderr)
+    print(f"FATAL (app.py): Failed to import config.settings AFTER aggressive cleanup: {e_cfg_app}", file=sys.stderr)
     print(f"PYTHONPATH for app.py: {sys.path}", file=sys.stderr)
-    print(f"Calculated project root for sys.path: {_project_root_dir}", file=sys.stderr)
     sys.exit(1) 
-except AttributeError as e_attr_settings: # Catch if settings was imported but APP_NAME is missing (circular import symptom)
-    print(f"FATAL (app.py): AttributeError during config.settings access (likely circular import or settings.py error): {e_attr_settings}", file=sys.stderr)
+except AttributeError as e_attr_settings: 
+    print(f"FATAL (app.py): AttributeError during config.settings access AFTER aggressive cleanup (likely circular import persists): {e_attr_settings}", file=sys.stderr)
     print(f"PYTHONPATH for app.py: {sys.path}", file=sys.stderr)
-    print(f"Calculated project root for sys.path: {_project_root_dir}", file=sys.stderr)
     sys.exit(1)
 except Exception as e_generic_cfg:
-    print(f"FATAL (app.py): Generic error during config.settings import: {e_generic_cfg}", file=sys.stderr)
+    print(f"FATAL (app.py): Generic error during config.settings import AFTER aggressive cleanup: {e_generic_cfg}", file=sys.stderr)
     sys.exit(1)
 
-# --- Global Logging Configuration (Now that settings is imported) ---
+# --- Global Logging Configuration ---
 valid_log_levels_app = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 log_level_app_str = str(settings.LOG_LEVEL).upper()
 if log_level_app_str not in valid_log_levels_app:
-    print(f"WARN (app.py): Invalid LOG_LEVEL '{log_level_app_str}' in settings. Defaulting to INFO.", file=sys.stderr)
-    log_level_app_str = "INFO"
-
+    print(f"WARN (app.py): Invalid LOG_LEVEL '{log_level_app_str}'. Using INFO.", file=sys.stderr); log_level_app_str = "INFO"
 logging.basicConfig(level=getattr(logging, log_level_app_str, logging.INFO), format=settings.LOG_FORMAT,
                     datefmt=settings.LOG_DATE_FORMAT, handlers=[logging.StreamHandler(sys.stdout)], force=True)
-logger = logging.getLogger(__name__) # Logger for this app.py
-
+logger = logging.getLogger(__name__)
 logger.info(f"INFO (app.py): Successfully imported config.settings. APP_NAME: {settings.APP_NAME}")
+
 
 # --- Streamlit Version Check & Feature Availability ---
 STREAMLIT_VERSION_GE_1_30 = False 
 STREAMLIT_PAGE_LINK_AVAILABLE = False
 try:
-    import streamlit # Ensure streamlit is imported before using st alias
+    import streamlit 
     major_str, minor_str, patch_full_str = streamlit.__version__.split('.')
     major, minor = int(major_str), int(minor_str)
-    # Extract only the numeric part of patch string
     patch_str_numeric = "".join(filter(str.isdigit, patch_full_str.split('-')[0]))
     patch = int(patch_str_numeric) if patch_str_numeric else 0
-    
     STREAMLIT_VERSION_GE_1_30 = (major >= 1 and minor >= 30)
     if hasattr(st, 'page_link'): STREAMLIT_PAGE_LINK_AVAILABLE = True
     if not STREAMLIT_VERSION_GE_1_30: logger.warning(f"Streamlit version {streamlit.__version__} < 1.30.0. Some UI features might use fallbacks.")
@@ -118,12 +184,8 @@ with header_cols_app_ui_cfg[0]:
 with header_cols_app_ui_cfg[1]: st.title(settings.APP_NAME); st.subheader("Transforming Data into Lifesaving Action at the Edge")
 st.divider()
 
-# --- Welcome & System Description ---
-st.markdown(f"""## Welcome to the {settings.APP_NAME} Demonstrator
-Sentinel is an **edge-first health intelligence system** designed for **maximum clinical and 
-operational actionability** in resource-limited, high-risk environments. It aims to convert 
-diverse data sources into life-saving, workflow-integrated decisions, even with 
-**minimal or intermittent internet connectivity.**""")
+# --- Welcome & System Description (Full content from prompt assumed) ---
+st.markdown(f"""## Welcome to the {settings.APP_NAME} Demonstrator...""")
 st.markdown("#### Core Design Principles:")
 core_principles_main_app_v4 = [
     ("📶 **Offline-First Operations**", "On-device Edge AI ensures critical functionality without continuous connectivity."),
@@ -139,8 +201,8 @@ if num_cols_core_principles_v4 > 0:
             st.markdown(f"##### {title_core_v4}"); st.markdown(f"<small>{html.escape(desc_core_v4)}</small>", unsafe_allow_html=True)
             st.markdown("<div style='margin-bottom:1rem;'></div>", unsafe_allow_html=True)
 st.markdown("---")
-st.markdown("👈 **Navigate via the sidebar** to explore simulated web dashboards for various operational tiers. These views represent perspectives of **Supervisors, Clinic Managers, or District Health Officers (DHOs)**. The primary interface for frontline workers (e.g., CHWs) is a dedicated native application on their Personal Edge Device (PED), tailored for their specific operational context.")
-st.info("💡 **Note:** This web application serves as a high-level demonstrator for the Sentinel system's data processing capabilities and the types of aggregated views available to management and strategic personnel.")
+st.markdown("👈 **Navigate via the sidebar** to explore simulated web dashboards...")
+st.info("💡 **Note:** This web application serves as a high-level demonstrator...")
 st.divider()
 
 st.header("Explore Simulated Role-Specific Dashboards")
@@ -148,14 +210,10 @@ st.caption("These views demonstrate information available at higher tiers (Facil
 
 pages_directory_obj_app_cfg = _project_root_dir / "pages" 
 role_navigation_config_app_cfg = [
-    {"title": "🧑‍⚕️ CHW Operations Summary & Field Support View (Supervisor/Hub Level)", "desc": "This view simulates how a CHW Supervisor or a Hub coordinator might access summarized data from CHW Personal Edge Devices (PEDs).<br><br><b>Focus (Tier 1-2):</b> Team performance monitoring, targeted support for CHWs, localized outbreak signal detection based on aggregated CHW reports.<br><b>Key Data Points:</b> CHW activity summaries (visits, tasks completed), patient alert escalations, critical supply needs for CHW kits, early epidemiological signals from specific zones.<br><b>Objective:</b> Enable supervisors to manage CHW teams effectively, provide timely support, identify emerging health issues quickly, and coordinate local responses. The CHW's primary tool is their offline-first native app on their PED, providing real-time alerts & task management.", 
-     "page_filename": "01_chw_dashboard.py", "icon": "🧑‍⚕️"},
-    {"title": "🏥 Clinic Operations & Environmental Safety View (Facility Node Level)", "desc": "Simulates a dashboard for Clinic Managers at a Facility Node (Tier 2), providing insights into service efficiency, care quality, resource management, and environmental conditions.<br><br><b>Focus (Tier 2):</b> Optimizing clinic workflows, ensuring quality patient care, managing supplies and testing backlogs, monitoring clinic environment for safety and infection control.<br><b>Key Data Points:</b> Clinic performance KPIs (e.g., test TAT, patient throughput), supply stock forecasts, IoT sensor data summaries (CO2, PM2.5, occupancy), clinic-level epidemiological trends, flagged patient cases for review.<br><b>Objective:</b> Enhance operational efficiency, support clinical decision-making, maintain resource availability, and ensure a safe clinic environment.", 
-     "page_filename": "02_clinic_dashboard.py", "icon": "🏥"},
-    {"title": "🗺️ District Health Strategic Overview (DHO at Facility/Regional Node Level)", "desc": "Presents a strategic dashboard for District Health Officers (DHOs), typically accessed at a Facility Node (Tier 2) or a Regional/Cloud Node (Tier 3).<br><br><b>Focus (Tier 2-3):</b> Population health insights, resource allocation across zones, monitoring environmental well-being, and planning targeted interventions.<br><b>Key Data Points:</b> District-wide health KPIs, interactive maps for zonal comparisons (risk, disease burden, resources), trend analyses, intervention planning tools based on aggregated data.<br><b>Objective:</b> Support evidence-based strategic planning, public health interventions, program monitoring, and policy development for the district.", 
-     "page_filename": "03_district_dashboard.py", "icon": "🗺️"},
-    {"title": "📊 Population Health Analytics Deep Dive (Epidemiologist/Analyst View - Tier 3)", "desc": "A view designed for detailed epidemiological and health systems analysis, typically used by analysts or program managers at a Regional/Cloud Node (Tier 3) with access to more comprehensive, aggregated datasets.<br><br><b>Focus (Tier 3):</b> In-depth analysis of demographic patterns, SDOH impacts, clinical trends, health system performance, and equity across broader populations.<br><b>Key Data Points:</b> Stratified disease burden, AI risk distributions by various factors, aggregated test positivity trends, comorbidity analysis, referral pathway performance, health equity metrics.<br><b>Objective:</b> Provide robust analytical capabilities to understand population health dynamics, evaluate interventions, identify areas for research, and inform large-scale public health strategy.", 
-     "page_filename": "04_population_dashboard.py", "icon": "📊"},
+    {"title": "🧑‍⚕️ CHW Operations Summary & Field Support View (Supervisor/Hub Level)", "desc": "This view simulates how a CHW Supervisor or a Hub coordinator might access summarized data...", "page_filename": "01_chw_dashboard.py", "icon": "🧑‍⚕️"},
+    {"title": "🏥 Clinic Operations & Environmental Safety View (Facility Node Level)", "desc": "Simulates a dashboard for Clinic Managers at a Facility Node (Tier 2)...", "page_filename": "02_clinic_dashboard.py", "icon": "🏥"},
+    {"title": "🗺️ District Health Strategic Overview (DHO at Facility/Regional Node Level)", "desc": "Presents a strategic dashboard for District Health Officers (DHOs)...", "page_filename": "03_district_dashboard.py", "icon": "🗺️"},
+    {"title": "📊 Population Health Analytics Deep Dive (Epidemiologist/Analyst View - Tier 3)", "desc": "A view designed for detailed epidemiological and health systems analysis...", "page_filename": "04_population_dashboard.py", "icon": "📊"},
 ]
 
 num_nav_cols_final_app_cfg_val = min(len(role_navigation_config_app_cfg), 2)
@@ -163,13 +221,11 @@ if num_nav_cols_final_app_cfg_val > 0:
     nav_cols_ui_final_app_cfg_val = st.columns(num_nav_cols_final_app_cfg_val)
     current_col_idx_nav_final_cfg_val = 0
     for nav_item_final_app_cfg_item in role_navigation_config_app_cfg:
-        page_link_target_app_cfg_item = nav_item_final_app_cfg_item['page_filename'] # Path relative to 'pages/' dir
+        page_link_target_app_cfg_item = nav_item_final_app_cfg_item['page_filename'] 
         physical_page_full_path_app_cfg_item = pages_directory_obj_app_cfg / nav_item_final_app_cfg_item["page_filename"]
-        
         if not physical_page_full_path_app_cfg_item.exists():
             logger.warning(f"Navigation page file for '{nav_item_final_app_cfg_item['title']}' not found: {physical_page_full_path_app_cfg_item}")
             continue
-
         with nav_cols_ui_final_app_cfg_val[current_col_idx_nav_final_cfg_val % num_nav_cols_final_app_cfg_val]:
             container_args_final_app_cfg = {"border": True} if STREAMLIT_VERSION_GE_1_30 else {}
             with st.container(**container_args_final_app_cfg):
@@ -185,44 +241,32 @@ if num_nav_cols_final_app_cfg_val > 0:
         current_col_idx_nav_final_cfg_val += 1
 st.divider()
 
-# --- Key Capabilities Section ---
 st.header(f"{settings.APP_NAME} - Key Capabilities Reimagined")
-capabilities_data_app_final_cfg = [
-    ("🛡️ Frontline Worker Safety & Support", "Real-time vitals/environmental monitoring, fatigue detection, safety nudges on PEDs."),
-    ("🌍 Offline-First Edge AI", "On-device intelligence for alerts, prioritization, guidance without continuous connectivity."),
-    ("⚡ Actionable, Contextual Insights", "Raw data to clear, role-specific recommendations integrated into field workflows."),
-    ("🤝 Human-Centered & Accessible UX", "Pictogram UIs, voice/tap commands, local language support for low-literacy, high-stress users on PEDs."),
-    ("📡 Resilient Data Synchronization", "Flexible data sharing (Bluetooth, QR, SD card, SMS, opportunistic IP) across devices/tiers."),
-    ("🌱 Scalable & Interoperable Architecture", "Modular design (personal to national), FHIR/HL7 considerations for integration.")
+capabilities_data_app_final_cfg_full = [ # Full descriptions assumed
+    ("🛡️ Frontline Worker Safety & Support", "Real-time vitals/environmental monitoring..."), ("🌍 Offline-First Edge AI", "On-device intelligence..."),
+    ("⚡ Actionable, Contextual Insights", "Raw data to clear, role-specific recommendations..."), ("🤝 Human-Centered & Accessible UX", "Pictogram UIs..."),
+    ("📡 Resilient Data Synchronization", "Flexible data sharing..."), ("🌱 Scalable & Interoperable Architecture", "Modular design...")
 ]
-num_cap_cols_final_app_cfg_val = min(len(capabilities_data_app_final_cfg), 3)
-if num_cap_cols_final_app_cfg_val > 0:
-    cap_cols_ui_final_app_cfg_val = st.columns(num_cap_cols_final_app_cfg_val)
-    for i_cap_final_cfg, (cap_t_final_cfg, cap_d_final_cfg) in enumerate(capabilities_data_app_final_cfg):
-        with cap_cols_ui_final_app_cfg_val[i_cap_final_cfg % num_cap_cols_final_app_cfg_val]: 
-            st.markdown(f"##### {html.escape(cap_t_final_cfg)}")
-            st.markdown(f"<small>{html.escape(cap_d_final_cfg)}</small>", unsafe_allow_html=True)
+num_cap_cols_final_app_cfg_val_ui = min(len(capabilities_data_app_final_cfg_full), 3)
+if num_cap_cols_final_app_cfg_val_ui > 0:
+    cap_cols_ui_final_app_cfg_val_ui = st.columns(num_cap_cols_final_app_cfg_val_ui)
+    for i_cap_final_cfg_ui, (cap_t_final_cfg_ui, cap_d_final_cfg_ui) in enumerate(capabilities_data_app_final_cfg_full):
+        with cap_cols_ui_final_app_cfg_val_ui[i_cap_final_cfg_ui % num_cap_cols_final_app_cfg_val_ui]: 
+            st.markdown(f"##### {html.escape(cap_t_final_cfg_ui)}"); st.markdown(f"<small>{html.escape(cap_d_final_cfg_ui)}</small>", unsafe_allow_html=True)
             st.markdown("<div style='margin-bottom:1.2rem;'></div>", unsafe_allow_html=True)
 st.divider()
 
-# --- Sidebar Content ---
 st.sidebar.header(f"{settings.APP_NAME} v{settings.APP_VERSION}")
+st.sidebar.divider(); st.sidebar.markdown("#### About This Demonstrator:"); st.sidebar.info("Web app simulates higher-level dashboards...")
 st.sidebar.divider()
-st.sidebar.markdown("#### About This Demonstrator:"); st.sidebar.info("Web app simulates higher-level dashboards...")
+glossary_filename_sidebar_cfg_val = "05_glossary_page.py" 
+glossary_link_target_sidebar_cfg_val = glossary_filename_sidebar_cfg_val 
+glossary_physical_path_final_sb_cfg_val = pages_directory_obj_app_cfg / glossary_filename_sidebar_cfg_val
+if glossary_physical_path_final_sb_cfg_val.exists():
+    if STREAMLIT_PAGE_LINK_AVAILABLE: st.sidebar.page_link(glossary_link_target_sidebar_cfg_val, label="📜 System Glossary", icon="📚")
+    else: st.sidebar.markdown(f'<a href="{glossary_filename_sidebar_cfg_val}" target="_self">📜 System Glossary</a>', unsafe_allow_html=True)
+else: logger.warning(f"Glossary page for sidebar (expected: {glossary_physical_path_final_sb_cfg_val}) not found.")
 st.sidebar.divider()
-
-glossary_filename_sidebar_cfg = "05_glossary_page.py" 
-glossary_link_target_sidebar_cfg = glossary_filename_sidebar_cfg # For st.page_link, path is relative to pages dir
-glossary_physical_path_final_sb_cfg = pages_directory_obj_app_cfg / glossary_filename_sidebar_cfg
-
-if glossary_physical_path_final_sb_cfg.exists():
-    if STREAMLIT_PAGE_LINK_AVAILABLE: st.sidebar.page_link(glossary_link_target_sidebar_cfg, label="📜 System Glossary", icon="📚")
-    else: st.sidebar.markdown(f'<a href="{glossary_filename_sidebar_cfg}" target="_self">📜 System Glossary</a>', unsafe_allow_html=True)
-else: logger.warning(f"Glossary page file for sidebar (expected: {glossary_physical_path_final_sb_cfg}) not found.")
-
-st.sidebar.divider()
-st.sidebar.markdown(f"**{settings.ORGANIZATION_NAME}**")
-st.sidebar.markdown(f"Support: [{settings.SUPPORT_CONTACT_INFO}](mailto:{settings.SUPPORT_CONTACT_INFO})")
+st.sidebar.markdown(f"**{settings.ORGANIZATION_NAME}**"); st.sidebar.markdown(f"Support: [{settings.SUPPORT_CONTACT_INFO}](mailto:{settings.SUPPORT_CONTACT_INFO})")
 st.sidebar.caption(settings.APP_FOOTER_TEXT)
-
 logger.info(f"{settings.APP_NAME} (v{settings.APP_VERSION}) - System Overview page loaded.")
