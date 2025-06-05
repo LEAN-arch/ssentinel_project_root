@@ -1,7 +1,7 @@
-zone_id,name,population,socio_economic_index,num_clinics,avg_travel_time_clinic_min,predominant_hazard_type,typical_workforce_exposure_level,primary_livelihood,water_source_main,area_sqkm
-ZoneA,Alpha Central District,12500,0.62,3,15,URBAN_HEAT_ISLAND,MODERATE,Services & Trade,Piped Network,40.5
-ZoneB,Beta Southern Plains,18200,0.38,1,55,SEASONAL_FLOODING,HIGH,Agriculture,Borehole/Community Well,150.2
-ZoneC,Gamma Eastern Hills,7800,0.81,1,10,LANDSLIDE_RISK,MODERATE_HIGH,Small Business/Artisanal,Piped (Intermittent),25.0
-ZoneD,Delta Western Coast,14000,0.50,2,25,COASTAL_STORM_SURGE,HIGH,Fishing/Tourism,Piped Network,75.8
-ZoneE,Epsilon Northern Valley,9500,0.45,1,40,DROUGHT_RISK,HIGH,Pastoralism/Subsistence Farming,River/Spring Fed,90.0
-ZoneF,Foxtrot Industrial Park,3200,0.68,0,30,AIR_POLLUTION_INDUSTRIAL,MODERATE_HIGH,Factory Work,Utility Tanker/Bottled,15.5
+zone_id,name,population,socio_economic_index,num_clinics,avg_travel_time_clinic_min,area_sqkm,predominant_hazard_type,primary_livelihood,water_source_main
+ZoneA,Alpha Central,12500,0.62,3,15,40.5,URBAN_HEAT_ISLAND,Services,Piped Network
+ZoneB,Beta South,18200,0.38,1,55,150.2,SEASONAL_FLOODING,Agriculture,Borehole/Community Well
+ZoneC,Gamma Hills,7800,0.81,1,10,25.0,LANDSLIDE_RISK,Small Business/Artisanal,Piped (Intermittent)
+ZoneD,Delta Coast,14000,0.50,2,25,75.8,COASTAL_STORM,Fishing/Tourism,Piped Network
+ZoneE,Epsilon Valley,9500,0.45,1,40,90.0,DROUGHT_RISK,Pastoralism/Agriculture,River/Spring Fed
+ZoneF,Foxtrot Park,3200,0.68,0,30,15.5,AIR_POLLUTION,Factory Work,Utility Tanker
