@@ -27,7 +27,6 @@ try:
     from pages.clinic_components.testing_insights import prepare_clinic_lab_testing_insights_data
 except ImportError as e_clinic_dash_import:
     import sys
-    # ... (import error handling as before) ...
     current_file_path = Path(__file__).resolve()
     project_root_dir = current_file_path.parent.parent
     error_message = (
@@ -239,36 +238,30 @@ else:
 if main_kpis_display_data:
     st.markdown("##### **Overall Service Performance:**")
     kpi_cols_main = st.columns(min(len(main_kpis_display_data), 4))
-    for i, kpi_data_item in enumerate(main_kpis_display_data): # Use a different variable name here
-        # DEBUGGING: Print the kpi_data_item
-        # st.write(f"Debug (Main KPI {i}): {kpi_data_item}") 
-        # logger.debug(f"Debug (Main KPI {i}): {kpi_data_item}")
+    for i, kpi_data_item in enumerate(main_kpis_display_data): 
         try:
             render_kpi_card(**kpi_data_item, container=kpi_cols_main[i % 4]) 
-        except TypeError as te_main_kpi:
-            logger.error(f"TypeError rendering main KPI {i} with data {kpi_data_item}: {te_main_kpi}", exc_info=True)
-            st.error(f"Error displaying a main KPI. Check logs. Data: {kpi_data_item}")
-        except Exception as e_main_kpi:
-            logger.error(f"Error rendering main KPI {i} with data {kpi_data_item}: {e_main_kpi}", exc_info=True)
-            st.error(f"Unexpected error displaying a main KPI. Data: {kpi_data_item}")
+        except TypeError as te_main_kpi: # Catch TypeError specifically
+            logger.error(f"TypeError rendering main KPI {i}. Data: {kpi_data_item}. Error: {te_main_kpi}", exc_info=True)
+            st.error(f"Error displaying a main KPI due to argument mismatch. Check logs. KPI Title: {kpi_data_item.get('title', 'Unknown')}")
+        except Exception as e_main_kpi_render: # Catch other potential errors
+            logger.error(f"Error rendering main KPI {i}. Data: {kpi_data_item}. Error: {e_main_kpi_render}", exc_info=True)
+            st.error(f"Unexpected error displaying a main KPI. KPI Title: {kpi_data_item.get('title', 'Unknown')}")
 elif not health_df_period.empty: 
     st.info("ℹ️ Main service performance KPIs could not be fully generated for this period.")
 
 if disease_kpis_display_data:
     st.markdown("##### **Key Disease Testing & Supply Indicators:**")
     kpi_cols_disease = st.columns(min(len(disease_kpis_display_data), 4))
-    for i, kpi_data_item in enumerate(disease_kpis_display_data): # Use a different variable name here
-        # DEBUGGING: Print the kpi_data_item
-        # st.write(f"Debug (Disease KPI {i}): {kpi_data_item}")
-        # logger.debug(f"Debug (Disease KPI {i}): {kpi_data_item}")
+    for i, kpi_data_item in enumerate(disease_kpis_display_data): 
         try:
             render_kpi_card(**kpi_data_item, container=kpi_cols_disease[i % 4])
         except TypeError as te_disease_kpi:
-            logger.error(f"TypeError rendering disease KPI {i} with data {kpi_data_item}: {te_disease_kpi}", exc_info=True)
-            st.error(f"Error displaying a disease KPI. Check logs. Data: {kpi_data_item}")
-        except Exception as e_disease_kpi:
-            logger.error(f"Error rendering disease KPI {i} with data {kpi_data_item}: {e_disease_kpi}", exc_info=True)
-            st.error(f"Unexpected error displaying a disease KPI. Data: {kpi_data_item}")
+            logger.error(f"TypeError rendering disease KPI {i}. Data: {kpi_data_item}. Error: {te_disease_kpi}", exc_info=True)
+            st.error(f"Error displaying a disease KPI due to argument mismatch. Check logs. KPI Title: {kpi_data_item.get('title', 'Unknown')}")
+        except Exception as e_disease_kpi_render:
+            logger.error(f"Error rendering disease KPI {i}. Data: {kpi_data_item}. Error: {e_disease_kpi_render}", exc_info=True)
+            st.error(f"Unexpected error displaying a disease KPI. KPI Title: {kpi_data_item.get('title', 'Unknown')}")
 elif not health_df_period.empty:
      st.info("ℹ️ Disease-specific KPIs could not be fully generated for this period.")
 
