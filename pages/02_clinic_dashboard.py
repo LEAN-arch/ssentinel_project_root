@@ -113,7 +113,7 @@ def get_clinic_console_processed_data(
 # --- Sidebar Filters ---
 logo_path_sidebar_clinic_final = Path(settings.APP_LOGO_SMALL_PATH)
 if not logo_path_sidebar_clinic_final.is_absolute(): logo_path_sidebar_clinic_final = (Path(settings.PROJECT_ROOT_DIR) / settings.APP_LOGO_SMALL_PATH).resolve()
-if logo_path_sidebar_clinic_final.exists() and logo_path_sidebar_clinic_final.is_file(): st.sidebar.image(str(logo_path_sidebar_clinic_final), width=120)
+if logo_path_sidebar_clinic_final.exists() and logo_path_sidebar_clinic_final.is_file(): st.sidebar.image(str(logo_path_sidebar_clinic_final), width=240)
 else: logger.warning(f"Sidebar logo not found: {logo_path_sidebar_clinic_final}")
 st.sidebar.header("Console Filters")
 
