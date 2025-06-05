@@ -1,3 +1,4 @@
+```python
 # sentinel_project_root/app.py
 # Main Streamlit application for Sentinel Health Co-Pilot Demonstrator
 
@@ -15,43 +16,43 @@ _project_root_dir = _this_file_path.parent
 while not (_project_root_dir / "requirements.txt").exists() and _project_root_dir.parent != _project_root_dir:
     _project_root_dir = _project_root_dir.parent
 if not (_project_root_dir / "requirements.txt").exists():
-    print(f"FATAL (app.py): Could not find project root containing requirements.txt from {_this_file_path}", file=sys.stderr)
+    print(f"FATAL (app.py): Could not find project root containing requirements.txt from '{_this_file_path}'", file=sys.stderr)
     sys.exit(1)
 
-print(f"DEBUG (app.py): _project_root_dir = {_project_root_dir}", file=sys.stderr)
-print(f"DEBUG (app.py): Initial sys.path = {sys.path}", file=sys.stderr)
+print(f"DEBUG: _project_root_app = {_project_root_dir.app}", file=sys.stderr)
+print(f"DEBUG: Initial sys.path: {sys.path}", file=sys.stderr)
 
 # Ensure project root is first in sys.path
 if str(_project_root_dir) not in sys.path:
     sys.path.insert(0, str(_project_root_dir))
-    print(f"DEBUG (app.py): Added project root to sys.path: {_project_root_dir}", file=sys.stderr)
+    print(f"DEBUG: Appended project root to sys.path: {_project_root_dir}", file=sys.stderr)
 elif sys.path[0] != str(_project_root_dir):
     sys.path.remove(str(_project_root_dir))
     sys.path.insert(0, str(_project_root_dir))
-    print(f"DEBUG (app.py): Moved project root to start of sys.path: {_project_root_dir}", file=sys.stderr)
+    print(f"DEBUG: Moved project root to start of sys.path: {_project_root_dir}", file=sys.stderr)
 
 # Remove config directory from sys.path if present
 config_dir = _project_root_dir / "config"
 if str(config_dir) in sys.path:
-    print(f"WARN (app.py): Removing '{config_dir}' from sys.path before importing settings.", file=sys.stderr)
+    print(f"WARN: Removing '{config_dir}' from sys.path.", file=sys.stderr)
     sys.path.remove(str(config_dir))
 
-# --- Import Settings ---
+# --- Project Settings ---
 try:
     from config import settings
-except ImportError as e_settings:
-    print(f"FATAL (app.py): Failed to import config.settings: {e_settings}", file=sys.stderr)
-    print(f"DEBUG (app.py): sys.path at failure = {sys.path}", file=sys.stderr)
+except ImportError as e:
+    print(f"FATAL: Failed to import config.settings: {e}", file=sys.stderr)
+    print(f"DEBUG: sys.path at failure: {sys.path}", file=sys.stderr)
     sys.exit(1)
 except Exception as e:
-    print(f"FATAL (app.py): Error during config.settings import: {e}", file=sys.stderr)
+    print(f"FATAL: Error during config.settings import: {e}", file=sys.stderr)
     sys.exit(1)
 
-# --- Global Logging Configuration ---
+# --- Global Logging ---
 valid_log_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 log_level = str(settings.LOG_LEVEL).upper()
 if log_level not in valid_log_levels:
-    print(f"WARN (app.py): Invalid LOG_LEVEL '{log_level}'. Using INFO.", file=sys.stderr)
+    print(f"WARN: Invalid LOG_LEVEL '{log_level}'. Using INFO.", file=sys.stderr)
     log_level = "INFO"
 logging.basicConfig(
     level=getattr(logging, log_level),
@@ -60,9 +61,9 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
-logger.info(f"Successfully imported config.settings. APP_NAME: {settings.APP_NAME}")
+logger.info(f"Successfully imported settings. APP_NAME: '{settings.APP_NAME}'")
 
-# --- Streamlit Version Check ---
+# --- Streamlit Version ---
 try:
     import streamlit
     from packaging import version
@@ -94,7 +95,7 @@ st.set_page_config(
     }
 )
 
-# --- Apply Plotly Theme & CSS ---
+# --- Plotly Theme & CSS ---
 try:
     from visualization.plots import set_sentinel_plotly_theme
     set_sentinel_plotly_theme()
@@ -120,7 +121,7 @@ def load_global_css_styles(css_path: str):
 if settings.STYLE_CSS_PATH_WEB:
     load_global_css_styles(settings.STYLE_CSS_PATH_WEB)
 
-# --- Main Application Header ---
+# --- Main Header ---
 header_cols = st.columns([0.15, 0.85])
 with header_cols[0]:
     large_logo = Path(settings.APP_LOGO_LARGE_PATH)
@@ -137,7 +138,7 @@ with header_cols[1]:
     st.subheader("Transforming Data into Lifesaving Action at the Edge")
 st.divider()
 
-# --- Welcome & System Description ---
+# --- Welcome & Description ---
 st.markdown(f"""
     ## Welcome to the {html.escape(settings.APP_NAME)} Demonstrator
     Sentinel is an **edge-first health intelligence system** designed for **maximum clinical and 
@@ -189,9 +190,13 @@ if num_nav_cols:
                 st.markdown(f"<small>{html.escape(item['desc'])}</small>", unsafe_allow_html=True)
                 link_label = f"Explore {item['title'].split('(')[0].split('View')[0].strip()} View"
                 if STREAMLIT_PAGE_LINK_AVAILABLE:
-                    st.page_link(page=item["page_filename"], label=link_label, icon="🏆")
+                    st.page_link(page=item["page_filename"], label=link_label, icon="➡️")
                 else:
-                    st.markdown(f'<a href="{item['page_filename']}" target="_self" style="display:block;padding:0.5em;color:white;background:#007bff;border-radius:4px;text-decoration:none;">{link_label} ➡️</a>', unsafe_allow_html=True)
+                    page_filename = item["page_filename"]
+                    st.markdown(
+                        f'<a href="{page_filename}" target="_self" style="display:block;padding:0.5em;color:white;background:#007bff;border-radius:4px;text-decoration:none;">{link_label} ➡️</a>',
+                        unsafe_allow_html=True
+                    )
             st.markdown("<div style='margin-bottom:0.5rem;'></div>", unsafe_allow_html=True)
 st.divider()
 
@@ -218,21 +223,24 @@ st.divider()
 # --- Sidebar ---
 st.sidebar.header(f"{html.escape(settings.APP_NAME)} v{settings.APP_VERSION}")
 st.sidebar.divider()
-st.sidebar.markdown("## About")
+st.sidebar.markdown("#### About This Demonstrator")
 st.sidebar.info("Web app simulates higher-level dashboards...")
 st.sidebar.divider()
-glossary_path = pages_dir / "05_glossary.py"
+glossary_path = pages_dir / "05_glossary_page.py"
 if glossary_path.exists():
     if STREAMLIT_PAGE_LINK_AVAILABLE:
-        st.sidebar.page_link(glossary_path, label="📖 Glossary", icon="🏠")
+        st.sidebar.page_link(page=str(glossary_path), label="📜 System Glossary", icon="📚")
     else:
-        st.markdown(f'<a href="{glossary_path}" style="color:#007bff;">📖 Glossary</a>', unsafe_allow_html=True)
+        st.sidebar.markdown(
+            f'<a href="05_glossary_page.py" target="_self" style="color:#007bff;">📜 System Glossary</a>',
+            unsafe_allow_html=True
+        )
 else:
     logger.warning(f"Glossary page not found: {glossary_path}")
-    st.sidebar.markdown("📖 Glossary: Unavailable")
+    st.sidebar.markdown("📜 System Glossary: Unavailable")
 st.sidebar.divider()
 st.sidebar.markdown(f"**{html.escape(settings.ORGANIZATION_NAME)}**")
-st.sidebar.markdown(f'<a href="mailto:{settings.SUPPORT_CONTACT_INFO}">{settings.SUPPORT_CONTACT_INFO}</a>', unsafe_allow_html=True)
+st.sidebar.markdown(f"Support: <a href='mailto:{settings.SUPPORT_CONTACT_INFO}'>{html.escape(settings.SUPPORT_CONTACT_INFO)}</a>", unsafe_allow_html=True)
 st.sidebar.caption(html.escape(settings.APP_FOOTER_TEXT))
-logger.info(f"{settings.APP_NAME} - System Overview loaded.")
+logger.info(f"{settings.APP_NAME} (v{settings.APP_VERSION}) - System Overview page loaded.")
 
