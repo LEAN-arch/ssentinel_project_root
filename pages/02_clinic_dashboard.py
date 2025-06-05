@@ -1,4 +1,4 @@
-# sentinel_project_root/pages/02_clinic_dashboard.py (assuming you renamed it)
+# sentinel_project_root/pages/02_clinic_dashboard.py
 # Clinic Operations & Management Console for Sentinel Health Co-Pilot.
 
 import streamlit as st
@@ -14,12 +14,11 @@ try:
     from config import settings
     from data_processing.loaders import load_health_records, load_iot_clinic_environment_data
     from data_processing.aggregation import get_clinic_summary_kpis, get_clinic_environmental_summary_kpis
-    from data_processing.helpers import hash_dataframe_safe # Using a consistent hash function
+    from data_processing.helpers import hash_dataframe_safe 
     from analytics.orchestrator import apply_ai_models
     from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator
     from visualization.plots import plot_annotated_line_chart, plot_bar_chart, create_empty_figure
 
-    # Clinic specific components
     from pages.clinic_components.env_details import prepare_clinic_environmental_detail_data
     from pages.clinic_components.kpi_structuring import structure_main_clinic_kpis, structure_disease_specific_clinic_kpis
     from pages.clinic_components.epi_data import calculate_clinic_epidemiological_data
@@ -28,6 +27,7 @@ try:
     from pages.clinic_components.testing_insights import prepare_clinic_lab_testing_insights_data
 except ImportError as e_clinic_dash_import:
     import sys
+    # ... (import error handling as before) ...
     current_file_path = Path(__file__).resolve()
     project_root_dir = current_file_path.parent.parent
     error_message = (
@@ -39,96 +39,68 @@ except ImportError as e_clinic_dash_import:
     try:
         st.error(error_message)
         st.stop()
-    except NameError: # Handle if st itself is not available
+    except NameError: 
         print(error_message, file=sys.stderr)
         raise
 
-# --- Logger Setup ---
 logger = logging.getLogger(__name__)
 
-# --- Page Configuration (Call this early) ---
 try:
-    page_icon_value = "🏥" # Default icon
+    page_icon_value = "🏥" 
     if hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'APP_FAVICON_PATH'):
-        # Ensure APP_FAVICON_PATH is relative to PROJECT_ROOT_DIR
         favicon_path = Path(settings.PROJECT_ROOT_DIR) / settings.APP_FAVICON_PATH
-        if favicon_path.is_file():
-            page_icon_value = str(favicon_path)
-        else:
-            logger.warning(f"Favicon not found at resolved path: {favicon_path}")
-
-    page_layout_value = "wide" # Default layout
-    if hasattr(settings, 'APP_LAYOUT'):
-        page_layout_value = settings.APP_LAYOUT
-
+        if favicon_path.is_file(): page_icon_value = str(favicon_path)
+        else: logger.warning(f"Favicon not found at resolved path: {favicon_path}")
+    page_layout_value = "wide" 
+    if hasattr(settings, 'APP_LAYOUT'): page_layout_value = settings.APP_LAYOUT
     st.set_page_config(
         page_title=f"Clinic Console - {settings.APP_NAME if hasattr(settings, 'APP_NAME') else 'App'}",
-        page_icon=page_icon_value,
-        layout=page_layout_value
+        page_icon=page_icon_value, layout=page_layout_value
     )
 except Exception as e_page_config:
     logger.error(f"Error applying page configuration for Clinic Dashboard: {e_page_config}", exc_info=True)
-    st.set_page_config(page_title="Clinic Console", page_icon="🏥", layout="wide") # Fallback
+    st.set_page_config(page_title="Clinic Console", page_icon="🏥", layout="wide") 
 
-
-# --- Page Title and Introduction ---
 st.title(f"🏥 {settings.APP_NAME if hasattr(settings, 'APP_NAME') else 'Sentinel Health Co-Pilot'} - Clinic Operations & Management Console")
 st.markdown("**Service Performance, Patient Care Quality, Resource Management, and Facility Environment Monitoring**")
 st.divider()
 
-# --- Data Loading and Caching ---
 @st.cache_data(
     ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS if hasattr(settings, 'CACHE_TTL_SECONDS_WEB_REPORTS') else 300,
     show_spinner="Loading comprehensive clinic operational dataset...",
-    hash_funcs={pd.DataFrame: hash_dataframe_safe} # Using consistent hash_dataframe_safe
+    hash_funcs={pd.DataFrame: hash_dataframe_safe} 
 )
 def get_clinic_console_processed_data(
-    selected_period_start_date: date,
-    selected_period_end_date: date
+    selected_period_start_date: date, selected_period_end_date: date
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, Any], bool]:
-    """
-    Loads, processes, and filters data for the Clinic Console.
-    Returns: (full_historical_health_df, period_health_df, period_iot_df, period_summary_kpis, iot_data_available_flag)
-    DataFrames are empty if data is unavailable, not None.
-    """
     log_ctx = "ClinicConsoleDataLoad"
     logger.info(f"({log_ctx}) Loading data for period: {selected_period_start_date.isoformat()} to {selected_period_end_date.isoformat()}")
-
     raw_health_df = load_health_records(source_context=f"{log_ctx}/LoadRawHealthRecs")
     raw_iot_df = load_iot_clinic_environment_data(source_context=f"{log_ctx}/LoadRawIoTData")
-
     iot_data_available_flag = False
     if hasattr(settings, 'IOT_CLINIC_ENVIRONMENT_CSV_PATH') and hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'DATA_DIR'):
         iot_source_path_str = settings.IOT_CLINIC_ENVIRONMENT_CSV_PATH 
         data_dir = Path(settings.DATA_DIR)
         iot_path = Path(iot_source_path_str)
-        if not iot_path.is_absolute():
-            iot_path = (data_dir / iot_source_path_str).resolve()
-        
+        if not iot_path.is_absolute(): iot_path = (data_dir / iot_source_path_str).resolve()
         if iot_path.is_file():
-            if isinstance(raw_iot_df, pd.DataFrame) and not raw_iot_df.empty:
-                iot_data_available_flag = True
-            else:
-                logger.warning(f"({log_ctx}) IoT data file found at '{iot_path}', but failed to load into DataFrame or is empty.")
-        else:
-            logger.warning(f"({log_ctx}) IoT data file NOT FOUND at resolved path: '{iot_path}'.")
-    else:
-        logger.warning(f"({log_ctx}) IOT_CLINIC_ENVIRONMENT_CSV_PATH, PROJECT_ROOT_DIR, or DATA_DIR not defined in settings. IoT data availability check might be inaccurate.")
+            if isinstance(raw_iot_df, pd.DataFrame) and not raw_iot_df.empty: iot_data_available_flag = True
+            else: logger.warning(f"({log_ctx}) IoT data file found at '{iot_path}', but failed to load into DataFrame or is empty.")
+        else: logger.warning(f"({log_ctx}) IoT data file NOT FOUND at resolved path: '{iot_path}'.")
+    else: logger.warning(f"({log_ctx}) Settings for IoT path missing. IoT data availability check might be inaccurate.")
 
     ai_enriched_health_df_full = pd.DataFrame() 
     if isinstance(raw_health_df, pd.DataFrame) and not raw_health_df.empty:
         try:
             enriched_data, _ = apply_ai_models(raw_health_df.copy(), source_context=f"{log_ctx}/AIEnrichHealth")
-            if isinstance(enriched_data, pd.DataFrame):
-                ai_enriched_health_df_full = enriched_data
-            else:
-                logger.warning(f"({log_ctx}) AI model application did not return a DataFrame. Using raw data (if any).")
+            if isinstance(enriched_data, pd.DataFrame): ai_enriched_health_df_full = enriched_data
+            else: 
+                logger.warning(f"({log_ctx}) AI model application did not return a DataFrame.")
                 ai_enriched_health_df_full = raw_health_df 
         except Exception as e_ai_enrich:
             logger.error(f"({log_ctx}) Error during AI model application: {e_ai_enrich}", exc_info=True)
             ai_enriched_health_df_full = raw_health_df 
-    else:
-        logger.warning(f"({log_ctx}) Raw health data is empty or invalid. AI enrichment skipped.")
+    else: logger.warning(f"({log_ctx}) Raw health data is empty or invalid. AI enrichment skipped.")
 
     df_health_period = pd.DataFrame()
     if not ai_enriched_health_df_full.empty and 'encounter_date' in ai_enriched_health_df_full.columns:
@@ -136,14 +108,12 @@ def get_clinic_console_processed_data(
             ai_enriched_health_df_full['encounter_date'] = pd.to_datetime(ai_enriched_health_df_full['encounter_date'], errors='coerce')
         if ai_enriched_health_df_full['encounter_date'].dt.tz is not None: 
             ai_enriched_health_df_full['encounter_date'] = ai_enriched_health_df_full['encounter_date'].dt.tz_localize(None)
-
         df_health_period = ai_enriched_health_df_full[
             (ai_enriched_health_df_full['encounter_date'].notna()) &
             (ai_enriched_health_df_full['encounter_date'].dt.date >= selected_period_start_date) &
             (ai_enriched_health_df_full['encounter_date'].dt.date <= selected_period_end_date)
         ].copy()
-    elif not ai_enriched_health_df_full.empty:
-        logger.warning(f"({log_ctx}) 'encounter_date' column missing in health data. Period filtering skipped.")
+    elif not ai_enriched_health_df_full.empty: logger.warning(f"({log_ctx}) 'encounter_date' column missing in health data.")
 
     df_iot_period = pd.DataFrame()
     if iot_data_available_flag and isinstance(raw_iot_df, pd.DataFrame) and 'timestamp' in raw_iot_df.columns:
@@ -151,44 +121,38 @@ def get_clinic_console_processed_data(
             raw_iot_df['timestamp'] = pd.to_datetime(raw_iot_df['timestamp'], errors='coerce')
         if raw_iot_df['timestamp'].dt.tz is not None: 
             raw_iot_df['timestamp'] = raw_iot_df['timestamp'].dt.tz_localize(None)
-
         df_iot_period = raw_iot_df[
             (raw_iot_df['timestamp'].notna()) &
             (raw_iot_df['timestamp'].dt.date >= selected_period_start_date) & 
             (raw_iot_df['timestamp'].dt.date <= selected_period_end_date)  
         ].copy()
     elif iot_data_available_flag and isinstance(raw_iot_df, pd.DataFrame):
-         logger.warning(f"({log_ctx}) 'timestamp' column missing in IoT data. Period filtering skipped.")
+         logger.warning(f"({log_ctx}) 'timestamp' column missing in IoT data.")
 
     clinic_kpis_period_data: Dict[str, Any] = {"test_summary_details": {}} 
     if not df_health_period.empty:
         try:
             kpis_result = get_clinic_summary_kpis(df_health_period, f"{log_ctx}/PeriodSummaryKPIs")
-            if isinstance(kpis_result, dict): 
-                clinic_kpis_period_data = kpis_result
-            else:
-                logger.warning(f"({log_ctx}) get_clinic_summary_kpis did not return a dictionary. Using default empty KPIs.")
+            if isinstance(kpis_result, dict): clinic_kpis_period_data = kpis_result
+            else: logger.warning(f"({log_ctx}) get_clinic_summary_kpis did not return a dictionary.")
         except Exception as e_kpi_clinic:
             logger.error(f"({log_ctx}) Error calculating clinic summary KPIs: {e_kpi_clinic}", exc_info=True)
-    else:
-        logger.info(f"({log_ctx}) No health data in selected period for clinic summary KPIs.")
+    else: logger.info(f"({log_ctx}) No health data in selected period for clinic summary KPIs.")
     
     logger.info(f"({log_ctx}) Data processing complete. Health(Full):{len(ai_enriched_health_df_full)}, Health(Period):{len(df_health_period)}, IoT(Period):{len(df_iot_period)}")
     return ai_enriched_health_df_full, df_health_period, df_iot_period, clinic_kpis_period_data, iot_data_available_flag
 
-# --- Sidebar Filters ---
 st.sidebar.markdown("---") 
 try:
     if hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'APP_LOGO_SMALL_PATH'):
         project_root_path = Path(settings.PROJECT_ROOT_DIR)
         logo_path_sidebar = project_root_path / settings.APP_LOGO_SMALL_PATH
-        if logo_path_sidebar.is_file():
-            st.sidebar.image(str(logo_path_sidebar.resolve()), width=240) 
+        if logo_path_sidebar.is_file(): st.sidebar.image(str(logo_path_sidebar.resolve()), width=240) 
         else:
-            logger.warning(f"Sidebar logo for Clinic Console not found at resolved path: {logo_path_sidebar.resolve()}")
+            logger.warning(f"Sidebar logo for Clinic Console not found: {logo_path_sidebar.resolve()}")
             st.sidebar.caption("Logo not found.")
     else:
-        logger.warning("PROJECT_ROOT_DIR or APP_LOGO_SMALL_PATH missing in settings for Clinic sidebar logo.")
+        logger.warning("Settings for Clinic sidebar logo missing.")
         st.sidebar.caption("Logo config missing.")
 except Exception as e_logo_clinic: 
     logger.error(f"Unexpected error displaying Clinic sidebar logo: {e_logo_clinic}", exc_info=True)
@@ -211,16 +175,12 @@ else:
     persisted_start, persisted_end = st.session_state[date_range_ss_key]
     current_start = min(max(persisted_start, abs_min_date_setting), abs_max_date_setting)
     current_end = min(max(persisted_end, abs_min_date_setting), abs_max_date_setting)
-    if current_start > current_end: 
-        current_start = current_end 
+    if current_start > current_end: current_start = current_end 
     st.session_state[date_range_ss_key] = [current_start, current_end]
 
 selected_range_ui = st.sidebar.date_input(
-    "Select Date Range for Clinic Review:",
-    value=st.session_state[date_range_ss_key],
-    min_value=abs_min_date_setting,
-    max_value=abs_max_date_setting,
-    key=f"{date_range_ss_key}_widget" 
+    "Select Date Range for Clinic Review:", value=st.session_state[date_range_ss_key],
+    min_value=abs_min_date_setting, max_value=abs_max_date_setting, key=f"{date_range_ss_key}_widget" 
 )
 
 start_date_filter, end_date_filter = default_start_date, default_end_date 
@@ -261,6 +221,7 @@ st.info(f"Displaying Clinic Console data for period: **{current_period_str}**")
 st.header("🚀 Clinic Performance & Environment Snapshot")
 main_kpis_display_data = []
 disease_kpis_display_data = []
+
 if clinic_summary_kpis_data and isinstance(clinic_summary_kpis_data.get("test_summary_details"), dict): 
     try:
         main_kpis_display_data = structure_main_clinic_kpis(clinic_summary_kpis_data, current_period_str)
@@ -278,16 +239,36 @@ else:
 if main_kpis_display_data:
     st.markdown("##### **Overall Service Performance:**")
     kpi_cols_main = st.columns(min(len(main_kpis_display_data), 4))
-    for i, kpi_data in enumerate(main_kpis_display_data):
-        render_kpi_card(**kpi_data, container=kpi_cols_main[i % 4]) 
+    for i, kpi_data_item in enumerate(main_kpis_display_data): # Use a different variable name here
+        # DEBUGGING: Print the kpi_data_item
+        # st.write(f"Debug (Main KPI {i}): {kpi_data_item}") 
+        # logger.debug(f"Debug (Main KPI {i}): {kpi_data_item}")
+        try:
+            render_kpi_card(**kpi_data_item, container=kpi_cols_main[i % 4]) 
+        except TypeError as te_main_kpi:
+            logger.error(f"TypeError rendering main KPI {i} with data {kpi_data_item}: {te_main_kpi}", exc_info=True)
+            st.error(f"Error displaying a main KPI. Check logs. Data: {kpi_data_item}")
+        except Exception as e_main_kpi:
+            logger.error(f"Error rendering main KPI {i} with data {kpi_data_item}: {e_main_kpi}", exc_info=True)
+            st.error(f"Unexpected error displaying a main KPI. Data: {kpi_data_item}")
 elif not health_df_period.empty: 
     st.info("ℹ️ Main service performance KPIs could not be fully generated for this period.")
 
 if disease_kpis_display_data:
     st.markdown("##### **Key Disease Testing & Supply Indicators:**")
     kpi_cols_disease = st.columns(min(len(disease_kpis_display_data), 4))
-    for i, kpi_data in enumerate(disease_kpis_display_data):
-        render_kpi_card(**kpi_data, container=kpi_cols_disease[i % 4])
+    for i, kpi_data_item in enumerate(disease_kpis_display_data): # Use a different variable name here
+        # DEBUGGING: Print the kpi_data_item
+        # st.write(f"Debug (Disease KPI {i}): {kpi_data_item}")
+        # logger.debug(f"Debug (Disease KPI {i}): {kpi_data_item}")
+        try:
+            render_kpi_card(**kpi_data_item, container=kpi_cols_disease[i % 4])
+        except TypeError as te_disease_kpi:
+            logger.error(f"TypeError rendering disease KPI {i} with data {kpi_data_item}: {te_disease_kpi}", exc_info=True)
+            st.error(f"Error displaying a disease KPI. Check logs. Data: {kpi_data_item}")
+        except Exception as e_disease_kpi:
+            logger.error(f"Error rendering disease KPI {i} with data {kpi_data_item}: {e_disease_kpi}", exc_info=True)
+            st.error(f"Unexpected error displaying a disease KPI. Data: {kpi_data_item}")
 elif not health_df_period.empty:
      st.info("ℹ️ Disease-specific KPIs could not be fully generated for this period.")
 
