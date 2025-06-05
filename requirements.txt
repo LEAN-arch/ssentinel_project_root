@@ -2,55 +2,56 @@
 # Python package dependencies for Sentinel Health Co-Pilot
 
 # Core Streamlit and Data Handling
-streamlit==1.30.0 # Or latest stable version
-pandas==2.1.4 # Specify a compatible range
-numpy>=1.24.0
-fiona==1.9.4
-shapely==2.0.1
+streamlit>=1.30.0,<2.0.0
+pandas>=2.0.0,<2.2.0
+numpy>=1.24.0,<1.27.0
 
 # Plotting and Visualization
-plotly==5.18.0
-# Geospatial - Lightweight Alternatives (if basic geometry handling or CRS is still needed)
-# shapely>=2.0.0 # For working with geometry objects (often a dependency of GeoPandas, but can be used standalone)
-# pyproj>=3.4.0  # For coordinate reference system transformations (if needed)
-# geojson>=3.0.0 # For parsing and handling GeoJSON files/objects directly
+plotly>=5.15.0,<5.20.0
 
-# NOTE: GeoPandas and its direct heavy dependencies like Fiona and RTree have been REMOVED
-# as per the refactoring requirements.
-# Ensure no 'geopandas' entry is present here.
+# Geospatial - Lightweight (Only if specific non-GeoPandas geo operations are needed)
+# If using GeoJSON features directly with Plotly Express, these might not be strictly necessary
+# unless you perform transformations or complex geometry manipulations.
+# shapely>=2.0.0,<2.1.0
+# pyproj>=3.4.0,<3.7.0
+# geojson>=3.0.0,<3.1.0
 
-# Database (Example if PostgreSQL is used, as hinted in original app_config.py)
-# psycopg2-binary>=2.9.0 # Uncomment and adjust version if PostgreSQL is indeed used
+# NOTE: GeoPandas and its direct heavy dependencies like Fiona and RTree
+# have been explicitly REMOVED as per refactoring requirements.
 
-# Other potential utilities (add as needed)
+# Other potential utilities (uncomment and specify versions if used):
 # python-dotenv>=1.0.0    # For loading .env files if used for configuration
 # requests>=2.28.0        # For making HTTP requests (e.g., to FHIR server or other APIs)
 # openpyxl>=3.1.0         # If reading/writing Excel files is a feature
 
 # --- Notes for this refactored requirements.txt ---
-# 1. VERSIONS: It is highly recommended to pin package versions for reproducible environments,
-#    especially for production. Example: `pandas==2.1.4`.
-#    You can generate a fully pinned list from a working virtual environment using:
-#    `pip freeze > requirements.txt`
-#    For this refactoring, broad ranges are used, but pinning is best practice.
+# 1. VERSIONS: Specific versions or compatible ranges are used. For production,
+#    pinning exact versions (e.g., pandas==2.1.4) generated from a stable
+#    `pip freeze` is strongly recommended for reproducibility.
+#    The ranges provided here (e.g., >=1.30.0,<2.0.0) offer some flexibility
+#    while trying to avoid major breaking changes.
 
 # 2. GEOSPATIAL LIBRARIES:
-#    - `geopandas` has been explicitly removed.
-#    - If your refactored code still needs to perform some geometric operations
-#      (e.g., basic point-in-polygon, distance calculations without full GIS capability)
-#      or handle Coordinate Reference Systems (CRS), you might consider lightweight
-#      libraries like `shapely` and `pyproj` respectively.
-#    - `geojson` can be useful for directly parsing/manipulating GeoJSON files/objects
-#      if the `json` standard library is not sufficient for your needs with GeoJSON.
-#    - These lightweight libraries might still have system-level C dependencies (e.g., GEOS for Shapely,
-#      PROJ for Pyproj). Ensure these are listed in `packages.txt` if the Python packages are included here.
+#    - `geopandas` and `fiona` are REMOVED.
+#    - `shapely`, `pyproj`, `geojson` are commented out. Only include them if your
+#      refactored code directly uses their functionalities beyond what Plotly Express
+#      handles with raw GeoJSON data. Plotly Express can directly consume GeoJSON
+#      features for choropleth maps without needing these libraries explicitly in
+#      many common use cases. If you are doing server-side geometry processing
+#      (e.g., area calculations, projections), you might need `shapely` and `pyproj`.
 
 # 3. SYSTEM DEPENDENCIES:
-#    - Some Python packages (especially those with C extensions like older numpy/pandas or some geo libs)
-#      require system-level libraries to be installed first.
-#    - Refer to `packages.txt` for a list of common system dependencies (APT package names for Debian/Ubuntu).
-#    - Always consult the documentation for individual Python packages if `pip install` fails due to
-#      missing system libraries.
+#    - Some Python packages might still require system-level C libraries.
+#    - If `shapely` or `pyproj` are uncommented, ensure their system dependencies
+#      (e.g., GEOS for Shapely, PROJ for Pyproj) are listed in `packages.txt`
+#      or handled by your deployment environment.
+#    - Consult individual package documentation if `pip install` fails.
+
+# 4. REVIEW AND PRUNE:
+#    - This list is based on the provided files. After refactoring, ensure this
+#      `requirements.txt` accurately reflects all *necessary* Python packages.
+#    - Remove any packages not actively used.
+#    - Add any new packages introduced during refactoring.
 
 # 4. REVIEW AND PRUNE:
 #    - After refactoring, review this `requirements.txt` carefully.
