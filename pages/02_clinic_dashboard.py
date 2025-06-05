@@ -1,4 +1,4 @@
-# sentinel_project_root/pages/clinic_dashboard.py
+# sentinel_project_root/pages/02_clinic_dashboard.py (assuming you renamed it)
 # Clinic Operations & Management Console for Sentinel Health Co-Pilot.
 
 import streamlit as st
@@ -97,15 +97,12 @@ def get_clinic_console_processed_data(
     raw_health_df = load_health_records(source_context=f"{log_ctx}/LoadRawHealthRecs")
     raw_iot_df = load_iot_clinic_environment_data(source_context=f"{log_ctx}/LoadRawIoTData")
 
-    # Check IoT data availability (file existence and successful load)
     iot_data_available_flag = False
     if hasattr(settings, 'IOT_CLINIC_ENVIRONMENT_CSV_PATH') and hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'DATA_DIR'):
-        iot_source_path_str = settings.IOT_CLINIC_ENVIRONMENT_CSV_PATH # Can be relative to DATA_DIR or absolute
+        iot_source_path_str = settings.IOT_CLINIC_ENVIRONMENT_CSV_PATH 
         data_dir = Path(settings.DATA_DIR)
-
         iot_path = Path(iot_source_path_str)
         if not iot_path.is_absolute():
-            # Assume relative to DATA_DIR if not absolute
             iot_path = (data_dir / iot_source_path_str).resolve()
         
         if iot_path.is_file():
@@ -118,9 +115,7 @@ def get_clinic_console_processed_data(
     else:
         logger.warning(f"({log_ctx}) IOT_CLINIC_ENVIRONMENT_CSV_PATH, PROJECT_ROOT_DIR, or DATA_DIR not defined in settings. IoT data availability check might be inaccurate.")
 
-
-    # AI Enrichment for Health Data
-    ai_enriched_health_df_full = pd.DataFrame() # Default to empty DataFrame
+    ai_enriched_health_df_full = pd.DataFrame() 
     if isinstance(raw_health_df, pd.DataFrame) and not raw_health_df.empty:
         try:
             enriched_data, _ = apply_ai_models(raw_health_df.copy(), source_context=f"{log_ctx}/AIEnrichHealth")
@@ -128,20 +123,18 @@ def get_clinic_console_processed_data(
                 ai_enriched_health_df_full = enriched_data
             else:
                 logger.warning(f"({log_ctx}) AI model application did not return a DataFrame. Using raw data (if any).")
-                ai_enriched_health_df_full = raw_health_df # Fallback to raw if enrichment fails to return DF
+                ai_enriched_health_df_full = raw_health_df 
         except Exception as e_ai_enrich:
             logger.error(f"({log_ctx}) Error during AI model application: {e_ai_enrich}", exc_info=True)
-            ai_enriched_health_df_full = raw_health_df # Fallback to raw if enrichment errors
+            ai_enriched_health_df_full = raw_health_df 
     else:
         logger.warning(f"({log_ctx}) Raw health data is empty or invalid. AI enrichment skipped.")
 
-    # Filter Health Data for Selected Period
     df_health_period = pd.DataFrame()
     if not ai_enriched_health_df_full.empty and 'encounter_date' in ai_enriched_health_df_full.columns:
-        # Ensure 'encounter_date' is datetime and timezone-naive
         if not pd.api.types.is_datetime64_any_dtype(ai_enriched_health_df_full['encounter_date']):
             ai_enriched_health_df_full['encounter_date'] = pd.to_datetime(ai_enriched_health_df_full['encounter_date'], errors='coerce')
-        if ai_enriched_health_df_full['encounter_date'].dt.tz is not None: # Check if timezone-aware
+        if ai_enriched_health_df_full['encounter_date'].dt.tz is not None: 
             ai_enriched_health_df_full['encounter_date'] = ai_enriched_health_df_full['encounter_date'].dt.tz_localize(None)
 
         df_health_period = ai_enriched_health_df_full[
@@ -152,30 +145,26 @@ def get_clinic_console_processed_data(
     elif not ai_enriched_health_df_full.empty:
         logger.warning(f"({log_ctx}) 'encounter_date' column missing in health data. Period filtering skipped.")
 
-    # Filter IoT Data for Selected Period
     df_iot_period = pd.DataFrame()
     if iot_data_available_flag and isinstance(raw_iot_df, pd.DataFrame) and 'timestamp' in raw_iot_df.columns:
-        # Ensure 'timestamp' is datetime and timezone-naive
         if not pd.api.types.is_datetime64_any_dtype(raw_iot_df['timestamp']):
             raw_iot_df['timestamp'] = pd.to_datetime(raw_iot_df['timestamp'], errors='coerce')
-        if raw_iot_df['timestamp'].dt.tz is not None: # Check if timezone-aware
+        if raw_iot_df['timestamp'].dt.tz is not None: 
             raw_iot_df['timestamp'] = raw_iot_df['timestamp'].dt.tz_localize(None)
 
         df_iot_period = raw_iot_df[
             (raw_iot_df['timestamp'].notna()) &
-            (raw_iot_df['timestamp'].dt.date >= selected_period_start_date) & # Compare dates
-            (raw_iot_df['timestamp'].dt.date <= selected_period_end_date)  # Compare dates
+            (raw_iot_df['timestamp'].dt.date >= selected_period_start_date) & 
+            (raw_iot_df['timestamp'].dt.date <= selected_period_end_date)  
         ].copy()
     elif iot_data_available_flag and isinstance(raw_iot_df, pd.DataFrame):
          logger.warning(f"({log_ctx}) 'timestamp' column missing in IoT data. Period filtering skipped.")
 
-
-    # Calculate Summary KPIs
-    clinic_kpis_period_data: Dict[str, Any] = {"test_summary_details": {}} # Ensure default structure
+    clinic_kpis_period_data: Dict[str, Any] = {"test_summary_details": {}} 
     if not df_health_period.empty:
         try:
             kpis_result = get_clinic_summary_kpis(df_health_period, f"{log_ctx}/PeriodSummaryKPIs")
-            if isinstance(kpis_result, dict): # Ensure it's a dict before assigning
+            if isinstance(kpis_result, dict): 
                 clinic_kpis_period_data = kpis_result
             else:
                 logger.warning(f"({log_ctx}) get_clinic_summary_kpis did not return a dictionary. Using default empty KPIs.")
@@ -188,38 +177,34 @@ def get_clinic_console_processed_data(
     return ai_enriched_health_df_full, df_health_period, df_iot_period, clinic_kpis_period_data, iot_data_available_flag
 
 # --- Sidebar Filters ---
-st.sidebar.markdown("---") # Visual separator
+st.sidebar.markdown("---") 
 try:
     if hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'APP_LOGO_SMALL_PATH'):
         project_root_path = Path(settings.PROJECT_ROOT_DIR)
         logo_path_sidebar = project_root_path / settings.APP_LOGO_SMALL_PATH
         if logo_path_sidebar.is_file():
-            st.sidebar.image(str(logo_path_sidebar.resolve()), width=240) # .resolve() for canonical path
+            st.sidebar.image(str(logo_path_sidebar.resolve()), width=240) 
         else:
             logger.warning(f"Sidebar logo for Clinic Console not found at resolved path: {logo_path_sidebar.resolve()}")
             st.sidebar.caption("Logo not found.")
     else:
         logger.warning("PROJECT_ROOT_DIR or APP_LOGO_SMALL_PATH missing in settings for Clinic sidebar logo.")
         st.sidebar.caption("Logo config missing.")
-except Exception as e_logo_clinic: # Catch any other unexpected error during logo loading
+except Exception as e_logo_clinic: 
     logger.error(f"Unexpected error displaying Clinic sidebar logo: {e_logo_clinic}", exc_info=True)
     st.sidebar.caption("Error loading logo.")
-st.sidebar.markdown("---") # Visual separator
+st.sidebar.markdown("---") 
 st.sidebar.header("Console Filters")
 
-# Date Range Filter
-abs_min_date_setting = date.today() - timedelta(days=365 * 2) # Example: 2 years back
+abs_min_date_setting = date.today() - timedelta(days=365 * 2) 
 abs_max_date_setting = date.today()
-
 default_days_range = (settings.WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND 
                       if hasattr(settings, 'WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND') else 30)
 max_query_days = (settings.MAX_QUERY_DAYS_CLINIC if hasattr(settings, 'MAX_QUERY_DAYS_CLINIC') else 90)
-
-
 default_end_date = abs_max_date_setting
 default_start_date = max(abs_min_date_setting, default_end_date - timedelta(days=default_days_range - 1))
-
 date_range_ss_key = "clinic_console_date_range_v5" 
+
 if date_range_ss_key not in st.session_state:
     st.session_state[date_range_ss_key] = [default_start_date, default_end_date]
 else: 
@@ -229,7 +214,6 @@ else:
     if current_start > current_end: 
         current_start = current_end 
     st.session_state[date_range_ss_key] = [current_start, current_end]
-
 
 selected_range_ui = st.sidebar.date_input(
     "Select Date Range for Clinic Review:",
@@ -242,28 +226,22 @@ selected_range_ui = st.sidebar.date_input(
 start_date_filter, end_date_filter = default_start_date, default_end_date 
 if isinstance(selected_range_ui, (list, tuple)) and len(selected_range_ui) == 2:
     start_date_filter_ui, end_date_filter_ui = selected_range_ui
-    
     start_date_filter = min(max(start_date_filter_ui, abs_min_date_setting), abs_max_date_setting)
     end_date_filter = min(max(end_date_filter_ui, abs_min_date_setting), abs_max_date_setting)
-
     if start_date_filter > end_date_filter:
         st.sidebar.error("Start date must be ≤ end date. Adjusting end date.")
         end_date_filter = start_date_filter 
-    
     if (end_date_filter - start_date_filter).days + 1 > max_query_days:
         st.sidebar.warning(f"Date range limited to {max_query_days} days for performance. Adjusting end date.")
         end_date_filter = start_date_filter + timedelta(days=max_query_days - 1)
         if end_date_filter > abs_max_date_setting:
              end_date_filter = abs_max_date_setting
              start_date_filter = max(abs_min_date_setting, end_date_filter - timedelta(days=max_query_days -1))
-
     st.session_state[date_range_ss_key] = [start_date_filter, end_date_filter] 
 else: 
     start_date_filter, end_date_filter = st.session_state.get(date_range_ss_key, [default_start_date, default_end_date])
     st.sidebar.warning("Date range selection error. Using previous or default range.")
 
-
-# --- Load Data Based on Filters ---
 current_period_str = f"{start_date_filter.strftime('%d %b %Y')} - {end_date_filter.strftime('%d %b %Y')}"
 full_hist_health_df, health_df_period, iot_df_period = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 clinic_summary_kpis_data: Dict[str, Any] = {"test_summary_details": {}}
@@ -280,10 +258,7 @@ if not iot_available_flag:
     st.sidebar.warning("🔌 IoT environmental data source unavailable or empty. Some metrics may be missing.")
 st.info(f"Displaying Clinic Console data for period: **{current_period_str}**")
 
-
-# --- Section 1: Top-Level KPIs ---
 st.header("🚀 Clinic Performance & Environment Snapshot")
-
 main_kpis_display_data = []
 disease_kpis_display_data = []
 if clinic_summary_kpis_data and isinstance(clinic_summary_kpis_data.get("test_summary_details"), dict): 
@@ -308,7 +283,6 @@ if main_kpis_display_data:
 elif not health_df_period.empty: 
     st.info("ℹ️ Main service performance KPIs could not be fully generated for this period.")
 
-
 if disease_kpis_display_data:
     st.markdown("##### **Key Disease Testing & Supply Indicators:**")
     kpi_cols_disease = st.columns(min(len(disease_kpis_display_data), 4))
@@ -316,7 +290,6 @@ if disease_kpis_display_data:
         render_kpi_card(**kpi_data, container=kpi_cols_disease[i % 4])
 elif not health_df_period.empty:
      st.info("ℹ️ Disease-specific KPIs could not be fully generated for this period.")
-
 
 st.markdown("##### **Clinic Environment Quick Check:**")
 env_summary_kpis_quick_check: Dict[str, Any] = {} 
@@ -335,7 +308,6 @@ has_relevant_env_data = any(
 
 if has_relevant_env_data:
     env_kpi_cols_qc = st.columns(4)
-    
     co2_val = env_summary_kpis_quick_check.get('avg_co2_overall_ppm', np.nan)
     co2_very_high_thresh = settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM if hasattr(settings, 'ALERT_AMBIENT_CO2_VERY_HIGH_PPM') else 1500
     co2_high_thresh = settings.ALERT_AMBIENT_CO2_HIGH_PPM if hasattr(settings, 'ALERT_AMBIENT_CO2_HIGH_PPM') else 1000
@@ -372,12 +344,11 @@ elif not iot_available_flag:
     st.info("🔌 Environmental IoT data source generally unavailable for snapshot.")
 st.divider()
 
-# --- Tabbed Interface ---
 st.header("🛠️ Operational Areas Deep Dive")
 tab_titles = ["📈 Local Epidemiology", "🔬 Testing Insights", "💊 Supply Chain", "🧍 Patient Focus", "🌿 Environment Details"]
 tabs_list = st.tabs(tab_titles) 
 
-with tabs_list[0]: # Local Epidemiology
+with tabs_list[0]: 
     st.subheader(f"Local Epidemiological Intelligence ({current_period_str})")
     if not health_df_period.empty:
         try:
@@ -401,7 +372,7 @@ with tabs_list[0]: # Local Epidemiology
     else:
         st.info("ℹ️ No health data available in the selected period for epidemiological analysis.")
 
-with tabs_list[1]: # Testing Insights
+with tabs_list[1]: 
     st.subheader(f"Testing & Diagnostics Performance ({current_period_str})")
     if not health_df_period.empty: 
         try:
@@ -427,8 +398,7 @@ with tabs_list[1]: # Testing Insights
     else:
         st.info("ℹ️ No health data available in the selected period for testing insights.")
 
-
-with tabs_list[2]: # Supply Chain
+with tabs_list[2]: 
     st.subheader(f"Medical Supply Forecast & Status ({current_period_str})")
     if not full_hist_health_df.empty: 
         try:
@@ -451,8 +421,7 @@ with tabs_list[2]: # Supply Chain
     else:
         st.info("ℹ️ Insufficient historical health data available for supply forecasting.")
 
-
-with tabs_list[3]: # Patient Focus
+with tabs_list[3]: 
     st.subheader(f"Patient Load & High-Interest Case Review ({current_period_str})")
     if not health_df_period.empty:
         try:
@@ -477,7 +446,7 @@ with tabs_list[3]: # Patient Focus
     else:
         st.info("ℹ️ No health data available in the selected period for patient focus analysis.")
 
-with tabs_list[4]: # Environment Details
+with tabs_list[4]: 
     st.subheader(f"Facility Environment Detailed Monitoring ({current_period_str})")
     if iot_available_flag: 
         try:
@@ -525,15 +494,13 @@ with tabs_list[4]: # Environment Details
     else: 
         st.warning("🔌 IoT environmental data source is unavailable. Detailed environmental monitoring not possible.")
 
-
-# --- Footer ---
 st.divider()
 footer_text = settings.APP_FOOTER_TEXT if hasattr(settings, 'APP_FOOTER_TEXT') else "Sentinel Health Co-Pilot."
 st.caption(footer_text)
 
 logger.info(
     f"Clinic Operations Console page fully rendered. Period: {current_period_str}. "
-    f"HealthData(Period):{not health_df_period.empty if isinstance(health_df_period, pd.DataFrame) else False}, "
-    f"IoTData(Period):{!iot_df_period.empty if isinstance(iot_df_period, pd.DataFrame) else False}, "
+    f"HealthDataPresentAndNotEmpty:{isinstance(health_df_period, pd.DataFrame) and not health_df_period.empty}, "
+    f"IoTDataPresentAndNotEmpty:{isinstance(iot_df_period, pd.DataFrame) and not iot_df_period.empty}, "
     f"IoTAvailableFlag:{iot_available_flag}"
 )
