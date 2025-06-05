@@ -1,185 +1,242 @@
-# sentinel_project_root/config/settings.py
-# Centralized Configuration for "Sentinel Health Co-Pilot"
+# sentinel_project_root/app.py
+# Main Streamlit application for Sentinel Health Co-Pilot Demonstrator.
 
-import os
+import streamlit as st
+import sys
 import logging
-from datetime import datetime
 from pathlib import Path
+import html 
 
-# --- Base Project Directory ---
-# Assumes this file is in sentinel_project_root/config/settings.py
-# PROJECT_ROOT_DIR will be sentinel_project_root
-PROJECT_ROOT_DIR = Path(__file__).resolve().parent.parent
+# --- Robust Path Setup ---
+_current_app_file_dir = Path(__file__).parent.resolve()
+_project_root_dir = _current_app_file_dir
 
-# --- Logger for Path Validation ---
-settings_logger = logging.getLogger(__name__)
+if str(_project_root_dir) not in sys.path:
+    sys.path.insert(0, str(_project_root_dir))
+    print(f"INFO: Added project root to sys.path: {_project_root_dir}", file=sys.stderr)
 
-# --- Path Validation Helper ---
-def validate_path(path_obj: Path, description: str, is_dir: bool = False) -> Path:
-    """Validate file or directory path, log warning if missing."""
-    if not path_obj.exists():
-        settings_logger.warning(f"{description} not found at expected path: {path_obj}")
-    elif is_dir and not path_obj.is_dir():
-        settings_logger.warning(f"{description} is not a directory: {path_obj}")
-    elif not is_dir and not path_obj.is_file():
-        settings_logger.warning(f"{description} is not a file: {path_obj}")
-    return path_obj
+# --- Import Settings ---
+try:
+    from config import settings
+    print(f"INFO: Successfully imported config.settings. APP_NAME: {settings.APP_NAME}", file=sys.stderr)
+except ImportError as e_cfg_app:
+    print(f"FATAL: Failed to import config.settings in app.py: {e_cfg_app}", file=sys.stderr); sys.exit(1)
+except Exception as e_generic_cfg:
+    print(f"FATAL: Generic error during config.settings import in app.py: {e_generic_cfg}", file=sys.stderr); sys.exit(1)
 
-# --- I. Core System & Directory Configuration ---
-APP_NAME = "Sentinel Health Co-Pilot"
-APP_VERSION = "4.0.1" # Updated version after fixes
-ORGANIZATION_NAME = "LMIC Health Futures Initiative"
-APP_FOOTER_TEXT = f"© {datetime.now().year} {ORGANIZATION_NAME}. Actionable Intelligence for Resilient Health Systems."
-SUPPORT_CONTACT_INFO = "support@lmic-health-futures.org"
-LOG_LEVEL = os.getenv("SENTINEL_LOG_LEVEL", "INFO").upper()
-LOG_FORMAT = os.getenv("SENTINEL_LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-LOG_DATE_FORMAT = os.getenv("SENTINEL_LOG_DATE_FORMAT", "%Y-%m-%d %H:%M:%S")
+# --- Global Logging Configuration ---
+valid_log_levels_app = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+log_level_app_str = str(settings.LOG_LEVEL).upper()
+if log_level_app_str not in valid_log_levels_app:
+    print(f"WARN: Invalid LOG_LEVEL '{log_level_app_str}'. Using INFO.", file=sys.stderr); log_level_app_str = "INFO"
+logging.basicConfig(level=getattr(logging, log_level_app_str, logging.INFO), format=settings.LOG_FORMAT,
+                    datefmt=settings.LOG_DATE_FORMAT, handlers=[logging.StreamHandler(sys.stdout)], force=True)
+logger = logging.getLogger(__name__)
 
+# --- Streamlit Version Check & Feature Availability ---
+STREAMLIT_VERSION_GE_1_30 = False 
+STREAMLIT_PAGE_LINK_AVAILABLE = False
+try:
+    import streamlit
+    major, minor, patch_str = streamlit.__version__.split('.')
+    patch = int(patch_str.split('-')[0]) 
+    STREAMLIT_VERSION_GE_1_30 = (int(major) >= 1 and int(minor) >= 30)
+    if hasattr(st, 'page_link'): STREAMLIT_PAGE_LINK_AVAILABLE = True
+    if not STREAMLIT_VERSION_GE_1_30: logger.warning(f"Streamlit version {streamlit.__version__} < 1.30.0. Some UI features might use fallbacks.")
+except ImportError: logger.critical("Streamlit library not found."); sys.exit("Streamlit library not found.")
+except Exception as e_st_ver: logger.warning(f"Could not accurately determine Streamlit version/features: {e_st_ver}")
 
-# Directories
-ASSETS_DIR = validate_path(PROJECT_ROOT_DIR / "assets", "Assets directory", is_dir=True)
-DATA_SOURCES_DIR = validate_path(PROJECT_ROOT_DIR / "data_sources", "Data sources directory", is_dir=True)
+# --- Page Configuration ---
+page_icon_path_obj = Path(settings.APP_LOGO_SMALL_PATH)
+if not page_icon_path_obj.is_absolute(): page_icon_path_obj = (_project_root_dir / settings.APP_LOGO_SMALL_PATH).resolve()
+final_page_icon_str: str = str(page_icon_path_obj) if page_icon_path_obj.exists() and page_icon_path_obj.is_file() else "🌍"
+if final_page_icon_str == "🌍": logger.warning(f"Page icon not found at '{page_icon_path_obj}'. Using '🌍'.")
+st.set_page_config(
+    page_title=f"{settings.APP_NAME} - System Overview", page_icon=final_page_icon_str,
+    layout="wide", initial_sidebar_state="expanded",
+    menu_items={
+        "Get Help": f"mailto:{settings.SUPPORT_CONTACT_INFO}?subject=Help Request - {settings.APP_NAME}",
+        "Report a bug": f"mailto:{settings.SUPPORT_CONTACT_INFO}?subject=Bug Report - {settings.APP_NAME} v{settings.APP_VERSION}",
+        "About": f"### {settings.APP_NAME} (v{settings.APP_VERSION})\n{settings.APP_FOOTER_TEXT}\n\nEdge-First Health Intelligence Co-Pilot."
+    }
+)
 
-# Key Asset Files
-APP_LOGO_SMALL_PATH = str(validate_path(ASSETS_DIR / "sentinel_logo_small.png", "Small app logo"))
-APP_LOGO_LARGE_PATH = str(validate_path(ASSETS_DIR / "sentinel_logo_large.png", "Large app logo"))
-STYLE_CSS_PATH_WEB = str(validate_path(ASSETS_DIR / "style_web_reports.css", "Global CSS stylesheet"))
-ESCALATION_PROTOCOLS_JSON_PATH = str(validate_path(ASSETS_DIR / "escalation_protocols.json", "Escalation protocols JSON"))
-PICTOGRAM_MAP_JSON_PATH = str(validate_path(ASSETS_DIR / "pictogram_map.json", "Pictogram map JSON"))
-HAPTIC_PATTERNS_JSON_PATH = str(validate_path(ASSETS_DIR / "haptic_patterns.json", "Haptic patterns JSON"))
+# --- Apply Plotly Theme & CSS ---
+try:
+    from visualization.plots import set_sentinel_plotly_theme
+    set_sentinel_plotly_theme(); logger.debug("Sentinel Plotly theme applied.")
+except Exception as e: logger.error(f"Error applying Plotly theme: {e}", exc_info=True); st.error("Error applying visualization theme.")
+@st.cache_resource
+def load_global_css_styles(css_path_str: str):
+    css_path = Path(css_path_str)
+    if not css_path.is_absolute(): css_path = (_project_root_dir / css_path_str).resolve()
+    if css_path.exists() and css_path.is_file():
+        try:
+            with open(css_path, "r", encoding="utf-8") as f: st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+            logger.debug(f"Global CSS loaded: {css_path}")
+        except Exception as e: logger.error(f"Error applying CSS {css_path}: {e}", exc_info=True); st.error("Styles could not be loaded.")
+    else: logger.warning(f"CSS file not found: {css_path}"); st.warning("Application stylesheet missing.")
+if settings.STYLE_CSS_PATH_WEB: load_global_css_styles(settings.STYLE_CSS_PATH_WEB)
 
-# Data Source Files
-HEALTH_RECORDS_CSV_PATH = str(validate_path(DATA_SOURCES_DIR / "health_records_expanded.csv", "Health records CSV"))
-ZONE_ATTRIBUTES_CSV_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_attributes.csv", "Zone attributes CSV"))
-ZONE_GEOMETRIES_GEOJSON_FILE_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_geometries.geojson", "Zone geometries GeoJSON"))
-IOT_CLINIC_ENVIRONMENT_CSV_PATH = str(validate_path(DATA_SOURCES_DIR / "iot_clinic_environment.csv", "IoT clinic environment CSV"))
+# --- Main Application Header ---
+header_cols = st.columns([0.12, 0.88])
+with header_cols[0]:
+    l_logo_path = Path(settings.APP_LOGO_LARGE_PATH); s_logo_path = Path(settings.APP_LOGO_SMALL_PATH)
+    if not l_logo_path.is_absolute(): l_logo_path = (_project_root_dir / settings.APP_LOGO_LARGE_PATH).resolve()
+    if not s_logo_path.is_absolute(): s_logo_path = (_project_root_dir / settings.APP_LOGO_SMALL_PATH).resolve()
+    if l_logo_path.is_file(): st.image(str(l_logo_path), width=100)
+    elif s_logo_path.is_file(): st.image(str(s_logo_path), width=80)
+    else: logger.warning(f"App logos not found. L: '{l_logo_path}', S: '{s_logo_path}'."); st.markdown("### 🌍", unsafe_allow_html=True)
+with header_cols[1]: st.title(settings.APP_NAME); st.subheader("Transforming Data into Lifesaving Action at the Edge")
+st.divider()
 
-# --- II. Health & Operational Thresholds ---
-ALERT_SPO2_CRITICAL_LOW_PCT = 90
-ALERT_SPO2_WARNING_LOW_PCT = 94
-ALERT_BODY_TEMP_FEVER_C = 38.0
-ALERT_BODY_TEMP_HIGH_FEVER_C = 39.5
-ALERT_HR_TACHYCARDIA_BPM = 100
-ALERT_HR_BRADYCARDIA_BPM = 50
-HEAT_STRESS_RISK_BODY_TEMP_C = 37.5
-HEAT_STRESS_DANGER_BODY_TEMP_C = 38.5
-ALERT_AMBIENT_CO2_HIGH_PPM = 1500
-ALERT_AMBIENT_CO2_VERY_HIGH_PPM = 2500
-ALERT_AMBIENT_PM25_HIGH_UGM3 = 35
-ALERT_AMBIENT_PM25_VERY_HIGH_UGM3 = 50
-ALERT_AMBIENT_NOISE_HIGH_DBA = 85
-ALERT_AMBIENT_HEAT_INDEX_RISK_C = 32
-ALERT_AMBIENT_HEAT_INDEX_DANGER_C = 41
-FATIGUE_INDEX_MODERATE_THRESHOLD = 60
-FATIGUE_INDEX_HIGH_THRESHOLD = 80
-STRESS_HRV_LOW_THRESHOLD_MS = 20
-RISK_SCORE_LOW_THRESHOLD = 40
-RISK_SCORE_MODERATE_THRESHOLD = 60
-RISK_SCORE_HIGH_THRESHOLD = 75
-TARGET_CLINIC_WAITING_ROOM_OCCUPANCY_MAX = 10
-TARGET_CLINIC_PATIENT_THROUGHPUT_MIN_PER_HOUR = 5
-DISTRICT_ZONE_HIGH_RISK_AVG_SCORE = 70
-DISTRICT_INTERVENTION_FACILITY_COVERAGE_LOW_PCT = 60
-DISTRICT_INTERVENTION_TB_BURDEN_HIGH_ABS = 10
-DISTRICT_DISEASE_PREVALENCE_HIGH_PERCENTILE = 0.80
-CRITICAL_SUPPLY_DAYS_REMAINING = 7
-LOW_SUPPLY_DAYS_REMAINING = 14
-TARGET_DAILY_STEPS = 8000
-RANDOM_SEED = 42
-AGE_THRESHOLD_LOW = 5
-AGE_THRESHOLD_MODERATE = 18
-AGE_THRESHOLD_HIGH = 60
-AGE_THRESHOLD_VERY_HIGH = 75
+# --- Welcome & System Description ---
+st.markdown(f"""
+    ## Welcome to the {settings.APP_NAME} Demonstrator
+    
+    Sentinel is an **edge-first health intelligence system** designed for **maximum clinical and 
+    operational actionability** in resource-limited, high-risk environments. It aims to convert 
+    diverse data sources into life-saving, workflow-integrated decisions, even with 
+    **minimal or intermittent internet connectivity.**
+""")
+st.markdown("#### Core Design Principles:")
+core_principles_data_app_main_v2 = [
+    ("📶 **Offline-First Operations**", "On-device Edge AI ensures critical functionality without continuous connectivity."),
+    ("🎯 **Action-Oriented Intelligence**", "Insights aim to trigger clear, targeted responses relevant to frontline workflows."),
+    ("🧑‍🤝‍🧑 **Human-Centered Design**", "Interfaces optimized for low-literacy, high-stress users, prioritizing immediate understanding."),
+    ("🔗 **Resilience & Scalability**", "Modular design for scaling from personal devices to regional views with robust data sync.")
+]
+num_cols_principles_main_v2 = min(len(core_principles_data_app_main_v2), 2)
+if num_cols_principles_main_v2 > 0:
+    cols_principles_ui_main_v2 = st.columns(num_cols_principles_main_v2)
+    for idx_principle_main_v2, (title_main_p_v2, desc_main_p_v2) in enumerate(core_principles_data_app_main_v2):
+        with cols_principles_ui_main_v2[idx_principle_main_v2 % num_cols_principles_main_v2]:
+            st.markdown(f"##### {title_main_p_v2}")
+            st.markdown(f"<small>{html.escape(desc_main_p_v2)}</small>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom:1rem;'></div>", unsafe_allow_html=True)
+st.markdown("---")
 
-# --- III. Edge Device Configuration ---
-EDGE_APP_DEFAULT_LANGUAGE = "en"
-EDGE_APP_SUPPORTED_LANGUAGES = ["en", "sw", "fr"]
-EDGE_MODEL_VITALS_DETERIORATION = "vitals_deterioration_v1.tflite"
-EDGE_MODEL_FATIGUE_ASSESSMENT = "fatigue_index_v1.tflite"
-EDGE_MODEL_ENVIRONMENTAL_ANOMALY = "anomaly_detection_base.tflite"
-EDGE_DATA_BASELINE_WINDOW_DAYS = 7
-EDGE_DATA_PROCESSING_INTERVAL_SECONDS = 60
-PED_SQLITE_DB_NAME = "sentinel_ped_local.db"
-PED_MAX_LOG_FILE_SIZE_MB = 50
-EDGE_DATA_SYNC_PROTOCOLS_SUPPORTED = ["BLUETOOTH_PEER", "WIFI_DIRECT_HUB", "QR_PACKET_SHARE", "SD_CARD_TRANSFER"]
-QR_PACKET_MAX_SIZE_BYTES = 256
-SMS_DATA_COMPRESSION_METHOD = "BASE85_ZLIB"
+# --- Navigation Information ---
+st.markdown("""
+    👈 **Navigate via the sidebar** to explore simulated web dashboards for various operational tiers. 
+    These views represent perspectives of **Supervisors, Clinic Managers, or District Health Officers (DHOs)**. 
+    The primary interface for frontline workers (e.g., CHWs) is a dedicated native application on their 
+    Personal Edge Device (PED), tailored for their specific operational context.
+""")
+st.info(
+    "💡 **Note:** This web application serves as a high-level demonstrator for the Sentinel system's "
+    "data processing capabilities and the types of aggregated views available to management and strategic personnel."
+)
+st.divider()
 
-# --- IV. Supervisor Hub & Facility Node Configuration ---
-HUB_SQLITE_DB_NAME = "sentinel_supervisor_hub.db"
-FACILITY_NODE_DB_TYPE = "POSTGRESQL"
-FHIR_SERVER_ENDPOINT_LOCAL = "http://localhost:8080/fhir"
-NODE_REPORTING_INTERVAL_HOURS = 24
+st.header("Explore Simulated Role-Specific Dashboards")
+st.caption("These views demonstrate the information available at higher tiers (Facility/Regional Nodes).")
 
-# --- V. Data Semantics & Categories ---
-KEY_TEST_TYPES_FOR_ANALYSIS = {
-    "Sputum-AFB": {"disease_group": "TB", "target_tat_days": 2, "critical": True, "display_name": "TB Sputum (AFB)"},
-    "Sputum-GeneXpert": {"disease_group": "TB", "target_tat_days": 1, "critical": True, "display_name": "TB GeneXpert"},
-    "RDT-Malaria": {"disease_group": "Malaria", "target_tat_days": 0.5, "critical": True, "display_name": "Malaria RDT"},
-    "HIV-Rapid": {"disease_group": "HIV", "target_tat_days": 0.25, "critical": True, "display_name": "HIV Rapid Test"},
-    "HIV-ViralLoad": {"disease_group": "HIV", "target_tat_days": 7, "critical": True, "display_name": "HIV Viral Load"},
-    "BP Check": {"disease_group": "Hypertension", "target_tat_days": 0, "critical": False, "display_name": "BP Check"},
-    "PulseOx": {"disease_group": "Vitals", "target_tat_days": 0, "critical": False, "display_name": "Pulse Oximetry"},
-}
-CRITICAL_TESTS = [k for k, v in KEY_TEST_TYPES_FOR_ANALYSIS.items() if v.get("critical", False)]
-TARGET_TEST_TURNAROUND_DAYS = 2
-TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY = 85.0
-TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY = 5.0
-OVERDUE_PENDING_TEST_DAYS_GENERAL_FALLBACK = 7
-KEY_CONDITIONS_FOR_ACTION = ['TB', 'Malaria', 'HIV-Positive', 'Pneumonia', 'Severe Dehydration', 'Heat Stroke', 'Sepsis', 'Diarrheal Diseases (Severe)']
-KEY_DRUG_SUBSTRINGS_SUPPLY = ['TB-Regimen', 'ACT', 'ARV-Regimen', 'ORS', 'Amoxicillin', 'Paracetamol', 'Penicillin', 'Iron-Folate', 'Insulin']
-TARGET_MALARIA_POSITIVITY_RATE = 10.0
-SYMPTOM_CLUSTERS_CONFIG = {
-    "Fever, Cough, Fatigue": ["fever", "cough", "fatigue"],
-    "Diarrhea & Vomiting": ["diarrhea", "vomit"],
-    "Fever & Rash": ["fever", "rash"]
-}
+pages_base_dir_app_final = _project_root_dir / "pages" 
 
-# --- VI. Web Dashboard & Visualization Configuration ---
-CACHE_TTL_SECONDS_WEB_REPORTS = int(os.getenv("SENTINEL_CACHE_TTL", 3600))
-WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND = 30
-WEB_PLOT_DEFAULT_HEIGHT = 400
-WEB_PLOT_COMPACT_HEIGHT = 320
-WEB_MAP_DEFAULT_HEIGHT = 600
-MAPBOX_STYLE_WEB = "carto-positron"
-DEFAULT_CRS_STANDARD = "EPSG:4326"
-MAP_DEFAULT_CENTER_LAT = -1.286389
-MAP_DEFAULT_CENTER_LON = 36.817223
-MAP_DEFAULT_ZOOM_LEVEL = 5
+# Assuming filenames in 'pages/' directory are prefixed for order:
+# e.g., 01_chw_dashboard.py, 02_clinic_dashboard.py, etc.
+# The st.page_link paths should reflect these prefixed filenames.
+role_navigation_config_final = [
+    {"title": "🧑‍⚕️ CHW Operations Summary & Field Support View (Supervisor/Hub Level)", 
+     "desc": "This view simulates how a CHW Supervisor or a Hub coordinator might access summarized data from CHW Personal Edge Devices (PEDs).<br><br><b>Focus (Tier 1-2):</b> Team performance monitoring, targeted support for CHWs, localized outbreak signal detection based on aggregated CHW reports.<br><b>Key Data Points:</b> CHW activity summaries (visits, tasks completed), patient alert escalations, critical supply needs for CHW kits, early epidemiological signals from specific zones.<br><b>Objective:</b> Enable supervisors to manage CHW teams effectively, provide timely support, identify emerging health issues quickly, and coordinate local responses. The CHW's primary tool is their offline-first native app on their PED, providing real-time alerts & task management.", 
+     "page_filename": "01_chw_dashboard.py", "icon": "🧑‍⚕️"}, # Assumed prefixed filename
+    {"title": "🏥 Clinic Operations & Environmental Safety View (Facility Node Level)", 
+     "desc": "Simulates a dashboard for Clinic Managers at a Facility Node (Tier 2), providing insights into service efficiency, care quality, resource management, and environmental conditions.<br><br><b>Focus (Tier 2):</b> Optimizing clinic workflows, ensuring quality patient care, managing supplies and testing backlogs, monitoring clinic environment for safety and infection control.<br><b>Key Data Points:</b> Clinic performance KPIs (e.g., test TAT, patient throughput), supply stock forecasts, IoT sensor data summaries (CO2, PM2.5, occupancy), clinic-level epidemiological trends, flagged patient cases for review.<br><b>Objective:</b> Enhance operational efficiency, support clinical decision-making, maintain resource availability, and ensure a safe clinic environment.", 
+     "page_filename": "02_clinic_dashboard.py", "icon": "🏥"}, # Assumed prefixed filename
+    {"title": "🗺️ District Health Strategic Overview (DHO at Facility/Regional Node Level)", 
+     "desc": "Presents a strategic dashboard for District Health Officers (DHOs), typically accessed at a Facility Node (Tier 2) or a Regional/Cloud Node (Tier 3).<br><br><b>Focus (Tier 2-3):</b> Population health insights, resource allocation across zones, monitoring environmental well-being, and planning targeted interventions.<br><b>Key Data Points:</b> District-wide health KPIs, interactive maps for zonal comparisons (risk, disease burden, resources), trend analyses, intervention planning tools based on aggregated data.<br><b>Objective:</b> Support evidence-based strategic planning, public health interventions, program monitoring, and policy development for the district.", 
+     "page_filename": "03_district_dashboard.py", "icon": "🗺️"}, # Assumed prefixed filename
+    {"title": "📊 Population Health Analytics Deep Dive (Epidemiologist/Analyst View - Tier 3)", 
+     "desc": "A view designed for detailed epidemiological and health systems analysis, typically used by analysts or program managers at a Regional/Cloud Node (Tier 3) with access to more comprehensive, aggregated datasets.<br><br><b>Focus (Tier 3):</b> In-depth analysis of demographic patterns, SDOH impacts, clinical trends, health system performance, and equity across broader populations.<br><b>Key Data Points:</b> Stratified disease burden, AI risk distributions by various factors, aggregated test positivity trends, comorbidity analysis, referral pathway performance, health equity metrics.<br><b>Objective:</b> Provide robust analytical capabilities to understand population health dynamics, evaluate interventions, identify areas for research, and inform large-scale public health strategy.", 
+     "page_filename": "04_population_dashboard.py", "icon": "📊"}, # Assumed prefixed filename
+]
 
-# --- VII. Color Palette ---
-COLOR_RISK_HIGH = "#D32F2F"
-COLOR_RISK_MODERATE = "#FBC02D"
-COLOR_RISK_LOW = "#388E3C"
-COLOR_RISK_NEUTRAL = "#757575"
-COLOR_ACTION_PRIMARY = "#1976D2"
-COLOR_ACTION_SECONDARY = "#546E7A"
-COLOR_ACCENT_BRIGHT = "#4D7BF3"
-COLOR_POSITIVE_DELTA = "#27AE60"
-COLOR_NEGATIVE_DELTA = "#C0392B"
-COLOR_TEXT_DARK = "#343a40"
-COLOR_TEXT_HEADINGS_MAIN = "#1A2557"
-COLOR_TEXT_HEADINGS_SUB = "#2C3E50"
-COLOR_TEXT_MUTED = "#6c757d"
-COLOR_TEXT_LINK_DEFAULT = COLOR_ACTION_PRIMARY
-COLOR_BACKGROUND_PAGE = "#f8f9fa"
-COLOR_BACKGROUND_CONTENT = "#ffffff"
-COLOR_BACKGROUND_SUBTLE = "#e9ecef"
-COLOR_BACKGROUND_WHITE = "#FFFFFF"
-COLOR_BACKGROUND_CONTENT_TRANSPARENT = 'rgba(255,255,255,0.85)'
-COLOR_BORDER_LIGHT = "#dee2e6"
-COLOR_BORDER_MEDIUM = "#ced4da"
-LEGACY_DISEASE_COLORS_WEB = {
-    "TB": "#EF4444", "Malaria": "#F59E0B", "HIV-Positive": "#8B5CF6", "Pneumonia": "#3B82F6",
-    "Anemia": "#10B981", "STI": "#EC4899", "Dengue": "#6366F1", "Hypertension": "#F97316",
-    "Diabetes": "#0EA5E9", "Wellness Visit": "#84CC16", "Heat Stroke": "#FF6347",
-    "Severe Dehydration": "#4682B4", "Sepsis": "#800080", "Diarrheal Diseases (Severe)": "#D2691E",
-    "Other": "#6B7280"
-}
+num_nav_cols_final_app = min(len(role_navigation_config_final), 2)
+if num_nav_cols_final_app > 0:
+    nav_cols_ui_final_app = st.columns(num_nav_cols_final_app)
+    current_col_idx_nav_final = 0
+    for nav_item_final_app in role_navigation_config_final:
+        page_link_path_final_app = f"pages/{nav_item_final_app['page_filename']}" 
+        physical_page_path_final_app = pages_base_dir_app_final / nav_item_final_app["page_filename"]
+        
+        if not physical_page_path_final_app.exists():
+            logger.warning(f"Navigation page file for '{nav_item_final_app['title']}' not found: {physical_page_path_final_app}")
+            continue
 
-# Ensure log level is valid
-if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-    settings_logger.warning(f"Invalid LOG_LEVEL '{LOG_LEVEL}'. Defaulting to INFO.")
-    LOG_LEVEL = "INFO"
+        with nav_cols_ui_final_app[current_col_idx_nav_final % num_nav_cols_final_app]:
+            container_kwargs_final = {"border": True} if STREAMLIT_VERSION_GE_1_30 else {}
+            with st.container(**container_kwargs_final):
+                st.subheader(f"{nav_item_final_app['icon']} {html.escape(nav_item_final_app['title'])}")
+                st.markdown(f"<small>{nav_item_final_app['desc']}</small>", unsafe_allow_html=True)
+                link_label_final = f"Explore {nav_item_final_app['title'].split('(')[0].split('View')[0].strip()} View"
+                if STREAMLIT_PAGE_LINK_AVAILABLE:
+                    link_kwargs_final = {"use_container_width": True} if STREAMLIT_VERSION_GE_1_30 else {}
+                    st.page_link(page_link_path_final_app, label=link_label_final, icon="➡️", **link_kwargs_final)
+                else: 
+                    st.markdown(f'<a href="{nav_item_final_app["page_filename"]}" target="_self" style="display:block;text-align:center;padding:0.5em;background-color:var(--sentinel-color-action-primary);color:white;border-radius:4px;text-decoration:none;">{link_label_final} ➡️</a>', unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom:0.5rem;'></div>", unsafe_allow_html=True)
+        current_col_idx_nav_final += 1
+st.divider()
 
-settings_logger.info(f"Sentinel settings loaded. APP_NAME: {APP_NAME} v{APP_VERSION}")
+# --- Key Capabilities Section ---
+st.header(f"{settings.APP_NAME} - Key Capabilities Reimagined")
+capabilities_data_app_final_val = [
+    ("🛡️ Frontline Worker Safety & Support", "Real-time vitals/environmental monitoring, fatigue detection, safety nudges on PEDs."),
+    ("🌍 Offline-First Edge AI", "On-device intelligence for alerts, prioritization, guidance without continuous connectivity."),
+    ("⚡ Actionable, Contextual Insights", "Raw data to clear, role-specific recommendations integrated into field workflows."),
+    ("🤝 Human-Centered & Accessible UX", "Pictogram UIs, voice/tap commands, local language support for low-literacy, high-stress users on PEDs."),
+    ("📡 Resilient Data Synchronization", "Flexible data sharing (Bluetooth, QR, SD card, SMS, opportunistic IP) across devices/tiers."),
+    ("🌱 Scalable & Interoperable Architecture", "Modular design (personal to national), FHIR/HL7 considerations for integration.")
+]
+num_cap_cols_final_app = min(len(capabilities_data_app_final_val), 3)
+if num_cap_cols_final_app > 0:
+    cap_cols_ui_final_app = st.columns(num_cap_cols_final_app)
+    current_col_idx_cap_final = 0
+    for cap_title_item_final, cap_desc_item_final in capabilities_data_app_final_val:
+        with cap_cols_ui_final_app[current_col_idx_cap_final % num_cap_cols_final_app]:
+            st.markdown(f"##### {html.escape(cap_title_item_final)}")
+            st.markdown(f"<small>{html.escape(cap_desc_item_final)}</small>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom: 1.2rem;'></div>", unsafe_allow_html=True)
+        current_col_idx_cap_final += 1
+st.divider()
+
+# --- Sidebar Content ---
+# Streamlit automatically generates sidebar links from files in the 'pages' directory,
+# sorted alphanumerically by filename. To control order, prefix filenames:
+# e.g., pages/01_chw_dashboard.py, pages/02_clinic_dashboard.py, ..., pages/05_glossary_page.py
+# The app.py (home page) will implicitly be the first item.
+
+st.sidebar.header(f"{settings.APP_NAME} v{settings.APP_VERSION}")
+st.sidebar.divider()
+st.sidebar.markdown("#### About This Demonstrator:")
+st.sidebar.info("Web app simulates higher-level dashboards. Frontline workers use dedicated PED apps.")
+st.sidebar.divider()
+
+# Example: If you want to *ensure* glossary is last and control its label precisely,
+# you could use st.page_link here, but it would appear *after* auto-discovered pages
+# unless you manage all navigation explicitly (e.g. using st.navigation, which is more complex).
+# For default behavior, relying on filename prefixes like "05_glossary_page.py" is standard.
+# This manual link is mostly for illustration if explicit addition is desired.
+glossary_page_filename_sidebar = "05_glossary_page.py" # ASSUMING you rename the file
+glossary_page_link_path_sidebar_final = f"pages/{glossary_page_filename_sidebar}"
+glossary_physical_path_sidebar_final = pages_base_dir_app_final / glossary_page_filename_sidebar
+
+if glossary_physical_path_sidebar_final.exists():
+    # This will add a link, but its position relative to auto-discovered pages
+    # depends on Streamlit's rendering order.
+    # For guaranteed order, prefixing filenames in the pages/ directory is the primary method.
+    if STREAMLIT_PAGE_LINK_AVAILABLE:
+         pass # Streamlit will auto-discover prefixed files. Manual link not needed here if files are prefixed.
+         # st.sidebar.page_link(glossary_page_link_path_sidebar_final, label="📜 System Glossary", icon="📚") # Example if needed
+    else:
+         st.sidebar.markdown(f'<a href="{glossary_page_filename_sidebar}" target="_self">📜 System Glossary</a>', unsafe_allow_html=True)
+else:
+    logger.warning(f"Glossary page file for sidebar link not found (expected: {glossary_physical_path_sidebar_final})")
+
+st.sidebar.divider() # Add divider before org info
+st.sidebar.markdown(f"**{settings.ORGANIZATION_NAME}**")
+st.sidebar.markdown(f"Support: [{settings.SUPPORT_CONTACT_INFO}](mailto:{settings.SUPPORT_CONTACT_INFO})")
+st.sidebar.caption(settings.APP_FOOTER_TEXT)
+
+logger.info(f"{settings.APP_NAME} (v{settings.APP_VERSION}) - System Overview page loaded successfully.")
