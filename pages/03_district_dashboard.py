@@ -113,7 +113,7 @@ st.caption(f"Data presented as of: {data_as_of_ts.strftime('%d %b %Y, %H:%M %Z')
 
 # --- Sidebar Filters ---
 logo_path_sidebar_dho = Path(settings.PROJECT_ROOT_DIR) / settings.APP_LOGO_SMALL_PATH
-if logo_path_sidebar_dho.exists() and logo_path_sidebar_dho.is_file(): st.sidebar.image(str(logo_path_sidebar_dho), width=120)
+if logo_path_sidebar_dho.exists() and logo_path_sidebar_dho.is_file(): st.sidebar.image(str(logo_path_sidebar_dho), width=240)
 else: logger.warning(f"Sidebar logo not found for DHO dashboard: {logo_path_sidebar_dho}")
 st.sidebar.header("Analysis Filters")
 
