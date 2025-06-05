@@ -5,20 +5,14 @@ import os
 import logging
 from datetime import datetime
 from pathlib import Path
-# DO NOT import sys here for path manipulation if app.py is handling it.
+# import sys # Avoid sys import here to prevent any accidental path manipulation from settings itself
 
 # --- Base Project Directory ---
-# This settings.py file is in sentinel_project_root/config/settings.py
-# So, Path(__file__).resolve().parent is the 'config' directory.
-# And Path(__file__).resolve().parent.parent is 'ssentinel_project_root'.
 PROJECT_ROOT_DIR = Path(__file__).resolve().parent.parent
-# The print statement for PROJECT_ROOT_DIR in settings.py should use settings_logger
-# or be removed if it's for temporary debugging. Let's remove it to keep settings clean.
+# print(f"DEBUG settings.py: PROJECT_ROOT_DIR resolved to: {PROJECT_ROOT_DIR}", file=sys.stderr) # Keep for debug if needed
 
-# --- Logger for Path Validation ---
-settings_logger = logging.getLogger(__name__) # This logger is for settings.py's own use
+settings_logger = logging.getLogger(__name__)
 
-# --- Path Validation Helper ---
 def validate_path(path_obj: Path, description: str, is_dir: bool = False) -> Path:
     abs_path = path_obj.resolve() 
     if not abs_path.exists():
@@ -27,8 +21,6 @@ def validate_path(path_obj: Path, description: str, is_dir: bool = False) -> Pat
         settings_logger.warning(f"{description} is not a directory: {abs_path}")
     elif not is_dir and not abs_path.is_file():
         settings_logger.warning(f"{description} is not a file: {abs_path}")
-    # else:
-        # settings_logger.debug(f"{description} validated at: {abs_path}") # Optional debug
     return abs_path
 
 # --- I. Core System & Directory Configuration ---
@@ -41,11 +33,9 @@ LOG_LEVEL = os.getenv("SENTINEL_LOG_LEVEL", "INFO").upper()
 LOG_FORMAT = os.getenv("SENTINEL_LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(pathname)s:%(lineno)d - %(message)s")
 LOG_DATE_FORMAT = os.getenv("SENTINEL_LOG_DATE_FORMAT", "%Y-%m-%d %H:%M:%S")
 
-# Directories (resolved to absolute paths using PROJECT_ROOT_DIR defined above)
 ASSETS_DIR = validate_path(PROJECT_ROOT_DIR / "assets", "Assets directory", is_dir=True)
 DATA_SOURCES_DIR = validate_path(PROJECT_ROOT_DIR / "data_sources", "Data sources directory", is_dir=True)
 
-# Key Asset Files (now strings of absolute paths)
 APP_LOGO_SMALL_PATH = str(validate_path(ASSETS_DIR / "sentinel_logo_small.png", "Small app logo"))
 APP_LOGO_LARGE_PATH = str(validate_path(ASSETS_DIR / "sentinel_logo_large.png", "Large app logo"))
 STYLE_CSS_PATH_WEB = str(validate_path(ASSETS_DIR / "style_web_reports.css", "Global CSS stylesheet"))
@@ -53,70 +43,148 @@ ESCALATION_PROTOCOLS_JSON_PATH = str(validate_path(ASSETS_DIR / "escalation_prot
 PICTOGRAM_MAP_JSON_PATH = str(validate_path(ASSETS_DIR / "pictogram_map.json", "Pictogram map JSON"))
 HAPTIC_PATTERNS_JSON_PATH = str(validate_path(ASSETS_DIR / "haptic_patterns.json", "Haptic patterns JSON"))
 
-# Data Source Files (now strings of absolute paths)
 HEALTH_RECORDS_CSV_PATH = str(validate_path(DATA_SOURCES_DIR / "health_records_expanded.csv", "Health records CSV"))
 ZONE_ATTRIBUTES_CSV_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_attributes.csv", "Zone attributes CSV"))
 ZONE_GEOMETRIES_GEOJSON_FILE_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_geometries.geojson", "Zone geometries GeoJSON"))
 IOT_CLINIC_ENVIRONMENT_CSV_PATH = str(validate_path(DATA_SOURCES_DIR / "iot_clinic_environment.csv", "IoT clinic environment CSV"))
 
-# --- II. Health & Operational Thresholds (Content remains the same, truncated for brevity here) ---
+# --- II. Health & Operational Thresholds ---
 ALERT_SPO2_CRITICAL_LOW_PCT = 90
 ALERT_SPO2_WARNING_LOW_PCT = 94
 ALERT_BODY_TEMP_FEVER_C = 38.0
-# ... (all other threshold constants remain as previously defined) ...
+ALERT_BODY_TEMP_HIGH_FEVER_C = 39.5
+ALERT_HR_TACHYCARDIA_BPM = 100
+ALERT_HR_BRADYCARDIA_BPM = 50
+HEAT_STRESS_RISK_BODY_TEMP_C = 37.5
+HEAT_STRESS_DANGER_BODY_TEMP_C = 38.5
+ALERT_AMBIENT_CO2_HIGH_PPM = 1500
+ALERT_AMBIENT_CO2_VERY_HIGH_PPM = 2500
+ALERT_AMBIENT_PM25_HIGH_UGM3 = 35
+ALERT_AMBIENT_PM25_VERY_HIGH_UGM3 = 50
+ALERT_AMBIENT_NOISE_HIGH_DBA = 85
+ALERT_AMBIENT_HEAT_INDEX_RISK_C = 32
+ALERT_AMBIENT_HEAT_INDEX_DANGER_C = 41
+FATIGUE_INDEX_MODERATE_THRESHOLD = 60
+FATIGUE_INDEX_HIGH_THRESHOLD = 80
+STRESS_HRV_LOW_THRESHOLD_MS = 20
+RISK_SCORE_LOW_THRESHOLD = 40
+RISK_SCORE_MODERATE_THRESHOLD = 60
+RISK_SCORE_HIGH_THRESHOLD = 75
+TARGET_CLINIC_WAITING_ROOM_OCCUPANCY_MAX = 10
+TARGET_CLINIC_PATIENT_THROUGHPUT_MIN_PER_HOUR = 5
+DISTRICT_ZONE_HIGH_RISK_AVG_SCORE = 70
+DISTRICT_INTERVENTION_FACILITY_COVERAGE_LOW_PCT = 60
+DISTRICT_INTERVENTION_TB_BURDEN_HIGH_ABS = 10
+DISTRICT_DISEASE_PREVALENCE_HIGH_PERCENTILE = 0.80
+CRITICAL_SUPPLY_DAYS_REMAINING = 7
+LOW_SUPPLY_DAYS_REMAINING = 14
+TARGET_DAILY_STEPS = 8000
+RANDOM_SEED = 42
+AGE_THRESHOLD_LOW = 5
+AGE_THRESHOLD_MODERATE = 18
+AGE_THRESHOLD_HIGH = 60
 AGE_THRESHOLD_VERY_HIGH = 75
 
-# --- III. Edge Device Configuration (Content remains the same) ---
+# --- III. Edge Device Configuration ---
 EDGE_APP_DEFAULT_LANGUAGE = "en"
-# ... (all other edge device constants) ...
+EDGE_APP_SUPPORTED_LANGUAGES = ["en", "sw", "fr"]
+EDGE_MODEL_VITALS_DETERIORATION = "vitals_deterioration_v1.tflite"
+EDGE_MODEL_FATIGUE_ASSESSMENT = "fatigue_index_v1.tflite"
+EDGE_MODEL_ENVIRONMENTAL_ANOMALY = "anomaly_detection_base.tflite"
+EDGE_DATA_BASELINE_WINDOW_DAYS = 7
+EDGE_DATA_PROCESSING_INTERVAL_SECONDS = 60
+PED_SQLITE_DB_NAME = "sentinel_ped_local.db"
+PED_MAX_LOG_FILE_SIZE_MB = 50
+EDGE_DATA_SYNC_PROTOCOLS_SUPPORTED = ["BLUETOOTH_PEER", "WIFI_DIRECT_HUB", "QR_PACKET_SHARE", "SD_CARD_TRANSFER"]
+QR_PACKET_MAX_SIZE_BYTES = 256
 SMS_DATA_COMPRESSION_METHOD = "BASE85_ZLIB"
 
-# --- IV. Supervisor Hub & Facility Node Configuration (Content remains the same) ---
+# --- IV. Supervisor Hub & Facility Node Configuration ---
 HUB_SQLITE_DB_NAME = "sentinel_supervisor_hub.db"
-# ... (all other hub/node constants) ...
+FACILITY_NODE_DB_TYPE = "POSTGRESQL"
+FHIR_SERVER_ENDPOINT_LOCAL = "http://localhost:8080/fhir"
 NODE_REPORTING_INTERVAL_HOURS = 24
 
-# --- V. Data Semantics & Categories (Content remains the same) ---
+# --- V. Data Semantics & Categories ---
 KEY_TEST_TYPES_FOR_ANALYSIS = {
     "Sputum-AFB": {"disease_group": "TB", "target_tat_days": 2, "critical": True, "display_name": "TB Sputum (AFB)"},
-    # ... (all other test types) ...
+    "Sputum-GeneXpert": {"disease_group": "TB", "target_tat_days": 1, "critical": True, "display_name": "TB GeneXpert"},
+    "RDT-Malaria": {"disease_group": "Malaria", "target_tat_days": 0.5, "critical": True, "display_name": "Malaria RDT"},
+    "HIV-Rapid": {"disease_group": "HIV", "target_tat_days": 0.25, "critical": True, "display_name": "HIV Rapid Test"},
+    "HIV-ViralLoad": {"disease_group": "HIV", "target_tat_days": 7, "critical": True, "display_name": "HIV Viral Load"},
+    "BP Check": {"disease_group": "Hypertension", "target_tat_days": 0, "critical": False, "display_name": "BP Check"},
+    "PulseOx": {"disease_group": "Vitals", "target_tat_days": 0, "critical": False, "display_name": "Pulse Oximetry"},
 }
 CRITICAL_TESTS = [k for k, v in KEY_TEST_TYPES_FOR_ANALYSIS.items() if v.get("critical", False)]
-# ... (all other data semantics constants) ...
+TARGET_TEST_TURNAROUND_DAYS = 2
+TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY = 85.0
+TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY = 5.0
+OVERDUE_PENDING_TEST_DAYS_GENERAL_FALLBACK = 7
+KEY_CONDITIONS_FOR_ACTION = ['TB', 'Malaria', 'HIV-Positive', 'Pneumonia', 'Severe Dehydration', 'Heat Stroke', 'Sepsis', 'Diarrheal Diseases (Severe)']
+KEY_DRUG_SUBSTRINGS_SUPPLY = ['TB-Regimen', 'ACT', 'ARV-Regimen', 'ORS', 'Amoxicillin', 'Paracetamol', 'Penicillin', 'Iron-Folate', 'Insulin']
+TARGET_MALARIA_POSITIVITY_RATE = 10.0
 SYMPTOM_CLUSTERS_CONFIG = {
     "Fever, Cough, Fatigue": ["fever", "cough", "fatigue"],
     "Diarrhea & Vomiting": ["diarrhea", "vomit"],
     "Fever & Rash": ["fever", "rash"]
 }
 
-# --- VI. Web Dashboard & Visualization Configuration (Content remains the same) ---
+# --- VI. Web Dashboard & Visualization Configuration ---
 CACHE_TTL_SECONDS_WEB_REPORTS = int(os.getenv("SENTINEL_CACHE_TTL", 3600))
-# ... (all other web dashboard constants) ...
+WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND = 30
+WEB_PLOT_DEFAULT_HEIGHT = 400
+WEB_PLOT_COMPACT_HEIGHT = 320
+WEB_MAP_DEFAULT_HEIGHT = 600
+MAPBOX_STYLE_WEB = "carto-positron"
+DEFAULT_CRS_STANDARD = "EPSG:4326"
+MAP_DEFAULT_CENTER_LAT = -1.286389
+MAP_DEFAULT_CENTER_LON = 36.817223
 MAP_DEFAULT_ZOOM_LEVEL = 5
 
-# --- VII. Color Palette (Content remains the same) ---
+# --- VII. Color Palette ---
+# These MUST be defined for visualization.plots.set_sentinel_plotly_theme to work
 COLOR_RISK_HIGH = "#D32F2F"
-# ... (all other color constants) ...
+COLOR_RISK_MODERATE = "#FBC02D"
+COLOR_RISK_LOW = "#388E3C"
+COLOR_RISK_NEUTRAL = "#757575"
+
+COLOR_ACTION_PRIMARY = "#1976D2"
+COLOR_ACTION_SECONDARY = "#546E7A"
+COLOR_ACCENT_BRIGHT = "#4D7BF3"
+
+COLOR_POSITIVE_DELTA = "#27AE60"
+COLOR_NEGATIVE_DELTA = "#C0392B"
+
+COLOR_TEXT_DARK = "#343a40"
+COLOR_TEXT_HEADINGS_MAIN = "#1A2557"
+COLOR_TEXT_HEADINGS_SUB = "#2C3E50"
+COLOR_TEXT_MUTED = "#6c757d"
+COLOR_TEXT_LINK_DEFAULT = COLOR_ACTION_PRIMARY # Should use COLOR_ACTION_PRIMARY
+
+COLOR_BACKGROUND_PAGE = "#f8f9fa"
+COLOR_BACKGROUND_CONTENT = "#ffffff"
+COLOR_BACKGROUND_SUBTLE = "#e9ecef"
+COLOR_BACKGROUND_WHITE = "#FFFFFF" # Explicit white for clarity
+COLOR_BACKGROUND_CONTENT_TRANSPARENT = 'rgba(255,255,255,0.85)' # Added for legend
+
+
+COLOR_BORDER_LIGHT = "#dee2e6"
+COLOR_BORDER_MEDIUM = "#ced4da"
+
 LEGACY_DISEASE_COLORS_WEB = {
-    "TB": "#EF4444", "Malaria": "#F59E0B", # ... (all other disease colors) ...
+    "TB": "#EF4444", "Malaria": "#F59E0B", "HIV-Positive": "#8B5CF6", "Pneumonia": "#3B82F6",
+    "Anemia": "#10B981", "STI": "#EC4899", "Dengue": "#6366F1", "Hypertension": "#F97316",
+    "Diabetes": "#0EA5E9", "Wellness Visit": "#84CC16", "Heat Stroke": "#FF6347",
+    "Severe Dehydration": "#4682B4", "Sepsis": "#800080", "Diarrheal Diseases (Severe)": "#D2691E",
     "Other": "#6B7280"
 }
 
 # Ensure log level from env var is valid before using it for logging within settings.py if needed
 if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-    # Use print here as settings_logger might not be fully configured if LOG_LEVEL itself is bad for basicConfig
     print(f"WARNING (settings.py): Invalid LOG_LEVEL '{LOG_LEVEL}' from env. Defaulting to INFO for settings_logger.", file=sys.stderr)
-    LOG_LEVEL = "INFO" # Reset to a valid default
+    # LOG_LEVEL = "INFO" # This would change the global LOG_LEVEL, which might not be desired if app.py already handled it.
+    # Instead, if settings_logger needs specific config:
+    # settings_logger.setLevel(logging.INFO)
+    pass # Assume app.py's basicConfig sets the root logger level correctly.
 
-# Configure the settings_logger specifically if needed for path validation warnings
-# This is separate from the main app's logging config, but good practice
-# if settings_logger.handlers: # Clear existing handlers if any to avoid duplicate logs on re-import
-#     for handler in settings_logger.handlers:
-#         settings_logger.removeHandler(handler)
-# settings_logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
-# console_handler_settings = logging.StreamHandler(sys.stderr) # Log settings warnings to stderr
-# console_handler_settings.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
-# settings_logger.addHandler(console_handler_settings)
-# settings_logger.propagate = False # Prevent passing to root logger if configured separately
-
-settings_logger.info(f"Sentinel settings loaded. APP_NAME: {APP_NAME} v{APP_VERSION}. PROJECT_ROOT_DIR in settings: {PROJECT_ROOT_DIR}")
+settings_logger.info(f"Sentinel settings module loaded. APP_NAME: {APP_NAME} v{APP_VERSION}. PROJECT_ROOT_DIR defined in settings: {PROJECT_ROOT_DIR}")
