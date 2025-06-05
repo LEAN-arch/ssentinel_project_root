@@ -1,99 +1,92 @@
 # sentinel_project_root/app.py
-# Main Streamlit application for Sentinel Health Co-Pilot Demonstrator.
+# Main Streamlit application for Sentinel Health Co-Pilot Demonstrator
 
 import streamlit as st
-import sys
 import logging
 from pathlib import Path
-import html 
+import html
+import sys
+import importlib.util
 
-# --- Robust Path Setup: This MUST be correct for all imports to work ---
-# This script (app.py) is assumed to be in the project root: ssentinel_project_root/app.py
-# Therefore, Path(__file__).resolve().parent IS the project root.
+# --- Robust Path Setup ---
 _this_file_path = Path(__file__).resolve()
-_project_root_dir = _this_file_path.parent 
+# Dynamically find project root by looking for requirements.txt
+_project_root_dir = _this_file_path.parent
+while not (_project_root_dir / "requirements.txt").exists() and _project_root_dir.parent != _project_root_dir:
+    _project_root_dir = _project_root_dir.parent
+if not (_project_root_dir / "requirements.txt").exists():
+    print(f"FATAL (app.py): Could not find project root containing requirements.txt from {_this_file_path}", file=sys.stderr)
+    sys.exit(1)
 
-print(f"DEBUG (app.py initial): _project_root_dir = {_project_root_dir}", file=sys.stderr)
-print(f"DEBUG (app.py initial): Current sys.path before modification = {sys.path}", file=sys.stderr)
+print(f"DEBUG (app.py): _project_root_dir = {_project_root_dir}", file=sys.stderr)
+print(f"DEBUG (app.py): Initial sys.path = {sys.path}", file=sys.stderr)
 
-# Ensure the project root is the first thing in sys.path
+# Ensure project root is first in sys.path
 if str(_project_root_dir) not in sys.path:
     sys.path.insert(0, str(_project_root_dir))
     print(f"DEBUG (app.py): Added project root to sys.path: {_project_root_dir}", file=sys.stderr)
-else:
-    # If it's already there, ensure it's at the beginning for precedence
-    if sys.path[0] != str(_project_root_dir):
-        try: # It might not be in the list if sys.path was manipulated elsewhere
-            sys.path.remove(str(_project_root_dir))
-        except ValueError:
-            # If not found by remove, it's fine, insert will add it.
-            pass 
-        sys.path.insert(0, str(_project_root_dir))
-        print(f"DEBUG (app.py): Moved project root to start of sys.path: {_project_root_dir}", file=sys.stderr)
-    else:
-        print(f"DEBUG (app.py): Project root '{_project_root_dir}' was already at start of sys.path.", file=sys.stderr)
+elif sys.path[0] != str(_project_root_dir):
+    sys.path.remove(str(_project_root_dir))
+    sys.path.insert(0, str(_project_root_dir))
+    print(f"DEBUG (app.py): Moved project root to start of sys.path: {_project_root_dir}", file=sys.stderr)
 
-# AGGRESSIVE CLEANUP: Explicitly remove <project_root>/config from sys.path if present
-# This is to counteract any external mechanism that might be adding it.
-config_dir_to_check_and_remove = _project_root_dir / "config"
-if str(config_dir_to_check_and_remove) in sys.path:
-    print(f"WARN (app.py): Found '{config_dir_to_check_and_remove}' in sys.path. Removing it now before importing settings.", file=sys.stderr)
-    try:
-        sys.path.remove(str(config_dir_to_check_and_remove))
-        print(f"DEBUG (app.py): sys.path after removing config dir = {sys.path}", file=sys.stderr)
-    except ValueError:
-        print(f"DEBUG (app.py): Attempted to remove '{config_dir_to_check_and_remove}' but it was not found (could be a race condition or already removed).", file=sys.stderr)
+# Remove config directory from sys.path if present
+config_dir = _project_root_dir / "config"
+if str(config_dir) in sys.path:
+    print(f"WARN (app.py): Removing '{config_dir}' from sys.path before importing settings.", file=sys.stderr)
+    sys.path.remove(str(config_dir))
 
-
-# --- Import Settings (NOW that sys.path is hopefully pristine) ---
+# --- Import Settings ---
 try:
-    from config import settings 
-except ImportError as e_cfg_app_final:
-    print(f"FATAL (app.py): Failed to import config.settings AFTER aggressive cleanup: {e_cfg_app_final}", file=sys.stderr)
-    print(f"PYTHONPATH for app.py at import failure: {sys.path}", file=sys.stderr)
-    sys.exit(1) 
-except AttributeError as e_attr_settings_final: 
-    print(f"FATAL (app.py): AttributeError during config.settings access AFTER aggressive cleanup (likely circular import OR settings.py has an issue): {e_attr_settings_final}", file=sys.stderr)
-    print(f"PYTHONPATH for app.py at attribute error: {sys.path}", file=sys.stderr)
+    from config import settings
+except ImportError as e_settings:
+    print(f"FATAL (app.py): Failed to import config.settings: {e_settings}", file=sys.stderr)
+    print(f"DEBUG (app.py): sys.path at failure = {sys.path}", file=sys.stderr)
     sys.exit(1)
-except Exception as e_generic_cfg_final:
-    print(f"FATAL (app.py): Generic error during config.settings import AFTER aggressive cleanup: {e_generic_cfg_final}", file=sys.stderr)
+except Exception as e:
+    print(f"FATAL (app.py): Error during config.settings import: {e}", file=sys.stderr)
     sys.exit(1)
 
-# --- Global Logging Configuration (Now that settings is imported) ---
-valid_log_levels_app_final = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-log_level_app_str_final = str(settings.LOG_LEVEL).upper()
-if log_level_app_str_final not in valid_log_levels_app_final:
-    print(f"WARN (app.py): Invalid LOG_LEVEL '{log_level_app_str_final}'. Using INFO.", file=sys.stderr); log_level_app_str_final = "INFO"
-logging.basicConfig(level=getattr(logging, log_level_app_str_final, logging.INFO), format=settings.LOG_FORMAT,
-                    datefmt=settings.LOG_DATE_FORMAT, handlers=[logging.StreamHandler(sys.stdout)], force=True)
-logger = logging.getLogger(__name__) # Logger for this app.py
+# --- Global Logging Configuration ---
+valid_log_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+log_level = str(settings.LOG_LEVEL).upper()
+if log_level not in valid_log_levels:
+    print(f"WARN (app.py): Invalid LOG_LEVEL '{log_level}'. Using INFO.", file=sys.stderr)
+    log_level = "INFO"
+logging.basicConfig(
+    level=getattr(logging, log_level),
+    format=settings.LOG_FORMAT,
+    datefmt=settings.LOG_DATE_FORMAT,
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
+logger.info(f"Successfully imported config.settings. APP_NAME: {settings.APP_NAME}")
 
-logger.info(f"INFO (app.py): Successfully imported config.settings. APP_NAME: {settings.APP_NAME}")
-
-# --- Streamlit Version Check & Feature Availability ---
-STREAMLIT_VERSION_GE_1_30 = False 
-STREAMLIT_PAGE_LINK_AVAILABLE = False
+# --- Streamlit Version Check ---
 try:
-    import streamlit # Ensure streamlit is imported before using st alias
-    major_str_v, minor_str_v, patch_full_str_v = streamlit.__version__.split('.')
-    major_v, minor_v = int(major_str_v), int(minor_str_v)
-    patch_str_numeric_v = "".join(filter(str.isdigit, patch_full_str_v.split('-')[0]))
-    patch_v = int(patch_str_numeric_v) if patch_str_numeric_v else 0
-    
-    STREAMLIT_VERSION_GE_1_30 = (major_v >= 1 and minor_v >= 30)
-    if hasattr(st, 'page_link'): STREAMLIT_PAGE_LINK_AVAILABLE = True
-    if not STREAMLIT_VERSION_GE_1_30: logger.warning(f"Streamlit version {streamlit.__version__} < 1.30.0. Some UI features might use fallbacks.")
-except ImportError: logger.critical("Streamlit library not found."); sys.exit("Streamlit library not found.")
-except Exception as e_st_ver_final: logger.warning(f"Could not accurately determine Streamlit version/features: {e_st_ver_final}")
+    import streamlit
+    from packaging import version
+    if version.parse(streamlit.__version__) < version.parse("1.30.0"):
+        logger.warning(f"Streamlit version {streamlit.__version__} < 1.30.0. Some features may not work.")
+    STREAMLIT_PAGE_LINK_AVAILABLE = hasattr(st, "page_link")
+except ImportError:
+    logger.critical("Streamlit library not found.")
+    sys.exit(1)
+
+# --- Dependency Check ---
+if not importlib.util.find_spec("plotly"):
+    logger.warning("Plotly not installed. Visualization features may fail.")
 
 # --- Page Configuration ---
-page_icon_path_obj_app_final_cfg = Path(settings.APP_LOGO_SMALL_PATH) 
-final_page_icon_str_app_final_cfg: str = str(page_icon_path_obj_app_final_cfg) if page_icon_path_obj_app_final_cfg.is_file() else "🌍"
-if final_page_icon_str_app_final_cfg == "🌍": logger.warning(f"Page icon not found at '{page_icon_path_obj_app_final_cfg}'. Using '🌍'.")
+page_icon = Path(settings.APP_LOGO_SMALL_PATH)
+if not page_icon.is_file():
+    logger.warning(f"Page icon not found at '{page_icon}'. Using '🌍'.")
+    page_icon = "🌍"
 st.set_page_config(
-    page_title=f"{settings.APP_NAME} - System Overview", page_icon=final_page_icon_str_app_final_cfg,
-    layout="wide", initial_sidebar_state="expanded",
+    page_title=f"{settings.APP_NAME} - System Overview",
+    page_icon=str(page_icon) if isinstance(page_icon, Path) else page_icon,
+    layout="wide",
+    initial_sidebar_state="expanded",
     menu_items={
         "Get Help": f"mailto:{settings.SUPPORT_CONTACT_INFO}?subject=Help Request - {settings.APP_NAME}",
         "Report a bug": f"mailto:{settings.SUPPORT_CONTACT_INFO}?subject=Bug Report - {settings.APP_NAME} v{settings.APP_VERSION}",
@@ -104,118 +97,142 @@ st.set_page_config(
 # --- Apply Plotly Theme & CSS ---
 try:
     from visualization.plots import set_sentinel_plotly_theme
-    set_sentinel_plotly_theme(); logger.debug("Sentinel Plotly theme applied.")
-except Exception as e_theme_main_app_final_cfg: logger.error(f"Error applying Plotly theme: {e_theme_main_app_final_cfg}", exc_info=True); st.error("Error applying visualization theme.")
+    set_sentinel_plotly_theme()
+    logger.debug("Sentinel Plotly theme applied.")
+except Exception as e:
+    logger.error(f"Error applying Plotly theme: {e}", exc_info=True)
+    st.error("Error applying visualization theme.")
 
 @st.cache_resource
-def load_global_css_styles_app_final_cfg(css_path_str_app_final_cfg: str):
-    css_path_app_final_cfg = Path(css_path_str_app_final_cfg)
-    if css_path_app_final_cfg.is_file():
+def load_global_css_styles(css_path: str):
+    css_path = Path(css_path)
+    if css_path.is_file():
         try:
-            with open(css_path_app_final_cfg, "r", encoding="utf-8") as f_css_app_final_cfg: st.markdown(f'<style>{f_css_app_final_cfg.read()}</style>', unsafe_allow_html=True)
-            logger.debug(f"Global CSS loaded: {css_path_app_final_cfg}")
-        except Exception as e_css_main_app_final_cfg: logger.error(f"Error applying CSS {css_path_app_final_cfg}: {e_css_main_app_final_cfg}", exc_info=True); st.error("Styles could not be loaded.")
-    else: logger.warning(f"CSS file not found: {css_path_app_final_cfg}"); st.warning("Application stylesheet missing.")
-if settings.STYLE_CSS_PATH_WEB: load_global_css_styles_app_final_cfg(settings.STYLE_CSS_PATH_WEB)
+            with open(css_path, "r", encoding="utf-8") as f:
+                st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+            logger.debug(f"Global CSS loaded: {css_path}")
+        except Exception as e:
+            logger.error(f"Error applying CSS {css_path}: {e}", exc_info=True)
+            st.error("Styles could not be loaded.")
+    else:
+        logger.warning(f"CSS file not found: {css_path}")
+        st.warning("Application stylesheet missing.")
+if settings.STYLE_CSS_PATH_WEB:
+    load_global_css_styles(settings.STYLE_CSS_PATH_WEB)
 
 # --- Main Application Header ---
-header_cols_app_ui_final_cfg = st.columns([0.12, 0.88])
-with header_cols_app_ui_final_cfg[0]:
-    l_logo_path_app_final_cfg = Path(settings.APP_LOGO_LARGE_PATH)
-    s_logo_path_app_final_cfg = Path(settings.APP_LOGO_SMALL_PATH)
-    if l_logo_path_app_final_cfg.is_file(): st.image(str(l_logo_path_app_final_cfg), width=100)
-    elif s_logo_path_app_final_cfg.is_file(): st.image(str(s_logo_path_app_final_cfg), width=80)
-    else: logger.warning(f"App logos not found. L: '{l_logo_path_app_final_cfg}', S: '{s_logo_path_app_final_cfg}'."); st.markdown("### 🌍", unsafe_allow_html=True)
-with header_cols_app_ui_final_cfg[1]: st.title(settings.APP_NAME); st.subheader("Transforming Data into Lifesaving Action at the Edge")
+header_cols = st.columns([0.15, 0.85])
+with header_cols[0]:
+    large_logo = Path(settings.APP_LOGO_LARGE_PATH)
+    small_logo = Path(settings.APP_LOGO_SMALL_PATH)
+    if large_logo.is_file():
+        st.image(str(large_logo), width=100)
+    elif small_logo.is_file():
+        st.image(str(small_logo), width=80)
+    else:
+        logger.warning(f"Logos not found: Large: '{large_logo}', Small: '{small_logo}'.")
+        st.markdown("### 🌍", unsafe_allow_html=True)
+with header_cols[1]:
+    st.title(html.escape(settings.APP_NAME))
+    st.subheader("Transforming Data into Lifesaving Action at the Edge")
 st.divider()
 
-# --- Welcome & System Description (Full content from prompt assumed) ---
-st.markdown(f"""## Welcome to the {settings.APP_NAME} Demonstrator
-Sentinel is an **edge-first health intelligence system** designed for **maximum clinical and 
-operational actionability** in resource-limited, high-risk environments. It aims to convert 
-diverse data sources into life-saving, workflow-integrated decisions, even with 
-**minimal or intermittent internet connectivity.**""")
+# --- Welcome & System Description ---
+st.markdown(f"""
+    ## Welcome to the {html.escape(settings.APP_NAME)} Demonstrator
+    Sentinel is an **edge-first health intelligence system** designed for **maximum clinical and 
+    operational actionability** in resource-limited, high-risk environments. It aims to convert 
+    diverse data sources into life-saving, workflow-integrated decisions, even with 
+    **minimal or intermittent internet connectivity.**
+""")
 st.markdown("#### Core Design Principles:")
-core_principles_main_app_final_v4 = [
+core_principles = [
     ("📶 **Offline-First Operations**", "On-device Edge AI ensures critical functionality without continuous connectivity."),
     ("🎯 **Action-Oriented Intelligence**", "Insights aim to trigger clear, targeted responses relevant to frontline workflows."),
     ("🧑‍🤝‍🧑 **Human-Centered Design**", "Interfaces optimized for low-literacy, high-stress users, prioritizing immediate understanding."),
     ("🔗 **Resilience & Scalability**", "Modular design for scaling from personal devices to regional views with robust data sync.")
 ]
-num_cols_core_principles_final_v4 = min(len(core_principles_main_app_final_v4), 2)
-if num_cols_core_principles_final_v4 > 0:
-    cols_core_principles_ui_final_v4 = st.columns(num_cols_core_principles_final_v4)
-    for idx_core_final_v4, (title_core_final_v4, desc_core_final_v4) in enumerate(core_principles_main_app_final_v4):
-        with cols_core_principles_ui_final_v4[idx_core_final_v4 % num_cols_core_principles_final_v4]:
-            st.markdown(f"##### {title_core_final_v4}"); st.markdown(f"<small>{html.escape(desc_core_final_v4)}</small>", unsafe_allow_html=True)
+num_cols = min(len(core_principles), 2)
+if num_cols > 0:
+    cols = st.columns(num_cols)
+    for idx, (title, desc) in enumerate(core_principles):
+        with cols[idx % num_cols]:
+            st.markdown(f"##### {html.escape(title)}")
+            st.markdown(f"<small>{html.escape(desc)}</small>", unsafe_allow_html=True)
             st.markdown("<div style='margin-bottom:1rem;'></div>", unsafe_allow_html=True)
 st.markdown("---")
 st.markdown("👈 **Navigate via the sidebar** to explore simulated web dashboards...")
 st.info("💡 **Note:** This web application serves as a high-level demonstrator...")
 st.divider()
 
+# --- Role-Specific Dashboards ---
 st.header("Explore Simulated Role-Specific Dashboards")
 st.caption("These views demonstrate information available at higher tiers (Facility/Regional Nodes).")
-
-pages_directory_obj_app_final_cfg = _project_root_dir / "pages" 
-role_navigation_config_app_final_cfg_val = [
+pages_dir = _project_root_dir / "pages"
+role_navigation = [
     {"title": "🧑‍⚕️ CHW Operations Summary & Field Support View (Supervisor/Hub Level)", "desc": "This view simulates how a CHW Supervisor or a Hub coordinator might access summarized data...", "page_filename": "01_chw_dashboard.py", "icon": "🧑‍⚕️"},
-    {"title": "🏥 Clinic Operations & Environmental Safety View (Facility Node Level)", "desc": "Simulates a dashboard for Clinic Managers at a Facility Node (Tier 2)...", "page_filename": "02_clinic_dashboard.py", "icon": "🏥"},
-    {"title": "🗺️ District Health Strategic Overview (DHO at Facility/Regional Node Level)", "desc": "Presents a strategic dashboard for District Health Officers (DHOs)...", "page_filename": "03_district_dashboard.py", "icon": "🗺️"},
-    {"title": "📊 Population Health Analytics Deep Dive (Epidemiologist/Analyst View - Tier 3)", "desc": "A view designed for detailed epidemiological and health systems analysis...", "page_filename": "04_population_dashboard.py", "icon": "📊"},
-] # Full descriptions assumed
-
-num_nav_cols_final_app_cfg_val_ui = min(len(role_navigation_config_app_final_cfg_val), 2)
-if num_nav_cols_final_app_cfg_val_ui > 0:
-    nav_cols_ui_final_app_cfg_val_ui = st.columns(num_nav_cols_final_app_cfg_val_ui)
-    current_col_idx_nav_final_cfg_val_ui = 0
-    for nav_item_final_app_cfg_item_val in role_navigation_config_app_final_cfg_val:
-        page_link_target_app_cfg_item_val = nav_item_final_app_cfg_item_val['page_filename'] 
-        physical_page_full_path_app_cfg_item_val = pages_directory_obj_app_cfg / nav_item_final_app_cfg_item_val["page_filename"]
-        if not physical_page_full_path_app_cfg_item_val.exists():
-            logger.warning(f"Navigation page file for '{nav_item_final_app_cfg_item_val['title']}' not found: {physical_page_full_path_app_cfg_item_val}")
+    {"title": "🏥 Clinic Operations & Environmental Safety View (Facility Node Level)", "desc": "Simulates a dashboard for Clinic Managers at a Facility Node...", "page_filename": "02_clinic_dashboard.py", "icon": "🏥"},
+    {"title": "🗺️ District Health Strategic Overview", "desc": "Presents a strategic dashboard for District Health Officers...", "page_filename": "03_district_dashboard.py", "icon": "🗺️"},
+    {"title": "📊 Population Health Analytics Deep Dive", "desc": "A view designed for detailed epidemiological and analysis...", "page_filename": "04_population_dashboard.py", "icon": "📊"},
+]
+num_nav_cols = min(len(role_navigation), 2)
+if num_nav_cols:
+    nav_cols = st.columns(num_nav_cols)
+    for i, item in enumerate(role_navigation):
+        page_path = pages_dir / item["page_filename"]
+        if not page_path.exists():
+            logger.warning(f"Navigation page not found: {page_path}")
             continue
-        with nav_cols_ui_final_app_cfg_val_ui[current_col_idx_nav_final_cfg_val_ui % num_nav_cols_final_app_cfg_val_ui]:
-            container_args_final_app_cfg_val = {"border": True} if STREAMLIT_VERSION_GE_1_30 else {}
-            with st.container(**container_args_final_app_cfg_val):
-                st.subheader(f"{nav_item_final_app_cfg_item_val['icon']} {html.escape(nav_item_final_app_cfg_item_val['title'])}")
-                st.markdown(f"<small>{nav_item_final_app_cfg_item_val['desc']}</small>", unsafe_allow_html=True)
-                link_label_final_app_cfg_val = f"Explore {nav_item_final_app_cfg_item_val['title'].split('(')[0].split('View')[0].strip()} View"
+        with nav_cols[i % num_nav_cols]:
+            with st.container():
+                st.subheader(f"{item['icon']} {html.escape(item['title'])}")
+                st.markdown(f"<small>{html.escape(item['desc'])}</small>", unsafe_allow_html=True)
+                link_label = f"Explore {item['title'].split('(')[0].split('View')[0].strip()} View"
                 if STREAMLIT_PAGE_LINK_AVAILABLE:
-                    link_kwargs_final_app_cfg_val = {"use_container_width": True} if STREAMLIT_VERSION_GE_1_30 else {}
-                    st.page_link(page_link_target_app_cfg_item_val, label=link_label_final_app_cfg_val, icon="➡️", **link_kwargs_final_app_cfg_val)
-                else: 
-                    st.markdown(f'<a href="{nav_item_final_app_cfg_item_val["page_filename"]}" target="_self" style="display:block;text-align:center;padding:0.5em;background-color:var(--sentinel-color-action-primary);color:white;border-radius:4px;text-decoration:none;">{link_label_final_app_cfg_val} ➡️</a>', unsafe_allow_html=True)
+                    st.page_link(page=item["page_filename"], label=link_label, icon="🏆")
+                else:
+                    st.markdown(f'<a href="{item['page_filename']}" target="_self" style="display:block;padding:0.5em;color:white;background:#007bff;border-radius:4px;text-decoration:none;">{link_label} ➡️</a>', unsafe_allow_html=True)
             st.markdown("<div style='margin-bottom:0.5rem;'></div>", unsafe_allow_html=True)
-        current_col_idx_nav_final_cfg_val_ui += 1
 st.divider()
 
-st.header(f"{settings.APP_NAME} - Key Capabilities Reimagined")
-capabilities_data_app_final_cfg_full_val = [ # Full descriptions assumed
-    ("🛡️ Frontline Worker Safety & Support", "Real-time vitals/environmental monitoring..."), ("🌍 Offline-First Edge AI", "On-device intelligence..."),
-    ("⚡ Actionable, Contextual Insights", "Raw data to clear, role-specific recommendations..."), ("🤝 Human-Centered & Accessible UX", "Pictogram UIs..."),
-    ("📡 Resilient Data Synchronization", "Flexible data sharing..."), ("🌱 Scalable & Interoperable Architecture", "Modular design...")
+# --- Key Capabilities ---
+st.header(f"{html.escape(settings.APP_NAME)} - Key Capabilities")
+capabilities = [
+    ("🛡️ Frontline Worker Safety & Support", "Real-time monitoring..."),
+    ("🌍 Offline-First Edge AI", "On-device intelligence..."),
+    ("⚡ Actionable Insights", "Clear recommendations..."),
+    ("🤝 Human-Centered UX", "Pictogram UIs..."),
+    ("📡 Resilient Data Sync", "Flexible sharing..."),
+    ("🌱 Scalable Architecture", "Modular design...")
 ]
-num_cap_cols_final_app_cfg_val_final = min(len(capabilities_data_app_final_cfg_full_val), 3)
-if num_cap_cols_final_app_cfg_val_final > 0:
-    cap_cols_ui_final_app_cfg_val_final = st.columns(num_cap_cols_final_app_cfg_val_final)
-    for i_cap_final_cfg_final, (cap_t_final_cfg_final, cap_d_final_cfg_final) in enumerate(capabilities_data_app_final_cfg_full_val):
-        with cap_cols_ui_final_app_cfg_val_final[i_cap_final_cfg_final % num_cap_cols_final_app_cfg_val_final]: 
-            st.markdown(f"##### {html.escape(cap_t_final_cfg_final)}"); st.markdown(f"<small>{html.escape(cap_d_final_cfg_final)}</small>", unsafe_allow_html=True)
+num_cap_cols = min(len(capabilities), 3)
+if num_cap_cols:
+    cap_cols = st.columns(num_cap_cols)
+    for i, (title, desc) in enumerate(capabilities):
+        with cap_cols[i % num_cap_cols]:
+            st.markdown(f"##### {html.escape(title)}")
+            st.markdown(f"<small>{html.escape(desc)}</small>", unsafe_allow_html=True)
             st.markdown("<div style='margin-bottom:1.2rem;'></div>", unsafe_allow_html=True)
 st.divider()
 
-st.sidebar.header(f"{settings.APP_NAME} v{settings.APP_VERSION}")
-st.sidebar.divider(); st.sidebar.markdown("#### About This Demonstrator:"); st.sidebar.info("Web app simulates higher-level dashboards...")
+# --- Sidebar ---
+st.sidebar.header(f"{html.escape(settings.APP_NAME)} v{settings.APP_VERSION}")
 st.sidebar.divider()
-glossary_filename_sidebar_cfg_final_val = "05_glossary_page.py" 
-glossary_link_target_sidebar_cfg_final_val = glossary_filename_sidebar_cfg_final_val 
-glossary_physical_path_final_sb_cfg_final_val = pages_directory_obj_app_cfg / glossary_filename_sidebar_cfg_final_val
-if glossary_physical_path_final_sb_cfg_final_val.exists():
-    if STREAMLIT_PAGE_LINK_AVAILABLE: st.sidebar.page_link(glossary_link_target_sidebar_cfg_final_val, label="📜 System Glossary", icon="📚")
-    else: st.sidebar.markdown(f'<a href="{glossary_filename_sidebar_cfg_final_val}" target="_self">📜 System Glossary</a>', unsafe_allow_html=True)
-else: logger.warning(f"Glossary page for sidebar (expected: {glossary_physical_path_final_sb_cfg_final_val}) not found.")
+st.sidebar.markdown("## About")
+st.sidebar.info("Web app simulates higher-level dashboards...")
 st.sidebar.divider()
-st.sidebar.markdown(f"**{settings.ORGANIZATION_NAME}**"); st.sidebar.markdown(f"Support: [{settings.SUPPORT_CONTACT_INFO}](mailto:{settings.SUPPORT_CONTACT_INFO})")
-st.sidebar.caption(settings.APP_FOOTER_TEXT)
-logger.info(f"{settings.APP_NAME} (v{settings.APP_VERSION}) - System Overview page loaded.")
+glossary_path = pages_dir / "05_glossary.py"
+if glossary_path.exists():
+    if STREAMLIT_PAGE_LINK_AVAILABLE:
+        st.sidebar.page_link(glossary_path, label="📖 Glossary", icon="🏠")
+    else:
+        st.markdown(f'<a href="{glossary_path}" style="color:#007bff;">📖 Glossary</a>', unsafe_allow_html=True)
+else:
+    logger.warning(f"Glossary page not found: {glossary_path}")
+    st.sidebar.markdown("📖 Glossary: Unavailable")
+st.sidebar.divider()
+st.sidebar.markdown(f"**{html.escape(settings.ORGANIZATION_NAME)}**")
+st.sidebar.markdown(f'<a href="mailto:{settings.SUPPORT_CONTACT_INFO}">{settings.SUPPORT_CONTACT_INFO}</a>', unsafe_allow_html=True)
+st.sidebar.caption(html.escape(settings.APP_FOOTER_TEXT))
+logger.info(f"{settings.APP_NAME} - System Overview loaded.")
+
