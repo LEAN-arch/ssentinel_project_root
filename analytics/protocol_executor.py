@@ -3,14 +3,13 @@
 
 import logging
 import json
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
-from config import settings # Use new settings module
-from data_processing.loaders import load_escalation_protocols # To load protocols if not already loaded
+from config import settings
+from data_processing.loaders import load_escalation_protocols # Relative import likely to cause issues if not structured well
 
 logger = logging.getLogger(__name__)
 
-# Global variable to store loaded protocols to avoid reloading from file repeatedly
 _LOADED_ESCALATION_PROTOCOLS: Optional[Dict[str, Any]] = None
 
 def _get_loaded_protocols() -> Dict[str, Any]:
@@ -18,24 +17,19 @@ def _get_loaded_protocols() -> Dict[str, Any]:
     global _LOADED_ESCALATION_PROTOCOLS
     if _LOADED_ESCALATION_PROTOCOLS is None:
         logger.info("First-time access or protocols not loaded; loading escalation_protocols.json.")
-        _LOADED_ESCALATION_PROTOCOLS = load_escalation_protocols() # Uses path from settings
-        if not _LOADED_ESCALATION_PROTOCOLS or not _LOADED_ESCALATION_PROTOCOLS.get("protocols"):
-             logger.error("Failed to load or validate escalation protocols. Escalations will not function.")
-             _LOADED_ESCALATION_PROTOCOLS = {"protocols": [], "contacts": {}, "message_templates": {}} # Safe default
+        # Use the path from settings for robustness
+        _LOADED_ESCALATION_PROTOCOLS = load_escalation_protocols(settings.ESCALATION_PROTOCOLS_JSON_PATH)
+        if not _LOADED_ESCALATION_PROTOCOLS or not isinstance(_LOADED_ESCALATION_PROTOCOLS.get("protocols"), list):
+             logger.error("Failed to load or validate escalation protocols. Escalations may not function as expected.")
+             _LOADED_ESCALATION_PROTOCOLS = {"protocols": [], "contacts": {}, "message_templates": {}}
     return _LOADED_ESCALATION_PROTOCOLS
 
 def get_protocol_for_event(event_code: str) -> Optional[Dict[str, Any]]:
     """
     Retrieves a specific escalation protocol based on the event code.
-
-    Args:
-        event_code: The code identifying the trigger event (e.g., "PATIENT_CRITICAL_SPO2_LOW").
-
-    Returns:
-        The protocol dictionary if found, else None.
     """
     protocols_data = _get_loaded_protocols()
-    if not protocols_data.get("protocols"):
+    if not protocols_data.get("protocols"): # Check after ensuring protocols_data is a dict
         return None
         
     for protocol in protocols_data["protocols"]:
@@ -47,14 +41,7 @@ def get_protocol_for_event(event_code: str) -> Optional[Dict[str, Any]]:
 def format_escalation_message(template_code: str, context_data: Dict[str, Any]) -> str:
     """
     Formats an escalation message using a template and context data.
-
-    Args:
-        template_code: The code for the message template (e.g., "MSG_CRIT_SPO2_SUP").
-        context_data: A dictionary containing data to fill into the template placeholders.
-                      Placeholders are like [PLACEHOLDER_NAME].
-
-    Returns:
-        The formatted message string, or the template_code itself if not found.
+    Placeholders are like [PLACEHOLDER_NAME] (case-insensitive matching for keys in context_data).
     """
     protocols_data = _get_loaded_protocols()
     message_templates = protocols_data.get("message_templates", {})
@@ -65,11 +52,16 @@ def format_escalation_message(template_code: str, context_data: Dict[str, Any]) 
         return template_code
 
     formatted_message = template_string
-    for placeholder, value in context_data.items():
-        # Ensure placeholder format matches (e.g., [PLACEHOLDER])
-        formatted_message = formatted_message.replace(f"[{placeholder.upper()}]", str(value))
+    # Create a case-insensitive mapping for context_data keys for robust placeholder replacement
+    context_data_lower_keys = {k.lower(): v for k, v in context_data.items()}
+
+    import re
+    def replace_placeholder(match):
+        placeholder_key = match.group(1).lower() # Get key inside brackets and lowercase it
+        return str(context_data_lower_keys.get(placeholder_key, match.group(0))) # Replace or keep original if key not found
+
+    formatted_message = re.sub(r"\[([A-Za-z0-9_]+)\]", replace_placeholder, formatted_message)
     
-    # Log if some placeholders were not filled, which might indicate missing context_data
     if "[" in formatted_message and "]" in formatted_message: # Basic check for unreplaced placeholders
         logger.debug(f"Message template '{template_code}' may have unreplaced placeholders: {formatted_message}")
         
@@ -84,14 +76,6 @@ def execute_escalation_protocol(
     """
     Executes the steps defined in an escalation protocol for a given event.
     This is a simulation; actual actions (SMS, calls) are logged.
-
-    Args:
-        event_code: The code of the event that triggered the escalation.
-        triggering_data: Data from the event source (e.g., patient record, sensor reading).
-        additional_context: Optional extra data to merge into context for message formatting.
-
-    Returns:
-        A list of simulated action results (dictionaries).
     """
     module_log_prefix = "EscalationExecutor"
     logger.info(f"({module_log_prefix}) Executing escalation protocol for event_code: {event_code}")
@@ -103,12 +87,12 @@ def execute_escalation_protocol(
 
     executed_steps_results: List[Dict[str, Any]] = []
     
-    # Prepare combined context for message formatting
-    # Prioritize additional_context for overrides if keys overlap with triggering_data
     full_context_data = triggering_data.copy()
     if additional_context:
         full_context_data.update(additional_context)
 
+    # Ensure all keys in context are strings for consistent formatting if they originate from various sources
+    full_context_data_str_keys = {str(k): v for k, v in full_context_data.items()}
 
     for step in sorted(protocol.get("steps", []), key=lambda x: x.get("sequence", 0)):
         action_code = step.get("action_code", "UNKNOWN_ACTION")
@@ -124,32 +108,28 @@ def execute_escalation_protocol(
             
             message_content = "No message template specified."
             if message_template_code:
-                message_content = format_escalation_message(message_template_code, full_context_data)
+                message_content = format_escalation_message(message_template_code, full_context_data_str_keys)
             
             action_result["details"] = f"Simulated notification via {contact_method}. Target: {target_role or 'N/A'}. Message: '{message_content}'"
             logger.info(f"    L_ Action Detail: {action_result['details']}")
             
-            # Example of using contacts from protocols_data if needed for simulation detail
-            protocols_data = _get_loaded_protocols()
-            contacts_info = protocols_data.get("contacts", {})
-            if target_role and f"{target_role}_PHONE" in contacts_info: # Example contact key format
-                 logger.info(f"    L_ Simulated contact to {target_role} using number: {contacts_info[f'{target_role}_PHONE']}")
-
+            protocols_data_contacts = _get_loaded_protocols().get("contacts", {})
+            if target_role and f"{target_role}_PHONE" in protocols_data_contacts:
+                 logger.info(f"    L_ Simulated contact to {target_role} using number: {protocols_data_contacts[f'{target_role}_PHONE']}")
 
         elif "GUIDE" in action_code.upper() or "GUIDANCE" in step.get("guidance_pictogram_code", "").upper():
             pictogram_code = step.get("guidance_pictogram_code", "INFO_ICON")
             action_result["details"] = f"Simulated: Displayed guidance pictogram '{pictogram_code}' and JIT instructions for '{description}'."
             logger.info(f"    L_ Action Detail: {action_result['details']}")
-            # In a real PED, this would trigger UI change based on pictogram_code
 
         elif "SOS" in action_code.upper():
             action_result["details"] = f"Simulated: SOS function ({action_code}) activated on PED."
             logger.info(f"    L_ Action Detail: {action_result['details']}")
-            if "CHW_OWN_CRITICAL_HEAT_STRESS" in event_code: # Specific context for CHW SOS
-                execute_escalation_protocol("CHW_SOS_ACTIVATED_INTERNAL", full_context_data) # Chain to another protocol if needed
-
-
-        # Add more simulated actions here based on action_codes
+            if "CHW_OWN_CRITICAL_HEAT_STRESS" in event_code:
+                # Recursion guard might be needed if protocols can chain indefinitely
+                logger.info(f"({module_log_prefix}) Chaining SOS event: CHW_SOS_ACTIVATED_INTERNAL")
+                # Avoid direct recursion in simulation for now, or implement a depth limit
+                # execute_escalation_protocol("CHW_SOS_ACTIVATED_INTERNAL", full_context_data_str_keys)
         else:
             action_result["details"] = f"Simulated: General action '{action_code}' performed as per protocol description."
             logger.info(f"    L_ Action Detail: {action_result['details']}")
@@ -158,24 +138,3 @@ def execute_escalation_protocol(
 
     logger.info(f"({module_log_prefix}) Protocol execution for '{event_code}' finished. {len(executed_steps_results)} steps simulated.")
     return executed_steps_results
-
-# Example of how this might be triggered (e.g., from RiskPredictionModel or an alerting function)
-# if __name__ == '__main__':
-#     # This is for testing the executor module directly
-#     logging.basicConfig(level=logging.INFO, format=settings.LOG_FORMAT, datefmt=settings.LOG_DATE_FORMAT)
-#     test_patient_data = {
-#         "PATIENT_ID": "SPID_TEST_007", "ZONE_ID": "ZoneC", "GPS_COORDS_OR_LANDMARK": "Near Market Square",
-#         "SPO2_VALUE": 88, "CHW_ID": "CHW003", "CHW_PHONE_NUMBER": "+15551237777", "CHW_OBSERVED_ACTION_TAKEN": "Positioned patient"
-#     }
-#     results = execute_escalation_protocol("PATIENT_CRITICAL_SPO2_LOW", test_patient_data)
-#     print("\n--- Protocol Execution Results ---")
-#     for res_step in results:
-#         print(f"  - Action: {res_step['action_code']}, Status: {res_step['status']}, Details: {res_step['details']}")
-
-#     test_chw_data = {
-#         "CHW_ID": "CHW004", "CURRENT_TEMP_READING": 39.8, "SYMPTOMS": "Confusion, dizziness"
-#     }
-#     results_chw_heat = execute_escalation_protocol("CHW_OWN_CRITICAL_HEAT_STRESS", test_chw_data)
-#     print("\n--- CHW Heat Stress Protocol Results ---")
-#     for res_step_chw in results_chw_heat:
-#         print(f"  - Action: {res_step_chw['action_code']}, Status: {res_step_chw['status']}, Details: {res_step_chw['details']}")
