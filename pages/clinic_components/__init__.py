@@ -3,8 +3,8 @@
 
 from .env_details import prepare_clinic_environmental_detail_data
 from .epi_data import calculate_clinic_epidemiological_data
-from .kpi_structuring import (
-    structure_main_clinic_kpis,
+from .kpi_structuring import ( # Renamed module # This comment indicates the intent
+    structure_main_clinic_kpis, 
     structure_disease_specific_clinic_kpis
 )
 from .patient_focus import prepare_clinic_patient_focus_overview_data
