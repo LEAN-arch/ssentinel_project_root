@@ -1,185 +1,122 @@
 # sentinel_project_root/pages/district_components/comparison_data.py
 # Prepares data for DHO zonal comparative analysis for Sentinel Health Co-Pilot.
-# Renamed from comparison_data_preparer_district.py
 
 import pandas as pd
 import numpy as np
 import logging
+import re # For dynamic column name creation consistency
 from typing import Dict, Any, Optional, List
 
-from config import settings # Use new settings module
-# No direct data loading or processing helpers needed here, expects enriched_zone_df
+from config import settings
 
 logger = logging.getLogger(__name__)
 
 
-def get_district_comparison_metrics_config( # Renamed from get_comparison_criteria_options_district
-    district_zone_df_sample: Optional[pd.DataFrame] = None # Expects DataFrame, not GDF
+def get_district_comparison_metrics_config(
+    district_zone_df_sample: Optional[pd.DataFrame] = None
 ) -> Dict[str, Dict[str, str]]:
     """
     Defines and returns metrics available for DHO zonal comparison tables/charts.
     Checks against a sample of the zone DataFrame to ensure columns exist and have data.
-
-    Args:
-        district_zone_df_sample: A small sample (e.g., .head(2)) of the enriched zone DataFrame.
-                                 Used to validate column existence and non-null data.
-
-    Returns:
-        Dict[str, Dict[str, str]]: Configuration for available metrics.
-            Format: {Display Name: {"col": actual_col_name_in_df, 
-                                    "format_str": "{:.1f}", 
-                                    "colorscale_hint": "PlotlyScaleName_r_or_normal"}}
     """
     module_log_prefix = "DistrictComparisonMetricsConfig"
     
-    # Define all potential comparison metrics that could be derived from an enriched zone DataFrame.
-    # Column names ('col') MUST match those produced by data_processing.enrichment.enrich_zone_geodata_with_health_aggregates.
-    all_potential_metrics_definitions: Dict[str, Dict[str, str]] = {
-        "Avg. AI Risk Score (Zone)": {"col": "avg_risk_score", "format_str": "{:.1f}", "colorscale_hint": "OrRd"}, # Higher is worse (OrRd_r often means reversed, so OrRd)
-        "Key Disease Prevalence (/1k pop)": {"col": "prevalence_per_1000", "format_str": "{:.1f}", "colorscale_hint": "YlOrRd"}, # Higher is worse
-        "Facility Coverage Score (%)": {"col": "facility_coverage_score", "format_str": "{:.0f}%", "colorscale_hint": "Greens"}, # Higher is better
+    all_potential_metrics: Dict[str, Dict[str, str]] = {
+        "Avg. AI Risk Score (Zone)": {"col": "avg_risk_score", "format_str": "{:.1f}", "colorscale_hint": "OrRd"},
+        "Key Disease Prevalence (/1k pop)": {"col": "prevalence_per_1000", "format_str": "{:.1f}", "colorscale_hint": "YlOrRd"},
+        "Facility Coverage Score (%)": {"col": "facility_coverage_score", "format_str": "{:.0f}%", "colorscale_hint": "Greens"},
         "Population (Total by Zone)": {"col": "population", "format_str": "{:,.0f}", "colorscale_hint": "Blues"},
-        "CHW Density (/10k pop)": {"col": "chw_density_per_10k", "format_str": "{:.2f}", "colorscale_hint": "Greens"}, # Higher is better (if column exists)
-        "Avg. Clinic CO2 (Zone Avg, ppm)": {"col": "zone_avg_co2", "format_str": "{:.0f}", "colorscale_hint": "Oranges"}, # Higher is worse
-        "Population Density (per sqkm)": {"col": "population_density", "format_str": "{:.1f}", "colorscale_hint": "Plasma"}, # Higher is denser
-        "Avg. Critical Test TAT (days)": {"col": "avg_test_turnaround_critical", "format_str": "{:.1f}", "colorscale_hint": "Reds"}, # Higher is worse
-        "% Critical Tests TAT Met": {"col": "perc_critical_tests_tat_met", "format_str": "{:.0f}%", "colorscale_hint": "Greens"}, # Higher is better
+        "CHW Density (/10k pop)": {"col": "chw_density_per_10k", "format_str": "{:.2f}", "colorscale_hint": "Greens"},
+        "Avg. Clinic CO2 (Zone Avg, ppm)": {"col": "zone_avg_co2", "format_str": "{:.0f}", "colorscale_hint": "Oranges"},
+        "Population Density (per sqkm)": {"col": "population_density", "format_str": "{:.1f}", "colorscale_hint": "Plasma"},
+        "Avg. Critical Test TAT (days)": {"col": "avg_test_turnaround_critical", "format_str": "{:.1f}", "colorscale_hint": "Reds"},
+        "% Critical Tests TAT Met": {"col": "perc_critical_tests_tat_met", "format_str": "{:.0f}%", "colorscale_hint": "Greens"},
         "Total Patient Encounters (Zone)": {"col": "total_patient_encounters", "format_str": "{:,.0f}", "colorscale_hint": "Purples"},
-        "Avg. Patient Daily Steps (Zone)": {"col": "avg_daily_steps_zone", "format_str": "{:,.0f}", "colorscale_hint": "BuGn"} # Higher is better
+        "Avg. Patient Daily Steps (Zone)": {"col": "avg_daily_steps_zone", "format_str": "{:,.0f}", "colorscale_hint": "BuGn"}
     }
     
-    # Dynamically add metrics for active cases of each key condition from settings.KEY_CONDITIONS_FOR_ACTION
-    for condition_key_name_cfg in settings.KEY_CONDITIONS_FOR_ACTION:
-        # Construct column name exactly as created in data_processing.enrichment module
-        col_name_for_cond_metric = f"active_{condition_key_name_cfg.lower().replace(' ', '_').replace('-', '_').replace('(severe)','')}_cases"
-        display_label_for_cond = condition_key_name_cfg.replace("(Severe)", "").strip() # Cleaner label for UI
-        all_potential_metrics_definitions[f"Active {display_label_for_cond} Cases (Zone)"] = {
-            "col": col_name_for_cond_metric, 
-            "format_str": "{:.0f}", # Count of cases
-            "colorscale_hint": "Reds" # Default for disease burden: higher is worse
+    for cond_key_name in settings.KEY_CONDITIONS_FOR_ACTION:
+        # Consistent column name generation (lowercase, underscores, no special chars like parentheses)
+        col_name_cond = f"active_{re.sub(r'[^a-z0-9_]+', '_', cond_key_name.lower().replace('(severe)','').strip())}_cases"
+        display_label_cond = cond_key_name.replace("(Severe)", "").strip()
+        all_potential_metrics[f"Active {display_label_cond} Cases (Zone)"] = {
+            "col": col_name_cond, "format_str": "{:.0f}", "colorscale_hint": "Reds"
         }
 
     if not isinstance(district_zone_df_sample, pd.DataFrame) or district_zone_df_sample.empty:
-        logger.debug(f"({module_log_prefix}) No zone DataFrame sample provided. Returning all defined potential metrics without column validation.")
-        return all_potential_metrics_definitions
+        logger.debug(f"({module_log_prefix}) No zone DF sample. Returning all potential metrics.")
+        return all_potential_metrics
 
-    # Filter metrics: only include if the required column exists in the DataFrame sample
-    # AND that column has at least one non-null data point in the sample.
-    available_metrics_for_comparison: Dict[str, Dict[str, str]] = {}
-    for metric_display_name, metric_props in all_potential_metrics_definitions.items():
-        actual_column_name = metric_props["col"]
-        if actual_column_name in district_zone_df_sample.columns and \
-           district_zone_df_sample[actual_column_name].notna().any(): # Check if at least one non-NaN value exists
-            available_metrics_for_comparison[metric_display_name] = metric_props
+    available_metrics: Dict[str, Dict[str, str]] = {}
+    for metric_name, metric_props in all_potential_metrics.items():
+        col_name = metric_props["col"]
+        if col_name in district_zone_df_sample.columns and district_zone_df_sample[col_name].notna().any():
+            available_metrics[metric_name] = metric_props
         else:
-            logger.debug(
-                f"({module_log_prefix}) Comparison metric '{metric_display_name}' (column '{actual_column_name}') "
-                f"excluded: column missing from DataFrame sample or contains only NaN values."
-            )
+            logger.debug(f"({module_log_prefix}) Metric '{metric_name}' (col '{col_name}') excluded: missing or all NaN in sample.")
             
-    if not available_metrics_for_comparison:
-        logger.warning(f"({module_log_prefix}) No comparison metrics found to be available after checking DataFrame sample columns and data.")
-        
-    return available_metrics_for_comparison
+    if not available_metrics:
+        logger.warning(f"({module_log_prefix}) No comparison metrics available after checking DF sample.")
+    return available_metrics
 
 
-def prepare_district_zonal_comparison_data( # Renamed function
-    enriched_district_zone_df: Optional[pd.DataFrame], # Enriched DataFrame (not GeoDataFrame)
-    reporting_period_context_str: str = "Latest Aggregated Data" # Renamed for clarity
+def prepare_district_zonal_comparison_data(
+    enriched_district_zone_df: Optional[pd.DataFrame],
+    reporting_period_context_str: str = "Latest Aggregated Data"
 ) -> Dict[str, Any]:
     """
-    Prepares data for the DHO Zonal Comparison tab, including a comparison table
-    and the configuration of metrics used.
-
-    Args:
-        enriched_district_zone_df: The DataFrame output from `enrich_zone_geodata_with_health_aggregates`.
-                                   Should contain 'zone_id', 'name', and various aggregated metrics.
-        reporting_period_context_str: String describing the reporting period.
-
-    Returns:
-        Dict[str, Any]: Contains:
-            "reporting_period": str
-            "comparison_metrics_config": Dict (from get_district_comparison_metrics_config)
-            "zonal_comparison_table_df": pd.DataFrame (Zone Name as index, metrics as columns)
-            "data_availability_notes": List[str]
+    Prepares data for the DHO Zonal Comparison tab.
     """
-    module_log_prefix = "DistrictZonalComparisonPrep" # Renamed for clarity
-    logger.info(f"({module_log_prefix}) Preparing zonal comparison data for period: {reporting_period_context_str}")
+    module_log_prefix = "DistrictZonalComparisonPrep"
+    logger.info(f"({module_log_prefix}) Preparing zonal comparison data for: {reporting_period_context_str}")
     
-    # Initialize output structure with defaults for DataFrames
-    output_zonal_comparison_data: Dict[str, Any] = {
-        "reporting_period": reporting_period_context_str,
-        "comparison_metrics_config": {},
-        "zonal_comparison_table_df": pd.DataFrame(), # Default to empty DF
-        "data_availability_notes": []
+    output_data: Dict[str, Any] = {
+        "reporting_period": reporting_period_context_str, "comparison_metrics_config": {},
+        "zonal_comparison_table_df": pd.DataFrame(), "data_availability_notes": []
     }
     
     if not isinstance(enriched_district_zone_df, pd.DataFrame) or enriched_district_zone_df.empty:
-        note_msg = "Enriched District Zone DataFrame is missing or empty. Cannot prepare zonal comparison data."
-        logger.warning(f"({module_log_prefix}) {note_msg}")
-        output_zonal_comparison_data["data_availability_notes"].append(note_msg)
-        return output_zonal_comparison_data
+        note = "Enriched District Zone DF missing/empty. Cannot prepare zonal comparison."
+        logger.warning(f"({module_log_prefix}) {note}"); output_data["data_availability_notes"].append(note)
+        return output_data
 
-    # Get available metrics configuration based on the columns present in the provided DataFrame
-    available_metrics_for_table_config = get_district_comparison_metrics_config(enriched_district_zone_df.head(2)) # Pass small sample
+    metrics_config = get_district_comparison_metrics_config(enriched_district_zone_df.head(2))
+    if not metrics_config:
+        note = "No valid metrics for zonal comparison based on provided zone DF."
+        logger.warning(f"({module_log_prefix}) {note}"); output_data["data_availability_notes"].append(note)
+        return output_data
+    output_data["comparison_metrics_config"] = metrics_config
     
-    if not available_metrics_for_table_config:
-        note_msg = "No valid metrics found for zonal comparison based on the columns and data in the provided zone DataFrame."
-        logger.warning(f"({module_log_prefix}) {note_msg}")
-        output_zonal_comparison_data["data_availability_notes"].append(note_msg)
-        return output_zonal_comparison_data
-        
-    output_zonal_comparison_data["comparison_metrics_config"] = available_metrics_for_table_config
-    
-    # Determine the zone identifier column for table display (prefer 'name', fallback to 'zone_id')
-    zone_display_identifier_col = 'name' # User-friendly name for table index/rows
+    zone_display_col = 'name' # Prefer 'name' for display
     if 'name' not in enriched_district_zone_df.columns or enriched_district_zone_df['name'].isnull().all():
-        if 'zone_id' in enriched_district_zone_df.columns:
-            zone_display_identifier_col = 'zone_id' # Fallback if 'name' is unusable
+        if 'zone_id' in enriched_district_zone_df.columns: zone_display_col = 'zone_id'
         else: 
-            note_msg = "Critical error: Neither 'name' nor 'zone_id' found in enriched_district_zone_df. Cannot create comparison table."
-            logger.error(f"({module_log_prefix}) {note_msg}")
-            output_zonal_comparison_data["data_availability_notes"].append(note_msg)
-            return output_zonal_comparison_data # Cannot proceed
+            note = "Critical: Neither 'name' nor 'zone_id' in enriched_district_zone_df for comparison table."
+            logger.error(f"({module_log_prefix}) {note}"); output_data["data_availability_notes"].append(note)
+            return output_data
             
-    # Select columns for the comparison table: zone identifier + all available metric columns
-    # Ensure 'zone_id' is also included if it's different from zone_display_identifier_col for potential internal use,
-    # though not primary for display if 'name' is used.
-    columns_for_final_comparison_table = [zone_display_identifier_col] + \
-                                         [details['col'] for details in available_metrics_for_table_config.values()]
-    if 'zone_id' in enriched_district_zone_df.columns and 'zone_id' not in columns_for_final_comparison_table:
-        columns_for_final_comparison_table.append('zone_id') # Ensure 'zone_id' is present if not the display col
+    # Columns for the table: display identifier + all available metric columns
+    table_cols = [zone_display_col] + [details['col'] for details in metrics_config.values()]
+    # Ensure 'zone_id' is also included if different from display_col and exists (for internal use/linking)
+    if 'zone_id' in enriched_district_zone_df.columns and 'zone_id' not in table_cols:
+        table_cols.append('zone_id')
+    
+    final_table_cols = [col for col in list(set(table_cols)) if col in enriched_district_zone_df.columns] # Unique & existing
+    
+    num_actual_metric_cols = len([c for c in final_table_cols if c != zone_display_col and c != 'zone_id'])
+    if num_actual_metric_cols == 0 or zone_display_col not in final_table_cols:
+        note = "No metric columns available or zone identifier missing for comparison table."
+        logger.warning(f"({module_log_prefix}) {note}"); output_data["data_availability_notes"].append(note)
+        output_data["zonal_comparison_table_df"] = pd.DataFrame(columns=[zone_display_col] if zone_display_col in final_table_cols else [])
+        return output_data
 
-    # Ensure all selected columns actually exist in the DataFrame to prevent KeyErrors
-    final_table_cols_to_select = [
-        col_name for col_name in list(set(columns_for_final_comparison_table)) # Unique columns
-        if col_name in enriched_district_zone_df.columns
-    ]
+    df_comparison_table = enriched_district_zone_df[final_table_cols].copy()
     
-    # If only zone identifier is left (no actual metrics, or identifier itself missing), create empty table
-    num_metric_cols_in_final_selection = len([c for c in final_table_cols_to_select if c != zone_display_identifier_col and c != 'zone_id'])
-    if num_metric_cols_in_final_selection == 0 or zone_display_identifier_col not in final_table_cols_to_select:
-        note_msg = "No metric columns available in DataFrame for comparison table after filtering, or zone identifier missing."
-        logger.warning(f"({module_log_prefix}) {note_msg}")
-        output_zonal_comparison_data["data_availability_notes"].append(note_msg)
-        # Create an empty DF with just the identifier column if it exists, for schema consistency
-        output_zonal_comparison_data["zonal_comparison_table_df"] = pd.DataFrame(
-            columns=[zone_display_identifier_col] if zone_display_identifier_col in enriched_district_zone_df.columns else []
-        )
-        return output_zonal_comparison_data
-
-    df_comparison_table_final = enriched_district_zone_df[final_table_cols_to_select].copy()
+    if zone_display_col in df_comparison_table.columns:
+        df_comparison_table = df_comparison_table.set_index(zone_display_col, drop=False) 
+        df_comparison_table.index.name = "Zone / Sector"
     
-    # Set the zone identifier as index for better table display in Streamlit, but keep the column too
-    if zone_display_identifier_col in df_comparison_table_final.columns:
-        df_comparison_table_final = df_comparison_table_final.set_index(zone_display_identifier_col, drop=False) 
-        df_comparison_table_final.index.name = "Zone / Sector" # More descriptive index name for display
+    output_data["zonal_comparison_table_df"] = df_comparison_table
     
-    output_zonal_comparison_data["zonal_comparison_table_df"] = df_comparison_table_final
-    
-    num_metrics_in_final_table = len(available_metrics_for_table_config) # Number of configured metrics actually used
-    logger.info(
-        f"({module_log_prefix}) Zonal comparison data prepared with {len(df_comparison_table_final)} zones "
-        f"and {num_metrics_in_final_table} metrics in the table."
-    )
-    return output_zonal_comparison_data
+    logger.info(f"({module_log_prefix}) Zonal comparison data prepared with {len(df_comparison_table)} zones and {len(metrics_config)} metrics.")
+    return output_data
