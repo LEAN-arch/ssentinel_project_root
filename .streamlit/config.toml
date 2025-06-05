@@ -7,7 +7,7 @@
 port = 8501
 
 # Disable automatic browser opening for server environments; set to false for local dev.
-headless = false
+headless = true # Changed to true for typical server deployments
 
 # Automatically rerun the script when a source file is saved (recommended for development).
 runOnSave = true
@@ -16,7 +16,7 @@ runOnSave = true
 maxUploadSize = 50
 
 # Enable Cross-Origin Resource Sharing (CORS) for embedding or cross-domain calls.
-enableCORS = true
+enableCORS = true # Keep true if embedding or cross-domain needed, else false
 
 # Enable XSRF (Cross-Site Request Forgery) protection for security.
 enableXsrfProtection = true
@@ -32,28 +32,29 @@ initialSidebarState = "expanded"
 # --- Logger Configuration ---
 [logger]
 # Logging level for Streamlit's internal logger ("error", "warning", "info", "debug").
-level = "info"
+# This is Streamlit's logger, separate from app's Python logging.
+level = "info" # Can be overridden by app's global logging if set before Streamlit runs
 
 # --- Theme Configuration ---
 # Custom theme to align with Sentinel's branding (matches settings.py and assets/style_web_reports.css).
 [theme]
 # Primary accent color for interactive elements (e.g., buttons, sliders).
-primaryColor = "#1976D2"
+primaryColor = "#1976D2" # Blue - From settings.COLOR_ACTION_PRIMARY
 
 # Background color for the main content area.
-backgroundColor = "#FFFFFF"
+backgroundColor = "#FFFFFF" # White - From settings.COLOR_BACKGROUND_CONTENT
 
 # Background color for sidebar and other UI containers.
-secondaryBackgroundColor = "#f8f9fa"
+secondaryBackgroundColor = "#f8f9fa" # Light Gray - From settings.COLOR_BACKGROUND_PAGE
 
 # Text color for main content and most text elements.
-textColor = "#343a40"
+textColor = "#343a40" # Dark Gray - From settings.COLOR_TEXT_DARK
 
 # Font family for Streamlit components.
-font = "sans serif"
+font = "sans serif" # Default Streamlit font
 
 # --- Mapbox Configuration ---
 [mapbox]
 # Mapbox access token should be set via environment variable (MAPBOX_ACCESS_TOKEN) for security.
 # Streamlit's st.map and Plotly Express will use the environment variable if set.
-# token = "YOUR_MAPBOX_TOKEN" # Avoid hardcoding tokens here.
+# token = "YOUR_MAPBOX_TOKEN" # Avoid hardcoding tokens here. Leave commented.
