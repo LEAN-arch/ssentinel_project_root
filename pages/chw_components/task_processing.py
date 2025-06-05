@@ -1,219 +1,162 @@
 # sentinel_project_root/pages/chw_components/task_processing.py
 # Processes CHW data to generate a prioritized list of tasks for Sentinel.
-# Renamed from task_processor.py
 
 import pandas as pd
 import numpy as np
 import logging
-from typing import List, Dict, Any, Optional
-from datetime import date, timedelta # For due date calculations
+import re # For condition matching
+from typing import List, Dict, Any, Optional, Set, Tuple # Added Set, Tuple
+from datetime import date as date_type, timedelta # For due date calculations
 
-from config import settings # Use new settings module
-from data_processing.helpers import convert_to_numeric # Local import
+from config import settings
+from data_processing.helpers import convert_to_numeric
 
 logger = logging.getLogger(__name__)
 
 
-def generate_chw_tasks( # Renamed from generate_chw_prioritized_tasks
-    source_patient_data_df: Optional[pd.DataFrame], # Data for the specific day/context
-    for_date: Any, # The date these tasks are relevant FOR or DUE BY
-    chw_id_context: Optional[str] = "TeamDefaultCHW", # Contextual CHW ID for assignment
-    zone_context_str: Optional[str] = "GeneralArea",  # Contextual Zone ID
-    max_tasks_to_return_for_summary: int = 20 # Limit for dashboard display
+def generate_chw_tasks(
+    source_patient_data_df: Optional[pd.DataFrame], 
+    for_date: Any, 
+    chw_id_context: Optional[str] = "TeamDefaultCHW", 
+    zone_context_str: Optional[str] = "GeneralArea",  
+    max_tasks_to_return_for_summary: int = 20
 ) -> List[Dict[str, Any]]:
     """
     Generates a prioritized list of CHW tasks based on input patient data for a specific day.
-    Tasks can include follow-ups for alerts, routine checks, medication adherence support, etc.
     """
-    module_log_prefix = "CHWTaskGenerator" # Renamed for clarity
+    module_log_prefix = "CHWTaskGenerator"
 
-    # Standardize for_date (this is the date the tasks are being generated *for*)
     try:
-        task_generation_target_date = pd.to_datetime(for_date).date() if for_date else pd.Timestamp('now').date()
-    except Exception:
-        logger.warning(f"({module_log_prefix}) Invalid 'for_date' ({for_date}). Defaulting to current system date.")
-        task_generation_target_date = pd.Timestamp('now').date()
+        task_gen_target_date = pd.to_datetime(for_date, errors='coerce').date()
+        if pd.isna(task_gen_target_date): raise ValueError("Invalid for_date for task generation.")
+    except Exception as e_date_task:
+        logger.warning(f"({module_log_prefix}) Invalid 'for_date' ({for_date}): {e_date_task}. Defaulting to current system date.")
+        task_gen_target_date = pd.Timestamp('now').date()
+    task_gen_target_date_iso = task_gen_target_date.isoformat()
 
-    logger.info(f"({module_log_prefix}) Generating CHW tasks for target date: {task_generation_target_date.isoformat()}, CHW: {chw_id_context}, Zone: {zone_context_str}")
+    logger.info(f"({module_log_prefix}) Generating CHW tasks for target date: {task_gen_target_date_iso}, CHW: {chw_id_context}, Zone: {zone_context_str}")
 
     if not isinstance(source_patient_data_df, pd.DataFrame) or source_patient_data_df.empty:
-        logger.warning(f"({module_log_prefix}) No valid patient data provided for task generation on {task_generation_target_date.isoformat()}.")
-        return [] # Return empty list if no data
-
-    df_task_src_raw = source_patient_data_df.copy()
-    
-    # Filter data to be relevant for task_generation_target_date if 'encounter_date' exists
-    # Tasks are often generated based on *today's* findings or recent events.
-    if 'encounter_date' in df_task_src_raw.columns:
-        df_task_src_raw['encounter_date_dt'] = pd.to_datetime(df_task_src_raw['encounter_date'], errors='coerce')
-        # For generating *today's* tasks, usually consider encounters from today or very recent past (e.g. yesterday for overdue items)
-        # Here, we'll assume source_patient_data_df is ALREADY filtered to the relevant day for new task generation.
-        # If it could contain older data, more complex filtering for "new findings today" vs "pending from past" would be needed.
-        # For simplicity, this component will assume df_task_src_raw is for the 'for_date'.
-        # df_task_src_raw = df_task_src_raw[df_task_src_raw['encounter_date_dt'].dt.date == task_generation_target_date]
-        pass # Assuming input df is already for the target date's encounters/alerts
-
-    if df_task_src_raw.empty:
-        logger.info(f"({module_log_prefix}) No patient data rows relevant for task generation on {task_generation_target_date.isoformat()} after initial check.")
+        logger.warning(f"({module_log_prefix}) No valid patient data for task generation on {task_gen_target_date_iso}.")
         return []
 
-    # Define expected columns and their safe defaults for task generation logic
-    task_gen_cols_config = {
-        'patient_id': {"default": f"UnknownPID_TaskGen_{task_generation_target_date.isoformat()}", "type": str},
-        'encounter_date': {"default": pd.NaT, "type": "datetime"}, # Date of the data point triggering task
-        'zone_id': {"default": zone_context_str or "UnknownZone", "type": str},
-        'chw_id': {"default": chw_id_context or "Unassigned", "type": str},
-        'condition': {"default": "N/A", "type": str},
-        'age': {"default": np.nan, "type": float},
-        'ai_risk_score': {"default": 0.0, "type": float}, # Default to 0 if not present for priority calc
-        'ai_followup_priority_score': {"default": 0.0, "type": float}, # Default to 0
-        # Columns that might directly trigger tasks or inform task details:
-        'min_spo2_pct': {"default": np.nan, "type": float},
-        'vital_signs_temperature_celsius': {"default": np.nan, "type": float},
-        'max_skin_temp_celsius': {"default": np.nan, "type": float},
-        'fall_detected_today': {"default": 0, "type": int},
-        'referral_status': {"default": "Unknown", "type": str},
-        'referral_reason': {"default": "N/A", "type": str},
-        'medication_adherence_self_report': {"default": "Unknown", "type": str},
-        'tb_contact_traced': {"default": 0, "type": int} # 0=No/Pending, 1=Yes/Completed
-    }
-    common_na_values_task_gen = ['', 'nan', 'None', 'N/A', '#N/A', 'np.nan', 'NaT', '<NA>', 'null', 'NULL', 'unknown']
-
-    df_for_task_rules = df_task_src_raw.copy() # Work on a copy
-    for col_name, config in task_gen_cols_config.items():
-        if col_name not in df_for_task_rules.columns:
-            df_for_task_rules[col_name] = config["default"]
-        
-        if config["type"] == "datetime":
-            df_for_task_rules[col_name] = pd.to_datetime(df_for_task_rules[col_name], errors='coerce')
-        elif config["type"] == float:
-            df_for_task_rules[col_name] = convert_to_numeric(df_for_task_rules[col_name], default_value=config["default"])
-        elif config["type"] == int:
-            df_for_task_rules[col_name] = convert_to_numeric(df_for_task_rules[col_name], default_value=config["default"], target_type=int)
-        elif config["type"] == str:
-            df_for_task_rules[col_name] = df_for_task_rules[col_name].astype(str).fillna(str(config["default"]))
-            df_for_task_rules[col_name] = df_for_task_rules[col_name].replace(common_na_values_task_gen, str(config["default"]), regex=False).str.strip()
-
-    # Prioritize records with higher AI follow-up scores or risk scores if follow-up score is low/missing
-    # This helps process more "important" patients first for task generation.
-    df_for_task_rules['temp_sort_priority'] = df_for_task_rules['ai_followup_priority_score'].fillna(0) + (df_for_task_rules['ai_risk_score'].fillna(0) * 0.5)
-    df_sorted_for_rules = df_for_task_rules.sort_values(by='temp_sort_priority', ascending=False).drop(columns=['temp_sort_priority'])
-
-
-    generated_tasks_list: List[Dict[str, Any]] = []
-    processed_patient_task_types_today: set = set() # To avoid duplicate task types for same patient on same day
-
-    # Determine temperature column to use
-    temp_col_name_task = next((tc for tc in ['vital_signs_temperature_celsius', 'max_skin_temp_celsius'] if tc in df_sorted_for_rules.columns and df_sorted_for_rules[tc].notna().any()), None)
-
-
-    for _, patient_row_data in df_sorted_for_rules.iterrows():
-        patient_id_val = str(patient_row_data['patient_id'])
-        # Task due date is typically today or next day for CHW tasks generated from daily findings
-        task_due_date = task_generation_target_date + timedelta(days=1) # Default due next day
-        
-        # Base priority: from AI follow-up score, fallback to AI risk, then default low
-        base_priority_for_task = patient_row_data.get('ai_followup_priority_score', 0.0)
-        if pd.isna(base_priority_for_task) or base_priority_for_task < 10: # If low/missing followup score, consider risk
-            base_priority_for_task = max(base_priority_for_task if pd.notna(base_priority_for_task) else 0.0, 
-                                         patient_row_data.get('ai_risk_score', 0.0) * 0.6) # Weight risk less than direct prio
-        base_priority_for_task = max(10.0, base_priority_for_task) # Min base priority for any generated task
-
-
-        task_details_to_add: Optional[Dict[str, Any]] = None
-
-        # --- Task Generation Rules (Prioritized) ---
-
-        # 1. Critical Vitals Follow-up (SpO2, High Fever, Fall)
-        if pd.notna(patient_row_data['min_spo2_pct']) and patient_row_data['min_spo2_pct'] < settings.ALERT_SPO2_CRITICAL_LOW_PCT:
-            task_type_code = "TASK_VISIT_VITALS_URGENT"
-            if (patient_id_val, task_type_code) not in processed_patient_task_types_today:
-                task_details_to_add = {"type": task_type_code, "desc": f"URGENT: Assess Critical Low SpO2 ({patient_row_data['min_spo2_pct']:.0f}%)", "prio": 98.0}
-                task_due_date = task_generation_target_date # Same day urgency
-        
-        elif temp_col_name_task and pd.notna(patient_row_data[temp_col_name_task]) and patient_row_data[temp_col_name_task] >= settings.ALERT_BODY_TEMP_HIGH_FEVER_C:
-            task_type_code = "TASK_VISIT_VITALS_URGENT"
-            if (patient_id_val, task_type_code) not in processed_patient_task_types_today:
-                task_details_to_add = {"type": task_type_code, "desc": f"URGENT: Assess High Fever ({patient_row_data[temp_col_name_task]:.1f}°C)", "prio": 95.0}
-                task_due_date = task_generation_target_date # Same day
-        
-        elif pd.notna(patient_row_data['fall_detected_today']) and patient_row_data['fall_detected_today'] > 0:
-            task_type_code = "TASK_VISIT_FALL_ASSESS"
-            if (patient_id_val, task_type_code) not in processed_patient_task_types_today:
-                task_details_to_add = {"type": task_type_code, "desc": f"Assess Patient After Fall Detection (Falls: {int(patient_row_data['fall_detected_today'])})", "prio": 92.0}
-                task_due_date = task_generation_target_date # Same day
-
-        # 2. Pending Critical Referral Follow-up
-        if not task_details_to_add and str(patient_row_data['referral_status']).lower() == 'pending':
-            is_key_cond_referral = any(
-                kc.lower() in str(patient_row_data['condition']).lower() for kc in settings.KEY_CONDITIONS_FOR_ACTION
-            ) or "urgent" in str(patient_row_data.get('referral_reason','')).lower() # Check reason too
-            if is_key_cond_referral:
-                task_type_code = "TASK_VISIT_REFERRAL_TRACK"
-                if (patient_id_val, task_type_code) not in processed_patient_task_types_today:
-                    task_details_to_add = {"type": task_type_code, "desc": f"Follow-up: Critical Referral for {patient_row_data['condition']}", "prio": 88.0}
-        
-        # 3. High AI Follow-up Priority Score Task
-        if not task_details_to_add and base_priority_for_task >= settings.FATIGUE_INDEX_HIGH_THRESHOLD: # Using general high prio threshold
-            task_type_code = "TASK_VISIT_FOLLOWUP_AI"
-            if (patient_id_val, task_type_code) not in processed_patient_task_types_today:
-                task_details_to_add = {"type": task_type_code, "desc": f"Priority Follow-up (High AI Score: {base_priority_for_task:.0f})", "prio": base_priority_for_task}
-
-        # 4. Medication Adherence Support
-        if not task_details_to_add and str(patient_row_data['medication_adherence_self_report']).lower() == 'poor':
-            task_type_code = "TASK_VISIT_ADHERENCE_SUPPORT"
-            if (patient_id_val, task_type_code) not in processed_patient_task_types_today:
-                task_details_to_add = {"type": task_type_code, "desc": "Support Medication Adherence (Reported Poor)", "prio": max(base_priority_for_task, 75.0)}
-        
-        # 5. Pending TB Contact Tracing (if TB is condition and contact not yet traced)
-        if not task_details_to_add and \
-           "tb" in str(patient_row_data['condition']).lower() and \
-           pd.notna(patient_row_data.get('tb_contact_traced')) and patient_row_data['tb_contact_traced'] == 0:
-            task_type_code = "TASK_TB_CONTACT_TRACE" # Specific task type
-            if (patient_id_val, task_type_code) not in processed_patient_task_types_today:
-                task_details_to_add = {"type": task_type_code, "desc": "Initiate/Continue TB Contact Tracing", "prio": max(base_priority_for_task, 80.0)}
-        
-        # (Add more rules here: e.g., routine wellness, maternal health schedule, etc.)
-
-        # 6. Default Routine Checkup if no other specific task generated and some risk/moderate prio
-        if not task_details_to_add and base_priority_for_task >= settings.FATIGUE_INDEX_MODERATE_THRESHOLD: # Moderate prio threshold
-            task_type_code = "TASK_VISIT_ROUTINE_CHECK"
-            if (patient_id_val, task_type_code) not in processed_patient_task_types_today:
-                 task_details_to_add = {"type": task_type_code, "desc": f"Routine Health Check (AI Prio: {base_priority_for_task:.0f})", "prio": base_priority_for_task}
-
-
-        if task_details_to_add:
-            # Construct patient context string for quick overview in task list
-            context_parts = []
-            if str(patient_row_data['condition']) not in ["N/A", "UnknownCondition"]: context_parts.append(f"Cond: {patient_row_data['condition']}")
-            if pd.notna(patient_row_data['age']): context_parts.append(f"Age: {patient_row_data['age']:.0f}")
-            if pd.notna(patient_row_data['min_spo2_pct']): context_parts.append(f"SpO2: {patient_row_data['min_spo2_pct']:.0f}%")
-            if temp_col_name_task and pd.notna(patient_row_data[temp_col_name_task]): context_parts.append(f"Temp: {patient_row_data[temp_col_name_task]:.1f}°C")
-            if pd.notna(patient_row_data['ai_risk_score']): context_parts.append(f"AI Risk: {patient_row_data['ai_risk_score']:.0f}")
-            key_patient_context_str = " | ".join(context_parts) if context_parts else "General Check Required"
-
-            task_record = {
-                "task_id": f"TSK_{patient_id_val}_{task_generation_target_date.strftime('%Y%m%d')}_{task_details_to_add['type'].split('_')[-1]}_{len(generated_tasks_list)}",
-                "patient_id": patient_id_val,
-                "assigned_chw_id": str(patient_row_data.get('chw_id', chw_id_context)), # Assign to current CHW or default
-                "zone_id": str(patient_row_data.get('zone_id', zone_context_str)),
-                "task_type_code": task_details_to_add["type"],
-                "task_description": f"{task_details_to_add['desc']} for Patient {patient_id_val}",
-                "priority_score": round(min(task_details_to_add["prio"], 100.0), 1), # Cap priority at 100
-                "due_date": task_due_date.isoformat(), # ISO format string
-                "status": "PENDING", # Initial status
-                "key_patient_context": key_patient_context_str,
-                "alert_source_info": f"Data from {patient_row_data.get('encounter_date', task_generation_target_date).strftime('%Y-%m-%d')}"
-            }
-            generated_tasks_list.append(task_record)
-            processed_patient_task_types_today.add((patient_id_val, task_details_to_add["type"]))
-
-
-    # Sort all generated tasks by priority score (descending)
-    if generated_tasks_list:
-        final_tasks_sorted_list = sorted(generated_tasks_list, key=lambda x_task: x_task['priority_score'], reverse=True)
-        logger.info(f"({module_log_prefix}) Generated {len(final_tasks_sorted_list)} unique CHW tasks for {task_generation_target_date.isoformat()}.")
-        return final_tasks_sorted_list[:max_tasks_to_return_for_summary] # Return top N tasks
+    df_task_src = source_patient_data_df.copy()
     
-    logger.info(f"({module_log_prefix}) No tasks generated for {task_generation_target_date.isoformat()} based on current rules and data.")
+    # Assuming df_task_src is already filtered to the relevant day's findings.
+    # If not, filter here:
+    # if 'encounter_date' in df_task_src.columns:
+    #     df_task_src['encounter_date_dt_task'] = pd.to_datetime(df_task_src['encounter_date'], errors='coerce')
+    #     df_task_src = df_task_src[df_task_src['encounter_date_dt_task'].dt.date == task_gen_target_date]
+    # if df_task_src.empty:
+    #     logger.info(f"({module_log_prefix}) No data for task generation on {task_gen_target_date_iso} after date filter.")
+    #     return []
+
+    task_gen_cols_cfg = {
+        'patient_id': {"default": f"UPID_Task_{task_gen_target_date_iso}", "type": str},
+        'encounter_date': {"default": pd.NaT, "type": "datetime"},
+        'zone_id': {"default": zone_context_str or "UZone", "type": str},
+        'chw_id': {"default": chw_id_context or "Unassigned", "type": str},
+        'condition': {"default": "N/A", "type": str}, 'age': {"default": np.nan, "type": float},
+        'ai_risk_score': {"default": 0.0, "type": float}, 'ai_followup_priority_score': {"default": 0.0, "type": float},
+        'min_spo2_pct': {"default": np.nan, "type": float}, 'vital_signs_temperature_celsius': {"default": np.nan, "type": float},
+        'max_skin_temp_celsius': {"default": np.nan, "type": float}, 'fall_detected_today': {"default": 0, "type": int},
+        'referral_status': {"default": "Unknown", "type": str}, 'referral_reason': {"default": "N/A", "type": str},
+        'medication_adherence_self_report': {"default": "Unknown", "type": str}, 'tb_contact_traced': {"default": 0, "type": int}
+    }
+    common_na_task = ['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown']
+    na_regex_task = r'^(?:' + '|'.join(re.escape(s) for s in common_na_task if s) + r')$'
+
+    for col, cfg in task_gen_cols_cfg.items():
+        if col not in df_task_src.columns: df_task_src[col] = cfg["default"]
+        if cfg["type"] == "datetime": df_task_src[col] = pd.to_datetime(df_task_src[col], errors='coerce')
+        elif cfg["type"] == float: df_task_src[col] = convert_to_numeric(df_task_src[col], default_value=cfg["default"])
+        elif cfg["type"] == int: df_task_src[col] = convert_to_numeric(df_task_src[col], default_value=cfg["default"], target_type=int)
+        elif cfg["type"] == str:
+            df_task_src[col] = df_task_src[col].astype(str).fillna(str(cfg["default"]))
+            if any(common_na_task): df_task_src[col] = df_task_src[col].replace(na_regex_task, str(cfg["default"]), regex=True)
+            df_task_src[col] = df_task_src[col].str.strip()
+
+    df_task_src['temp_sort_priority'] = df_task_src['ai_followup_priority_score'].fillna(0) + (df_task_src['ai_risk_score'].fillna(0) * 0.5)
+    df_sorted_rules = df_task_src.sort_values(by='temp_sort_priority', ascending=False).drop(columns=['temp_sort_priority'])
+
+    generated_tasks: List[Dict[str, Any]] = []
+    processed_pat_task_types: Set[Tuple[str, str]] = set()
+    temp_col_task = next((tc for tc in ['vital_signs_temperature_celsius', 'max_skin_temp_celsius'] if tc in df_sorted_rules.columns and df_sorted_rules[tc].notna().any()), None)
+
+    for _, row in df_sorted_rules.iterrows():
+        pid = str(row['patient_id'])
+        due_date = task_gen_target_date + timedelta(days=1) # Default due next day
+        base_prio = row.get('ai_followup_priority_score', 0.0)
+        if pd.isna(base_prio) or base_prio < 10:
+            base_prio = max(base_prio if pd.notna(base_prio) else 0.0, row.get('ai_risk_score', 0.0) * 0.6)
+        base_prio = max(10.0, base_prio)
+        task_to_add: Optional[Dict[str, Any]] = None
+
+        # Rule 1: Critical Vitals Follow-up
+        if pd.notna(row['min_spo2_pct']) and row['min_spo2_pct'] < settings.ALERT_SPO2_CRITICAL_LOW_PCT:
+            ttc = "TASK_VISIT_VITALS_URGENT"
+            if (pid, ttc) not in processed_pat_task_types: task_to_add = {"type": ttc, "desc": f"URGENT: Assess Critical Low SpO2 ({row['min_spo2_pct']:.0f}%)", "prio": 98.0}; due_date = task_gen_target_date
+        elif temp_col_task and pd.notna(row[temp_col_task]) and row[temp_col_task] >= settings.ALERT_BODY_TEMP_HIGH_FEVER_C:
+            ttc = "TASK_VISIT_VITALS_URGENT"
+            if (pid, ttc) not in processed_pat_task_types: task_to_add = {"type": ttc, "desc": f"URGENT: Assess High Fever ({row[temp_col_task]:.1f}°C)", "prio": 95.0}; due_date = task_gen_target_date
+        elif pd.notna(row['fall_detected_today']) and row['fall_detected_today'] > 0:
+            ttc = "TASK_VISIT_FALL_ASSESS"
+            if (pid, ttc) not in processed_pat_task_types: task_to_add = {"type": ttc, "desc": f"Assess After Fall (Falls: {int(row['fall_detected_today'])})", "prio": 92.0}; due_date = task_gen_target_date
+        
+        # Rule 2: Pending Critical Referral Follow-up
+        if not task_to_add and str(row['referral_status']).lower() == 'pending':
+            is_key_ref = any(re.escape(kc).lower() in str(row['condition']).lower() for kc in settings.KEY_CONDITIONS_FOR_ACTION) or \
+                         "urgent" in str(row.get('referral_reason','')).lower()
+            if is_key_ref:
+                ttc = "TASK_VISIT_REFERRAL_TRACK"
+                if (pid, ttc) not in processed_pat_task_types: task_to_add = {"type": ttc, "desc": f"Follow-up: Critical Referral for {row['condition']}", "prio": 88.0}
+        
+        # Rule 3: High AI Follow-up Prio Task
+        if not task_to_add and base_prio >= settings.FATIGUE_INDEX_HIGH_THRESHOLD:
+            ttc = "TASK_VISIT_FOLLOWUP_AI"
+            if (pid, ttc) not in processed_pat_task_types: task_to_add = {"type": ttc, "desc": f"Priority Follow-up (AI Score: {base_prio:.0f})", "prio": base_prio}
+
+        # Rule 4: Medication Adherence Support
+        if not task_to_add and str(row['medication_adherence_self_report']).lower() == 'poor':
+            ttc = "TASK_VISIT_ADHERENCE_SUPPORT"
+            if (pid, ttc) not in processed_pat_task_types: task_to_add = {"type": ttc, "desc": "Support Medication Adherence (Poor)", "prio": max(base_prio, 75.0)}
+        
+        # Rule 5: Pending TB Contact Tracing
+        if not task_to_add and "tb" in str(row['condition']).lower() and pd.notna(row.get('tb_contact_traced')) and row['tb_contact_traced'] == 0:
+            ttc = "TASK_TB_CONTACT_TRACE"
+            if (pid, ttc) not in processed_pat_task_types: task_to_add = {"type": ttc, "desc": "Initiate/Continue TB Contact Tracing", "prio": max(base_prio, 80.0)}
+        
+        # Rule 6: Default Routine Checkup
+        if not task_to_add and base_prio >= settings.FATIGUE_INDEX_MODERATE_THRESHOLD:
+            ttc = "TASK_VISIT_ROUTINE_CHECK"
+            if (pid, ttc) not in processed_pat_task_types: task_to_add = {"type": ttc, "desc": f"Routine Health Check (AI Prio: {base_prio:.0f})", "prio": base_prio}
+
+        if task_to_add:
+            ctx_parts = []
+            if str(row['condition']) not in ["N/A", "UCond"]: ctx_parts.append(f"Cond: {row['condition']}")
+            if pd.notna(row['age']): ctx_parts.append(f"Age: {row['age']:.0f}")
+            if pd.notna(row['min_spo2_pct']): ctx_parts.append(f"SpO2: {row['min_spo2_pct']:.0f}%")
+            if temp_col_task and pd.notna(row[temp_col_task]): ctx_parts.append(f"Temp: {row[temp_col_task]:.1f}°C")
+            if pd.notna(row['ai_risk_score']): ctx_parts.append(f"AI Risk: {row['ai_risk_score']:.0f}")
+            key_ctx_str = " | ".join(ctx_parts) if ctx_parts else "General Check"
+
+            task_id_suffix = task_to_add['type'].split('_')[-1] if '_' in task_to_add['type'] else task_to_add['type']
+            generated_tasks.append({
+                "task_id": f"TSK_{pid}_{task_gen_target_date_iso.replace('-', '')}_{task_id_suffix}_{len(generated_tasks)}",
+                "patient_id": pid, "assigned_chw_id": str(row.get('chw_id', chw_id_context)),
+                "zone_id": str(row.get('zone_id', zone_context_str)), "task_type_code": task_to_add["type"],
+                "task_description": f"{task_to_add['desc']} for Patient {pid}",
+                "priority_score": round(min(task_to_add["prio"], 100.0), 1),
+                "due_date": due_date.isoformat(), "status": "PENDING",
+                "key_patient_context": key_ctx_str,
+                "alert_source_info": f"Data from {(row.get('encounter_date') or task_gen_target_date).strftime('%Y-%m-%d')}"
+            })
+            processed_pat_task_types.add((pid, task_to_add["type"]))
+
+    if generated_tasks:
+        final_tasks = sorted(generated_tasks, key=lambda x: x['priority_score'], reverse=True)
+        logger.info(f"({module_log_prefix}) Generated {len(final_tasks)} CHW tasks for {task_gen_target_date_iso}.")
+        return final_tasks[:max_tasks_to_return_for_summary]
+    
+    logger.info(f"({module_log_prefix}) No tasks generated for {task_gen_target_date_iso}.")
     return []
