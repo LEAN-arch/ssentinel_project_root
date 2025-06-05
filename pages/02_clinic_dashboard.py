@@ -101,7 +101,7 @@ def get_clinic_console_processed_data(
     iot_data_available_flag = False
     if hasattr(settings, 'IOT_CLINIC_ENVIRONMENT_CSV_PATH') and hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'DATA_DIR'):
         iot_source_path_str = settings.IOT_CLINIC_ENVIRONMENT_CSV_PATH # Can be relative to DATA_DIR or absolute
-        project_root = Path(settings.PROJECT_ROOT_DIR)
+        # project_root = Path(settings.PROJECT_ROOT_DIR) # Not strictly needed if DATA_DIR is well-defined
         data_dir = Path(settings.DATA_DIR)
 
         iot_path = Path(iot_source_path_str)
@@ -318,7 +318,6 @@ if main_kpis_display_data:
         render_kpi_card(**kpi_data, container=kpi_cols_main[i % 4]) # Use modulo for column assignment
 elif not health_df_period.empty: # Data was there, but KPI structuring failed or returned empty
     st.info("ℹ️ Main service performance KPIs could not be fully generated for this period.")
-# No else needed if health_df_period is empty, as data loading messages cover that.
 
 
 if disease_kpis_display_data:
@@ -340,8 +339,6 @@ if not iot_df_period.empty: # Only calculate if there's IoT data for the period
         logger.error(f"Error getting environmental summary KPIs: {e_env_kpi}", exc_info=True)
         st.warning("⚠️ Could not calculate environmental summary KPIs for the period.")
 
-# Simplified check for any relevant data in env_summary_kpis_quick_check
-# Check if any of the primary expected keys have non-NaN values
 has_relevant_env_data = any(
     pd.notna(env_summary_kpis_quick_check.get(key))
     for key in ['avg_co2_overall_ppm', 'avg_pm25_overall_ugm3', 
@@ -354,28 +351,46 @@ if has_relevant_env_data:
     co2_val = env_summary_kpis_quick_check.get('avg_co2_overall_ppm', np.nan)
     co2_very_high_thresh = settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM if hasattr(settings, 'ALERT_AMBIENT_CO2_VERY_HIGH_PPM') else 1500
     co2_high_thresh = settings.ALERT_AMBIENT_CO2_HIGH_PPM if hasattr(settings, 'ALERT_AMBIENT_CO2_HIGH_PPM') else 1000
-    co2_stat = "HIGH_RISK" if pd.notna(co2_val) and co2_val > co2_very_high_thresh else \
-               ("MODERATE_CONCERN" if pd.notna(co2_val) and co2_val > co2_high_thresh else "ACCEPTABLE")
+    
+    co2_stat = "ACCEPTABLE" # Default
+    if pd.notna(co2_val):
+        if co2_val > co2_very_high_thresh:
+            co2_stat = "HIGH_RISK"
+        elif co2_val > co2_high_thresh:
+            co2_stat = "MODERATE_CONCERN"
     render_kpi_card("Avg. CO2", f"{co2_val:.0f}" if pd.notna(co2_val) else "N/A", "ppm", "💨", co2_stat, help_text=f"Avg CO2. Target < {co2_high_thresh}ppm.", container=env_kpi_cols_qc[0])
 
     # PM2.5 KPI
     pm25_val = env_summary_kpis_quick_check.get('avg_pm25_overall_ugm3', np.nan)
     pm25_very_high_thresh = settings.ALERT_AMBIENT_PM25_VERY_HIGH_UGM3 if hasattr(settings, 'ALERT_AMBIENT_PM25_VERY_HIGH_UGM3') else 35.4
     pm25_high_thresh = settings.ALERT_AMBIENT_PM25_HIGH_UGM3 if hasattr(settings, 'ALERT_AMBIENT_PM25_HIGH_UGM3') else 12.0
-    pm25_stat = "HIGH_RISK" if pd.notna(pm25_val) and pm25_val > pm25_very_high_thresh else \
-                ("MODERATE_CONCERN" if pd.notna(pm25_val) and pm25_val > pm25_high_thresh else "ACCEPTABLE")
+    
+    pm25_stat = "ACCEPTABLE" # Default
+    if pd.notna(pm25_val):
+        if pm25_val > pm25_very_high_thresh:
+            pm25_stat = "HIGH_RISK"
+        elif pm25_val > pm25_high_thresh:
+            pm25_stat = "MODERATE_CONCERN"
     render_kpi_card("Avg. PM2.5", f"{pm25_val:.1f}" if pd.notna(pm25_val) else "N/A", "µg/m³", "🌫️", pm25_stat, help_text=f"Avg PM2.5. Target < {pm25_high_thresh}µg/m³.", container=env_kpi_cols_qc[1])
 
     # Occupancy KPI
     occup_val = env_summary_kpis_quick_check.get('avg_waiting_room_occupancy_overall_persons', np.nan)
     occup_max_thresh = settings.TARGET_CLINIC_WAITING_ROOM_OCCUPANCY_MAX if hasattr(settings, 'TARGET_CLINIC_WAITING_ROOM_OCCUPANCY_MAX') else 10
-    occup_stat = "MODERATE_CONCERN" if pd.notna(occup_val) and occup_val > occup_max_thresh else "ACCEPTABLE"
+    
+    occup_stat = "ACCEPTABLE" # Default
+    if pd.notna(occup_val) and occup_val > occup_max_thresh:
+        occup_stat = "MODERATE_CONCERN"
     render_kpi_card("Avg. Waiting Occupancy", f"{occup_val:.1f}" if pd.notna(occup_val) else "N/A", "persons", "👨‍👩‍👧‍👦", occup_stat, help_text=f"Avg waiting area occupancy. Target < {occup_max_thresh} persons.", container=env_kpi_cols_qc[2])
 
     # Noise KPI
-    noise_alerts_val = env_summary_kpis_quick_check.get('rooms_noise_high_alert_latest_count', 0) # Default to 0 if key missing
+    noise_alerts_val = env_summary_kpis_quick_check.get('rooms_noise_high_alert_latest_count', 0) # Default to 0
     noise_high_thresh_dba = settings.ALERT_AMBIENT_NOISE_HIGH_DBA if hasattr(settings, 'ALERT_AMBIENT_NOISE_HIGH_DBA') else 70
-    noise_stat = "HIGH_CONCERN" if noise_alerts_val > 1 else ("MODERATE_CONCERN" if noise_alerts_val == 1 else "ACCEPTABLE")
+    
+    noise_stat = "ACCEPTABLE" # Default
+    if noise_alerts_val > 1:
+        noise_stat = "HIGH_CONCERN"
+    elif noise_alerts_val == 1:
+        noise_stat = "MODERATE_CONCERN"
     render_kpi_card("High Noise Alerts", str(noise_alerts_val), "areas", "🔊", noise_stat, help_text=f"Areas with noise > {noise_high_thresh_dba}dBA (latest reading).", container=env_kpi_cols_qc[3])
 elif iot_df_period.empty and iot_available_flag: # IoT data source is available, but no data for this period
     st.info("ℹ️ No environmental IoT data recorded for the selected period for snapshot KPIs.")
@@ -517,7 +532,11 @@ with tabs_list[4]: # Environment Details
                             details=alert_item.get('alert_type', 'Env Alert') # Or other relevant details
                         )
                 if not non_acceptable_found: # All alerts in the list were 'ACCEPTABLE'
-                    st.success("✅ All monitored environmental parameters appear within acceptable limits based on latest readings.")
+                     # Check if there's only one 'ACCEPTABLE' message or multiple
+                    if len(current_env_alerts_list) == 1 and current_env_alerts_list[0].get("level") == "ACCEPTABLE":
+                        st.success(f"✅ {current_env_alerts_list[0].get('message', 'Environment appears normal.')}")
+                    else: # Multiple items, all acceptable, or empty list was pre-filtered
+                        st.success("✅ All monitored environmental parameters appear within acceptable limits based on latest readings.")
             # If iot_df_period is empty, prepare_clinic_environmental_detail_data might return empty lists or specific notes.
             elif not iot_df_period.empty: # Data for period exists, but no alerts generated by component
                  st.info("ℹ️ No specific environmental alerts currently active based on latest readings for the period.")
@@ -552,10 +571,10 @@ st.divider()
 footer_text = settings.APP_FOOTER_TEXT if hasattr(settings, 'APP_FOOTER_TEXT') else "Sentinel Health Co-Pilot."
 st.caption(footer_text)
 
-# Corrected final logger.info call with closing parenthesis
+# Final logger.info call
 logger.info(
     f"Clinic Operations Console page fully rendered. Period: {current_period_str}. "
-    f"HealthData(Period):{!health_df_period.empty if isinstance(health_df_period, pd.DataFrame) else False}, "
+    f"HealthData(Period):{not health_df_period.empty if isinstance(health_df_period, pd.DataFrame) else False}, "
     f"IoTData(Period):{!iot_df_period.empty if isinstance(iot_df_period, pd.DataFrame) else False}, "
     f"IoTAvailableFlag:{iot_available_flag}"
 )
