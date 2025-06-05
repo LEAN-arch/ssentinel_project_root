@@ -100,7 +100,7 @@ def get_chw_dashboard_page_data_v4(
 # --- Sidebar Filters ---
 project_root_chw_dash_page_v4 = Path(settings.PROJECT_ROOT_DIR)
 logo_path_chw_sidebar_page_v4 = Path(settings.APP_LOGO_SMALL_PATH) 
-if logo_path_chw_sidebar_page_v4.is_file(): st.sidebar.image(str(logo_path_chw_sidebar_page_v4), width=300)
+if logo_path_chw_sidebar_page_v4.is_file(): st.sidebar.image(str(logo_path_chw_sidebar_page_v4), width=250)
 else: logger.warning(f"Sidebar logo for CHW Dash not found: {logo_path_chw_sidebar_page_v4}")
 st.sidebar.header("Dashboard Filters")
 
