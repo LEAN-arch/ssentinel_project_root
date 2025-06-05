@@ -1,404 +1,291 @@
-# sentinel_project_root/pages/population_dashboard.py
-# Population Health Analytics & Research Console for Sentinel Health Co-Pilot.
+# sentinel_project_root/app.py
+# Main Streamlit application for Sentinel Health Co-Pilot Demonstrator.
 
 import streamlit as st
-import pandas as pd
-import numpy as np # For np.nan and other numeric ops
+import sys
 import logging
-from datetime import date, timedelta
-import html # For escaping HTML in custom markdown
-import plotly.express as px # For direct use of complex plots like histograms if needed
+from pathlib import Path
 
-# --- Sentinel System Imports from Refactored Structure ---
+# --- Robust Path Setup ---
+_current_app_file_dir = Path(__file__).parent.resolve()
+# Assuming app.py is in the project root for this setup
+_project_root_dir = _current_app_file_dir
+
+# If app.py is in a subdirectory like 'main_app', adjust root:
+# _project_root_dir = _current_app_file_dir.parent # If app.py is in 'main_app/'
+# For the provided structure, app.py seems to be at the root.
+
+if str(_project_root_dir) not in sys.path:
+    sys.path.insert(0, str(_project_root_dir))
+    # Use print for initial setup messages before logging is configured
+    print(f"INFO: Added project root to sys.path: {_project_root_dir}", file=sys.stderr)
+
+# --- Import Settings ---
 try:
     from config import settings
-    from data_processing.loaders import load_health_records, load_zone_data
-    from analytics.orchestrator import apply_ai_models
-    from data_processing.helpers import hash_dataframe_safe # For caching
-    from visualization.plots import plot_bar_chart, create_empty_figure # Use new plot functions
-    from visualization.ui_elements import display_custom_styled_kpi_box # Specific KPI box style
-except ImportError as e_pop_dash:
-    import sys
-    st.error(
-        f"Population Dashboard Import Error: {e_pop_dash}. "
-        f"Please ensure all modules are correctly placed and dependencies installed. "
-        f"Relevant Python Path: {sys.path}"
-    )
-    logger_pop = logging.getLogger(__name__)
-    logger_pop.error(f"Population Dashboard Import Error: {e_pop_dash}", exc_info=True)
-    st.stop()
+    print(f"INFO: Successfully imported config.settings. APP_NAME: {settings.APP_NAME}", file=sys.stderr)
+except ImportError as e_cfg_app:
+    print(f"FATAL: Failed to import config.settings in app.py: {e_cfg_app}", file=sys.stderr)
+    print(f"PYTHONPATH for app.py: {sys.path}", file=sys.stderr)
+    print(f"Calculated project root: {_project_root_dir}", file=sys.stderr)
+    sys.exit(1)
+except Exception as e_generic_cfg:
+    print(f"FATAL: Generic error during config.settings import in app.py: {e_generic_cfg}", file=sys.stderr)
+    sys.exit(1)
 
-# --- Page Specific Logger ---
-logger = logging.getLogger(__name__)
 
-# --- Page Title and Introduction ---
-st.title(f"📊 {settings.APP_NAME} - Population Health Analytics & Research Console")
-st.markdown(
-    "In-depth exploration of demographic distributions, epidemiological patterns, clinical trends, "
-    "and health system factors using aggregated population-level data."
+# --- Global Logging Configuration ---
+valid_log_levels_app = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+log_level_app_str = str(settings.LOG_LEVEL).upper() # Get from settings.py
+if log_level_app_str not in valid_log_levels_app:
+    print(f"WARN: Invalid LOG_LEVEL '{log_level_app_str}' in settings. Defaulting to INFO.", file=sys.stderr)
+    log_level_app_str = "INFO"
+
+logging.basicConfig(
+    level=getattr(logging, log_level_app_str, logging.INFO), # Use validated log level
+    format=settings.LOG_FORMAT, # Get from settings.py
+    datefmt=settings.LOG_DATE_FORMAT, # Get from settings.py
+    handlers=[logging.StreamHandler(sys.stdout)], # Stream to stdout for Streamlit
+    force=True # Override any previous basicConfig
 )
-st.divider()
-
-# --- Data Loading Function for Population Analytics Console (Cached) ---
-@st.cache_data(
-    ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS,
-    hash_funcs={pd.DataFrame: hash_dataframe_safe},
-    show_spinner="Loading and preparing population analytics dataset..."
-)
-def get_population_analytics_datasets_processed(log_source_context: str = "PopAnalyticsConsole/LoadData") -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Loads and prepares the primary datasets for the Population Analytics Console:
-    1. AI-enriched health records.
-    2. Zone attributes (without geometry, for SDOH context).
-
-    Returns:
-        Tuple[pd.DataFrame, pd.DataFrame]: (enriched_health_df, zone_attributes_df)
-    """
-    logger.info(f"({log_source_context}) Loading population health records and zone attribute data.")
-    
-    # 1. Load and Enrich Health Records
-    raw_health_df_for_pop = load_health_records(source_context=f"{log_source_context}/HealthRecsLoad")
-    
-    enriched_health_df_for_pop: pd.DataFrame
-    if isinstance(raw_health_df_for_pop, pd.DataFrame) and not raw_health_df_for_pop.empty:
-        # Apply AI models (risk, priority scores) to the health data
-        enriched_health_df_for_pop, _ = apply_ai_models(raw_health_df_for_pop.copy(), source_context=f"{log_source_context}/AIEnrichHealth")
-    else:
-        logger.warning(f"({log_source_context}) Raw health records for population analytics are empty or invalid. AI enrichment skipped.")
-        # Define schema for empty DF if raw load fails, to match expected structure after AI enrichment
-        base_cols_pop = ['patient_id', 'encounter_date', 'condition', 'age', 'gender', 'zone_id'] # Example base
-        ai_cols_pop = ['ai_risk_score', 'ai_followup_priority_score']
-        enriched_health_df_for_pop = pd.DataFrame(columns=list(set(base_cols_pop + ai_cols_pop)))
-
-    # 2. Load Zone Attributes (for SDOH context, no geometry needed for this dashboard typically)
-    # `load_zone_data` returns a pandas DataFrame; we'll drop geometry-related columns if present.
-    zone_data_full_df = load_zone_data(source_context=f"{log_source_context}/ZoneDataLoad")
-    
-    zone_attributes_df_for_pop: pd.DataFrame
-    # Define expected SDOH-related attribute columns from zone data
-    expected_sdoh_cols_from_zone_data = [
-        'zone_id', 'name', 'population', 'socio_economic_index', 
-        'avg_travel_time_clinic_min', 'predominant_hazard_type', 
-        'primary_livelihood', 'water_source_main', 'area_sqkm' # area_sqkm for density if needed
-    ]
-    if isinstance(zone_data_full_df, pd.DataFrame) and not zone_data_full_df.empty:
-        # Select only the attribute columns, exclude geometry-related ones
-        cols_to_keep_from_zone_data = [col for col in expected_sdoh_cols_from_zone_data if col in zone_data_full_df.columns]
-        if 'zone_id' not in cols_to_keep_from_zone_data and 'zone_id' in zone_data_full_df.columns:
-            cols_to_keep_from_zone_data.append('zone_id') # Ensure zone_id is always there for merges
-
-        if cols_to_keep_from_zone_data :
-            zone_attributes_df_for_pop = zone_data_full_df[list(set(cols_to_keep_from_zone_data))].copy()
-            logger.info(f"({log_source_context}) Loaded {len(zone_attributes_df_for_pop)} zone attributes records for SDOH context.")
-        else:
-            logger.warning(f"({log_source_context}) No expected SDOH attribute columns found in loaded zone data. SDOH analysis will be limited.")
-            zone_attributes_df_for_pop = pd.DataFrame(columns=expected_sdoh_cols_from_zone_data)
-    else:
-        logger.warning(f"({log_source_context}) Zone attributes data unavailable or empty. SDOH analytics will be limited.")
-        zone_attributes_df_for_pop = pd.DataFrame(columns=expected_sdoh_cols_from_zone_data) # Empty with schema
-
-    if enriched_health_df_for_pop.empty: 
-        logger.error(f"({log_source_context}) CRITICAL FAILURE: Health data for population analytics remains empty after all processing steps.")
-        # Streamlit error will be shown by calling code if this is critical
-        
-    return enriched_health_df_for_pop, zone_attributes_df_for_pop
+logger = logging.getLogger(__name__) # Logger for this app.py
 
 
-# --- Load Datasets for the Console ---
+# --- Streamlit Version Check ---
 try:
-    health_df_pop_main, zone_attributes_pop_sdoh = get_population_analytics_datasets_processed()
-except Exception as e_pop_data_main:
-    logger.error(f"Population Dashboard: Failed to load main datasets: {e_pop_data_main}", exc_info=True)
-    st.error(f"Error loading Population Analytics data: {str(e_pop_data_main)}. Dashboard functionality will be limited.")
-    health_df_pop_main, zone_attributes_pop_sdoh = pd.DataFrame(), pd.DataFrame() # Fallback to empty
-
-if health_df_pop_main.empty: 
-    st.error(
-        "🚨 **Critical Data Failure:** Primary health dataset for population analytics could not be loaded or is empty. "
-        "Most console features will be unavailable. Please check data sources and application logs."
-    )
-    # st.stop() # Optionally stop if no data makes the page unusable.
-
-# --- Sidebar Filters ---
-if os.path.exists(settings.APP_LOGO_SMALL_PATH):
-    st.sidebar.image(settings.APP_LOGO_SMALL_PATH, width=120)
-st.sidebar.header("🔎 Analytics Filters")
-
-# Determine min/max dates from the loaded health data for date pickers
-min_date_for_pop_analysis = date.today() - timedelta(days=365*3) # Default 3 years back
-max_date_for_pop_analysis = date.today()
-
-if 'encounter_date' in health_df_pop_main.columns and health_df_pop_main['encounter_date'].notna().any():
-    # Ensure it's datetime (loader should handle this, but defensive check)
-    if not pd.api.types.is_datetime64_any_dtype(health_df_pop_main['encounter_date']):
-        health_df_pop_main['encounter_date'] = pd.to_datetime(health_df_pop_main['encounter_date'], errors='coerce')
-    
-    if health_df_pop_main['encounter_date'].notna().any(): # Check again after coercion
-        min_date_for_pop_analysis = health_df_pop_main['encounter_date'].min().date()
-        max_date_for_pop_analysis = health_df_pop_main['encounter_date'].max().date()
-
-if min_date_for_pop_analysis > max_date_for_pop_analysis: # Safety if min somehow ends up after max
-    min_date_for_pop_analysis = max_date_for_pop_analysis 
-
-# Date Range Filter
-# Session state for date range picker
-pop_date_range_session_key = "pop_dashboard_date_range_selection"
-if pop_date_range_session_key not in st.session_state:
-    st.session_state[pop_date_range_session_key] = [min_date_for_pop_analysis, max_date_for_pop_analysis] # Default to full range
-
-selected_date_range_pop_ui = st.sidebar.date_input(
-    "Select Date Range for Analysis:",
-    value=st.session_state[pop_date_range_session_key],
-    min_value=min_date_for_pop_analysis,
-    max_value=max_date_for_pop_analysis,
-    key=f"{pop_date_range_session_key}_widget"
-)
-if isinstance(selected_date_range_pop_ui, (list, tuple)) and len(selected_date_range_pop_ui) == 2:
-    st.session_state[pop_date_range_session_key] = selected_date_range_pop_ui
-    start_date_filter_pop, end_date_filter_pop = selected_date_range_pop_ui
-else: # Fallback if UI component returns unexpected value
-    start_date_filter_pop, end_date_filter_pop = st.session_state[pop_date_range_session_key]
-    st.sidebar.warning("Date range selection error. Using previous/default range.")
-
-if start_date_filter_pop > end_date_filter_pop:
-    st.sidebar.error("Start date must be on or before end date. Adjusting end date.")
-    end_date_filter_pop = start_date_filter_pop
-    st.session_state[pop_date_range_session_key][1] = end_date_filter_pop
+    import streamlit
+    # Example: Check for a minimum version if specific features are used
+    # (e.g., st.container(border=True) needs 1.25.0+)
+    major, minor, patch_str = streamlit.__version__.split('.')
+    patch = int(patch_str.split('-')[0]) # Handle potential dev versions like 1.30.0-dev
+    if not (int(major) >= 1 and int(minor) >= 30):
+        warn_msg_st_ver = f"Streamlit version {streamlit.__version__} is older than recommended (1.30.0+). Some UI features like `st.container(border=True)` or `st.page_link` might not work as expected or require alternatives."
+        logger.warning(warn_msg_st_ver)
+        # Try to show in UI if st is available
+        try: st.sidebar.warning(warn_msg_st_ver)
+        except: pass
+except ImportError:
+    logger.critical("Streamlit library not found. Sentinel Web UI cannot run.")
+    sys.exit("Streamlit library not found. Please install it via `pip install streamlit`.")
 
 
-# Filter the main health DataFrame based on selected date range
-analytics_df_filtered_by_date: pd.DataFrame
-if 'encounter_date' not in health_df_pop_main.columns:
-    st.error("Critical error: 'encounter_date' column is missing from the health dataset. Cannot filter by date.")
-    analytics_df_filtered_by_date = pd.DataFrame() # Empty DF if date col missing
-    # st.stop() # Might be too disruptive, allow page to render with warning.
+# --- Page Configuration (must be the first Streamlit command) ---
+page_icon_path_obj = Path(settings.APP_LOGO_SMALL_PATH) # settings.APP_LOGO_SMALL_PATH is already string
+if not page_icon_path_obj.is_absolute():
+    page_icon_path_obj = (_project_root_dir / settings.APP_LOGO_SMALL_PATH).resolve()
+
+final_page_icon_str: str
+if page_icon_path_obj.exists() and page_icon_path_obj.is_file():
+    final_page_icon_str = str(page_icon_path_obj)
 else:
-    # Ensure 'encounter_date' is datetime before filtering (should be from loader)
-    if not pd.api.types.is_datetime64_any_dtype(health_df_pop_main['encounter_date']):
-         health_df_pop_main['encounter_date'] = pd.to_datetime(health_df_pop_main['encounter_date'], errors='coerce')
+    logger.warning(f"Page icon not found at '{page_icon_path_obj}'. Using fallback emoji '🌍'.")
+    final_page_icon_str = "🌍"
 
-    analytics_df_filtered_by_date = health_df_pop_main[
-        (health_df_pop_main['encounter_date'].notna()) & 
-        (health_df_pop_main['encounter_date'].dt.date >= start_date_filter_pop) &
-        (health_df_pop_main['encounter_date'].dt.date <= end_date_filter_pop)
-    ].copy() # Use .copy() for subsequent modifications
+st.set_page_config(
+    page_title=f"{settings.APP_NAME} - System Overview",
+    page_icon=final_page_icon_str,
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        "Get Help": f"mailto:{settings.SUPPORT_CONTACT_INFO}?subject=Help Request - {settings.APP_NAME}",
+        "Report a bug": f"mailto:{settings.SUPPORT_CONTACT_INFO}?subject=Bug Report - {settings.APP_NAME} v{settings.APP_VERSION}",
+        "About": f"""
+### {settings.APP_NAME} (v{settings.APP_VERSION})
+{settings.APP_FOOTER_TEXT}
 
-# Condition Filter
-selected_condition_filter_ui = "All Conditions" # Default
-if 'condition' in analytics_df_filtered_by_date.columns:
-    unique_conditions_for_filter = ["All Conditions"] + sorted(analytics_df_filtered_by_date['condition'].dropna().unique().tolist())
-    # Session state for condition filter
-    pop_condition_session_key = "pop_dashboard_condition_selection"
-    if pop_condition_session_key not in st.session_state:
-        st.session_state[pop_condition_session_key] = unique_conditions_for_filter[0] # Default to "All Conditions"
-    
-    selected_condition_filter_ui = st.sidebar.selectbox(
-        "Filter by Condition Group (Optional):", options=unique_conditions_for_filter,
-        key=f"{pop_condition_session_key}_widget",
-        index=unique_conditions_for_filter.index(st.session_state[pop_condition_session_key])
-    )
-    st.session_state[pop_condition_session_key] = selected_condition_filter_ui
-    
-    if selected_condition_filter_ui != "All Conditions":
-        analytics_df_filtered_by_date = analytics_df_filtered_by_date[
-            analytics_df_filtered_by_date['condition'] == selected_condition_filter_ui
-        ]
-else:
-    st.sidebar.caption("Condition filter unavailable ('condition' column missing in data).")
-
-
-# Zone Filter (using zone_attributes_pop_sdoh for options)
-selected_zone_display_ui = "All Zones" # Default
-zone_display_to_id_map_pop_filter: Dict[str, str] = {}
-zone_options_for_pop_filter = ["All Zones"]
-
-if isinstance(zone_attributes_pop_sdoh, pd.DataFrame) and not zone_attributes_pop_sdoh.empty and \
-   'zone_id' in zone_attributes_pop_sdoh.columns:
-    
-    temp_zone_options = []
-    for _, zone_row_filter_opt in zone_attributes_pop_sdoh.iterrows():
-        zone_id_val_opt = str(zone_row_filter_opt['zone_id']).strip()
-        zone_name_val_opt = str(zone_row_filter_opt.get('name', zone_id_val_opt)).strip() # Use name if available
-        
-        display_option_str = f"{zone_name_val_opt} ({zone_id_val_opt})" if zone_name_val_opt != zone_id_val_opt and zone_name_val_opt != "Unknown" else zone_id_val_opt
-        if display_option_str not in zone_display_to_id_map_pop_filter: # Avoid duplicate display options
-            temp_zone_options.append(display_option_str)
-            zone_display_to_id_map_pop_filter[display_option_str] = zone_id_val_opt
-    
-    if temp_zone_options:
-        zone_options_for_pop_filter.extend(sorted(list(set(temp_zone_options)))) # Add unique sorted options
-else:
-    st.sidebar.caption("Zone filter options limited (zone attributes data missing or invalid).")
-
-if len(zone_options_for_pop_filter) > 1 : # Only show if there are actual zone options beyond "All Zones"
-    pop_zone_session_key = "pop_dashboard_zone_selection"
-    if pop_zone_session_key not in st.session_state:
-        st.session_state[pop_zone_session_key] = zone_options_for_pop_filter[0] # Default "All Zones"
-
-    selected_zone_display_ui = st.sidebar.selectbox(
-        "Filter by Operational Zone (Optional):", options=zone_options_for_pop_filter, 
-        key=f"{pop_zone_session_key}_widget",
-        index=zone_options_for_pop_filter.index(st.session_state[pop_zone_session_key])
-    )
-    st.session_state[pop_zone_session_key] = selected_zone_display_ui
-    
-    if selected_zone_display_ui != "All Zones":
-        actual_zone_id_to_filter_by = zone_display_to_id_map_pop_filter.get(selected_zone_display_ui, selected_zone_display_ui) # Fallback if map key missing
-        if 'zone_id' in analytics_df_filtered_by_date.columns:
-            analytics_df_filtered_by_date = analytics_df_filtered_by_date[
-                analytics_df_filtered_by_date['zone_id'] == actual_zone_id_to_filter_by
-            ]
-        else:
-            st.sidebar.caption("Cannot filter by zone ('zone_id' column missing in health data).")
-
-
-# Final check if DataFrame is empty after all filters
-if analytics_df_filtered_by_date.empty and \
-   (selected_condition_filter_ui != "All Conditions" or selected_zone_display_ui != "All Zones" or \
-    start_date_filter_pop != min_date_for_pop_analysis or end_date_filter_pop != max_date_for_pop_analysis):
-    st.warning(f"No health data available for the selected filters. Please broaden your filter criteria or check data sources.")
-
-
-# --- Population Health Snapshot KPIs (using custom styled boxes) ---
-st.subheader(
-    f"Population Health Snapshot "
-    f"({start_date_filter_pop.strftime('%d %b %Y')} - {end_date_filter_pop.strftime('%d %b %Y')}, "
-    f"Condition: {selected_condition_filter_ui}, Zone: {selected_zone_display_ui})"
+An Edge-First Health Intelligence Co-Pilot designed for resource-limited environments.
+This demonstrator showcases higher-level views. Frontline workers use dedicated native PED apps.
+"""
+    }
 )
 
-if analytics_df_filtered_by_date.empty:
-    st.info("Insufficient data after filtering to display population summary KPIs.")
+# --- Apply Plotly Theme Globally ---
+try:
+    from visualization.plots import set_sentinel_plotly_theme
+    set_sentinel_plotly_theme()
+    logger.debug("Sentinel Plotly theme applied globally from app.py.")
+except ImportError as e_theme_imp_app:
+    logger.error(f"Failed to import set_sentinel_plotly_theme in app.py: {e_theme_imp_app}", exc_info=True)
+    st.error("Critical error: Plotting theme could not be applied. Visualizations may be affected.")
+except Exception as e_theme_apply_app:
+    logger.error(f"Error applying Plotly theme in app.py: {e_theme_apply_app}", exc_info=True)
+    st.error("Error applying visualization theme. Charts might not display correctly.")
+
+# --- Global CSS Loading ---
+@st.cache_resource # Cache the CSS content to avoid reloading on every script run
+def load_global_css_styles(css_file_path_str: str):
+    # Resolve path relative to project root if it's not absolute
+    css_file_path_obj = Path(css_file_path_str)
+    if not css_file_path_obj.is_absolute():
+        css_file_path_obj = (_project_root_dir / css_file_path_str).resolve()
+    
+    if css_file_path_obj.exists() and css_file_path_obj.is_file():
+        try:
+            with open(css_file_path_obj, "r", encoding="utf-8") as f_css:
+                st.markdown(f'<style>{f_css.read()}</style>', unsafe_allow_html=True)
+            logger.debug(f"Global CSS styles loaded successfully from: {css_file_path_obj}")
+        except Exception as e_css_load_app:
+            logger.error(f"Error reading or applying CSS file {css_file_path_obj}: {e_css_load_app}", exc_info=True)
+            st.error("Critical error: Application styles could not be loaded. UI may be broken.")
+    else:
+        logger.warning(f"Global CSS file not found at resolved path: {css_file_path_obj}")
+        st.warning("Application stylesheet missing. UI might not render as intended.")
+
+if settings.STYLE_CSS_PATH_WEB:
+    load_global_css_styles(settings.STYLE_CSS_PATH_WEB)
 else:
-    # Calculate KPIs for the filtered data
-    kpi_cols_pop_summary = st.columns(4) # Use 4 columns for KPIs
+    logger.debug("No global CSS path configured in settings. Skipping custom CSS load.")
+
+
+# --- Main Application Header ---
+header_cols_main_app = st.columns([0.12, 0.88]) # Adjust ratio for logo size and title space
+with header_cols_main_app[0]:
+    large_logo_path = Path(settings.APP_LOGO_LARGE_PATH)
+    if not large_logo_path.is_absolute(): large_logo_path = (_project_root_dir / settings.APP_LOGO_LARGE_PATH).resolve()
     
-    num_total_unique_patients_pop = 0
-    if 'patient_id' in analytics_df_filtered_by_date.columns:
-        num_total_unique_patients_pop = analytics_df_filtered_by_date['patient_id'].nunique()
-    
-    mean_ai_risk_score_val_pop = np.nan
-    if 'ai_risk_score' in analytics_df_filtered_by_date.columns and analytics_df_filtered_by_date['ai_risk_score'].notna().any():
-        mean_ai_risk_score_val_pop = analytics_df_filtered_by_date['ai_risk_score'].mean()
-    
-    count_high_risk_patients_pop_val = 0
-    percent_high_risk_patients_pop_val = 0.0
-    if 'ai_risk_score' in analytics_df_filtered_by_date.columns and num_total_unique_patients_pop > 0:
-        df_high_risk_patients_pop = analytics_df_filtered_by_date[
-            analytics_df_filtered_by_date['ai_risk_score'] >= settings.RISK_SCORE_HIGH_THRESHOLD
-        ]
-        if 'patient_id' in df_high_risk_patients_pop.columns:
-            count_high_risk_patients_pop_val = df_high_risk_patients_pop['patient_id'].nunique()
-        
-        percent_high_risk_patients_pop_val = (count_high_risk_patients_pop_val / num_total_unique_patients_pop) * 100 if num_total_unique_patients_pop > 0 else 0.0
-    
-    top_condition_name_pop_kpi, num_top_condition_encounters_pop_kpi = "N/A", 0
-    if 'condition' in analytics_df_filtered_by_date.columns and analytics_df_filtered_by_date['condition'].notna().any():
-        # Count encounters for top condition, not unique patients here for this specific KPI
-        condition_encounter_counts_pop = analytics_df_filtered_by_date['condition'].value_counts()
-        if not condition_encounter_counts_pop.empty:
-            top_condition_name_pop_kpi = condition_encounter_counts_pop.idxmax()
-            num_top_condition_encounters_pop_kpi = condition_encounter_counts_pop.max()
+    small_logo_path_header = Path(settings.APP_LOGO_SMALL_PATH)
+    if not small_logo_path_header.is_absolute(): small_logo_path_header = (_project_root_dir / settings.APP_LOGO_SMALL_PATH).resolve()
 
-    with kpi_cols_pop_summary[0]:
-        display_custom_styled_kpi_box(label="Total Unique Patients", value=num_total_unique_patients_pop)
-    with kpi_cols_pop_summary[1]:
-        display_custom_styled_kpi_box(label="Avg. AI Risk Score", value=f"{mean_ai_risk_score_val_pop:.1f}" if pd.notna(mean_ai_risk_score_val_pop) else "N/A")
-    with kpi_cols_pop_summary[2]:
-        display_custom_styled_kpi_box(
-            label="% High AI Risk Patients",
-            value=f"{percent_high_risk_patients_pop_val:.1f}%",
-            sub_text=f"({count_high_risk_patients_pop_val:,} patients)"
-        )
-    with kpi_cols_pop_summary[3]:
-        display_custom_styled_kpi_box(
-            label="Top Condition (Encounters)",
-            value=html.escape(str(top_condition_name_pop_kpi)), # Escape for safety
-            sub_text=f"{num_top_condition_encounters_pop_kpi:,} encounters",
-            highlight_edge_color=settings.COLOR_RISK_MODERATE # Example highlight
-        )
-
-# --- Tabs for Detailed Population Analytics ---
-pop_analytics_tab_titles_list = ["📈 Epi Overview", "🧑‍🤝‍🧑 Demographics & SDOH", "🔬 Clinical Insights", "⚙️ Systems & Equity"]
-tab_pop_epi, tab_pop_demog_sdoh, tab_pop_clinical, tab_pop_systems = st.tabs(pop_analytics_tab_titles_list)
-
-with tab_pop_epi:
-    st.header(f"Epidemiological Overview (Filters: {selected_condition_filter_ui} | {selected_zone_display_ui})")
-    if analytics_df_filtered_by_date.empty:
-        st.info("No data available for Epidemiological Overview with the current filter selections.")
+    if large_logo_path.exists() and large_logo_path.is_file():
+        st.image(str(large_logo_path), width=100)
+    elif small_logo_path_header.exists() and small_logo_path_header.is_file():
+        st.image(str(small_logo_path_header), width=80) # Fallback to small logo
     else:
-        # Top Conditions by Unique Patient Count
-        if 'condition' in analytics_df_filtered_by_date.columns and 'patient_id' in analytics_df_filtered_by_date.columns:
-            df_condition_unique_patient_counts_plot = analytics_df_filtered_by_date.groupby('condition')['patient_id'].nunique().nlargest(10).reset_index(name='unique_patients') # Top 10
-            if not df_condition_unique_patient_counts_plot.empty:
-                st.plotly_chart(plot_bar_chart(
-                    df_input=df_condition_unique_patient_counts_plot, x_col_name='condition', y_col_name='unique_patients', 
-                    chart_title="Top Conditions by Unique Patient Count (Filtered Set)", 
-                    orientation_bar='h', y_values_are_counts_flag=True, chart_height=450,
-                    x_axis_label_text="Unique Patient Count", y_axis_label_text="Condition"
-                ), use_container_width=True)
-            else:
-                st.caption("No aggregated condition counts found for unique patients with current filters.")
-        
-        # Patient AI Risk Score Distribution
-        if 'ai_risk_score' in analytics_df_filtered_by_date.columns and analytics_df_filtered_by_date['ai_risk_score'].notna().any():
-            try:
-                fig_ai_risk_dist_pop = px.histogram( # Using Plotly Express directly for histograms
-                    analytics_df_filtered_by_date.dropna(subset=['ai_risk_score']), 
-                    x="ai_risk_score", nbins=25, # Adjust nbins as needed
-                    title="Patient AI Risk Score Distribution (Filtered Set)",
-                    labels={'ai_risk_score': 'AI Risk Score Bins', 'count': 'Number of Records'} 
-                )
-                fig_ai_risk_dist_pop.update_layout(
-                    bargap=0.1, height=settings.WEB_PLOT_COMPACT_HEIGHT,
-                    title_x=0.05 # Align title left
-                )
-                st.plotly_chart(fig_ai_risk_dist_pop, use_container_width=True)
-            except Exception as e_hist:
-                logger.error(f"Population Dashboard: Error plotting AI risk histogram: {e_hist}", exc_info=True)
-                st.warning("Could not display AI Risk Score Distribution chart.")
-        
-        st.caption(
-            "Note: True incidence/prevalence trends require careful definition of 'new case' vs 'active case' and appropriate population denominators. "
-            "This section provides overview counts and distributions based on available encounter data for the selected period."
-        )
+        logger.warning(f"App logos not found. Large: '{large_logo_path}', Small: '{small_logo_path_header}'. Using placeholder.")
+        st.markdown("### 🌍", unsafe_allow_html=True)
 
-with tab_pop_demog_sdoh:
-    st.header("Demographics & Social Determinants of Health (SDOH) Context")
-    if analytics_df_filtered_by_date.empty:
-        st.info("No health data available for Demographics & SDOH analysis with the current filter selections.")
-    else:
-        st.markdown("_(Placeholder: Detailed charts for Age Distribution, Gender Distribution. For SDOH insights, "
-                    "the `analytics_df_filtered_by_date` can be merged with `zone_attributes_pop_sdoh` "
-                    "on `zone_id` to correlate health outcomes like AI Risk Score with Zone SES, "
-                    "Travel Time to Clinic, Primary Livelihood, Water Source, etc. "
-                    "This would involve creating scatter plots, box plots by SDOH category, or correlation matrices.)_")
-        if zone_attributes_pop_sdoh.empty:
-            st.caption("Zone attribute data (required for SDOH-specific analysis) is currently unavailable or empty.")
-
-with tab_pop_clinical:
-    st.header("Clinical Insights & Diagnostic Patterns")
-    if analytics_df_filtered_by_date.empty:
-        st.info("No data available for Clinical Insights with the current filter selections.")
-    else:
-        st.markdown("_(Placeholder: Analyses for Top Reported Symptoms (frequency, trends if data supports), "
-                    "Test Result Distributions (e.g., % Positive for key tests over time or by demographic strata), "
-                    "and deeper dives into Test Positivity Trends for specific conditions or risk groups.)_")
-
-with tab_pop_systems:
-    st.header("Health Systems Performance & Equity Lens")
-    if analytics_df_filtered_by_date.empty:
-        st.info("No data available for Health Systems & Equity analysis with the current filter selections.")
-    else:
-        st.markdown("_(Placeholder: Analyses on Patient Encounters by Clinic/Zone (if applicable and data allows disaggregation), "
-                    "Referral Pathway Completion Rates and Bottlenecks (if referral outcome data is comprehensive and linked), "
-                    "and investigation of AI Risk Score Variations when stratified by SDOH factors "
-                    "like Zone SES or Primary Livelihood to explore potential health equity considerations.)_")
-
-
+with header_cols_main_app[1]:
+    st.title(settings.APP_NAME)
+    st.subheader("Transforming Data into Lifesaving Action at the Edge")
 st.divider()
-st.caption(settings.APP_FOOTER_TEXT)
-logger.info(
-    f"Population Health Analytics Console page loaded. Filters: "
-    f"Period=({start_date_filter_pop.isoformat()} to {end_date_filter_pop.isoformat()}), "
-    f"Condition='{selected_condition_filter_ui}', Zone='{selected_zone_display_ui}'"
+
+# --- Welcome & System Description ---
+st.markdown(f"""
+    ## Welcome to the {settings.APP_NAME} Demonstrator
+    
+    Sentinel is an **edge-first health intelligence system** designed for **maximum clinical and 
+    operational actionability** in resource-limited, high-risk environments. It aims to convert 
+    diverse data sources into life-saving, workflow-integrated decisions, even with 
+    **minimal or intermittent internet connectivity.**
+""")
+
+st.markdown("#### Core Design Principles:")
+core_principles_data_app = [
+    ("📶 **Offline-First Operations**", "On-device Edge AI ensures critical functionality without continuous connectivity."),
+    ("🎯 **Action-Oriented Intelligence**", "Insights aim to trigger clear, targeted responses relevant to frontline workflows."),
+    ("🧑‍🤝‍🧑 **Human-Centered Design**", "Interfaces optimized for low-literacy, high-stress users, prioritizing immediate understanding."),
+    ("🔗 **Resilience & Scalability**", "Modular design for scaling from personal devices to regional views with robust data sync.")
+]
+num_cols_principles = min(len(core_principles_data_app), 2) # Max 2 columns
+if num_cols_principles > 0:
+    cols_principles_ui_app = st.columns(num_cols_principles)
+    for idx_principle_app, (title_p, desc_p) in enumerate(core_principles_data_app):
+        with cols_principles_ui_app[idx_principle_app % num_cols_principles]:
+            st.markdown(f"##### {title_p}")
+            st.markdown(f"<small>{desc_p}</small>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom: 1rem;'></div>", unsafe_allow_html=True)
+
+st.markdown("---")
+st.markdown(
+    "👈 **Navigate via the sidebar** to explore simulated web dashboards for various operational tiers. "
+    "These views represent perspectives of Supervisors, Clinic Managers, or District Health Officers (DHOs). "
+    "Frontline workers (e.g., CHWs) would use dedicated native applications on their Personal Edge Devices (PEDs)."
 )
+st.info(
+    "💡 **Note:** This web application serves as a high-level demonstrator of the Sentinel system's "
+    "data processing capabilities and the types of aggregated views available to management and strategic personnel."
+)
+st.divider()
+
+# --- Simulated Role-Specific Views Navigation ---
+st.header("Explore Simulated Role-Specific Dashboards")
+st.caption("These views demonstrate information available at higher tiers. Frontline workers use dedicated PED apps.")
+
+pages_dir = _project_root_dir / "pages" # Define pages directory path
+role_navigation_config_app = [
+    {"title": "🧑‍⚕️ CHW Operations & Field Support", "desc": "Supervisor view: team performance, CHW support, local epi signals.", "page_filename": "chw_dashboard.py"},
+    {"title": "🏥 Clinic Operations & Environment", "desc": "Clinic Manager view: service efficiency, care quality, resources, facility safety.", "page_filename": "clinic_dashboard.py"},
+    {"title": "🗺️ District Health Strategic Overview", "desc": "DHO view: population health, resource allocation, strategic interventions.", "page_filename": "district_dashboard.py"},
+    {"title": "📊 Population Health Analytics", "desc": "Analyst view: in-depth epi/systems analysis, SDOH impacts, equity.", "page_filename": "population_dashboard.py"},
+]
+
+num_nav_cols_main = min(len(role_navigation_config_app), 2)
+if num_nav_cols_main > 0:
+    nav_cols_ui_app = st.columns(num_nav_cols_main)
+    current_col_idx_nav = 0
+    for nav_item_main in role_navigation_config_app:
+        page_file = pages_dir / nav_item_main["page_filename"]
+        if not page_file.exists():
+            logger.warning(f"Navigation page file not found: {page_file}")
+            continue
+        
+        # For st.page_link, path is relative to the directory of the main script (app.py)
+        # So, if app.py is at project root, path is "pages/filename.py"
+        page_link_str_app = f"pages/{nav_item_main['page_filename']}"
+        
+        with nav_cols_ui_app[current_col_idx_nav % num_nav_cols_main]:
+            try: # Use st.container with border if available
+                with st.container(border=True):
+                    st.subheader(nav_item_main["title"])
+                    st.markdown(f"<small>{nav_item_main['desc']}</small>", unsafe_allow_html=True)
+                    st.page_link(page_link_str_app, label=f"Explore {nav_item_main['title'].split('(')[0].strip()}", icon="➡️", use_container_width=True)
+            except TypeError: # Fallback if border argument not supported
+                st.subheader(nav_item_main["title"])
+                st.markdown(f"<small>{nav_item_main['desc']}</small>", unsafe_allow_html=True)
+                st.page_link(page_link_str_app, label=f"Explore {nav_item_main['title'].split('(')[0].strip()}", icon="➡️")
+            st.markdown("<div style='margin-bottom: 0.5rem;'></div>", unsafe_allow_html=True) # Spacer
+        current_col_idx_nav += 1
+st.divider()
+
+# --- Key Capabilities Section ---
+st.header(f"{settings.APP_NAME} - Key Capabilities Reimagined")
+capabilities_data_app = [
+    ("🛡️ Frontline Worker Safety & Support", "Real-time vitals/environmental monitoring, fatigue detection, safety nudges on PEDs."),
+    ("🌍 Offline-First Edge AI", "On-device intelligence for alerts, prioritization, guidance without continuous connectivity."),
+    ("⚡ Actionable, Contextual Insights", "Raw data to clear, role-specific recommendations integrated into field workflows."),
+    ("🤝 Human-Centered & Accessible UX", "Pictogram UIs, voice/tap commands, local language support for low-literacy, high-stress users on PEDs."),
+    ("📡 Resilient Data Synchronization", "Flexible data sharing (Bluetooth, QR, SD card, SMS, opportunistic IP) across devices/tiers."),
+    ("🌱 Scalable & Interoperable Architecture", "Modular design (personal to national), FHIR/HL7 considerations for integration.")
+]
+num_cap_cols_main = min(len(capabilities_data_app), 3) # Max 3 columns for capabilities
+if num_cap_cols_main > 0:
+    cap_cols_ui_app = st.columns(num_cap_cols_main)
+    current_col_idx_cap = 0
+    for cap_title_item, cap_desc_item in capabilities_data_app:
+        with cap_cols_ui_app[current_col_idx_cap % num_cap_cols_main]:
+            st.markdown(f"##### {cap_title_item}")
+            st.markdown(f"<small>{cap_desc_item}</small>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom: 1.2rem;'></div>", unsafe_allow_html=True) # Spacer
+        current_col_idx_cap += 1
+st.divider()
+
+# --- Link to the Glossary Page ---
+glossary_filename_app = "glossary_page.py"
+glossary_page_full_path_app = pages_dir / glossary_filename_app
+glossary_page_link_str_app = f"pages/{glossary_filename_app}"
+
+if glossary_page_full_path_app.exists():
+    with st.expander("📜 **System Glossary & Terminology**", expanded=False):
+        st.markdown(f"Explore definitions for key terms, metrics, and system components specific to {settings.APP_NAME}.")
+        st.page_link(glossary_page_link_str_app, label="Go to Glossary", icon="📚")
+else:
+    logger.warning(f"Glossary page file not found at expected location: {glossary_page_full_path_app}")
+    st.caption("Glossary page is currently unavailable.")
+
+# --- Sidebar Content ---
+st.sidebar.header(f"{settings.APP_NAME} v{settings.APP_VERSION}")
+st.sidebar.divider()
+st.sidebar.markdown("#### About This Demonstrator:")
+st.sidebar.info(
+    "This web app simulates higher-level dashboards. "
+    "Frontline worker interaction occurs on dedicated Personal Edge Devices (PEDs)."
+)
+st.sidebar.divider()
+if glossary_page_full_path_app.exists():
+    st.sidebar.page_link(glossary_page_link_str_app, label="📜 System Glossary", icon="📚")
+st.sidebar.divider()
+st.sidebar.markdown(f"**{settings.ORGANIZATION_NAME}**")
+st.sidebar.markdown(f"Support: [{settings.SUPPORT_CONTACT_INFO}](mailto:{settings.SUPPORT_CONTACT_INFO})")
+st.sidebar.caption(settings.APP_FOOTER_TEXT)
+
+logger.info(f"{settings.APP_NAME} (v{settings.APP_VERSION}) - System Overview page loaded successfully.")
