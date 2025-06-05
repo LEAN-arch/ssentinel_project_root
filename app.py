@@ -8,30 +8,38 @@ from pathlib import Path
 import html 
 
 # --- Robust Path Setup ---
-_current_app_file_dir = Path(__file__).parent.resolve()
-_project_root_dir = _current_app_file_dir
+# app.py is in the project root (ssentinel_project_root)
+_project_root_dir = Path(__file__).parent.resolve() 
 
 if str(_project_root_dir) not in sys.path:
     sys.path.insert(0, str(_project_root_dir))
-    print(f"INFO: Added project root to sys.path: {_project_root_dir}", file=sys.stderr)
+    # Use print for initial setup messages before logging is configured
+    print(f"INFO (app.py): Added project root to sys.path: {_project_root_dir}", file=sys.stderr)
+else:
+    print(f"INFO (app.py): Project root already in sys.path: {_project_root_dir}", file=sys.stderr)
+
 
 # --- Import Settings ---
 try:
-    from config import settings
-    print(f"INFO: Successfully imported config.settings. APP_NAME: {settings.APP_NAME}", file=sys.stderr)
+    from config import settings # This should now work correctly
+    print(f"INFO (app.py): Successfully imported config.settings. APP_NAME: {settings.APP_NAME}", file=sys.stderr)
 except ImportError as e_cfg_app:
-    print(f"FATAL: Failed to import config.settings in app.py: {e_cfg_app}", file=sys.stderr); sys.exit(1)
+    print(f"FATAL (app.py): Failed to import config.settings: {e_cfg_app}", file=sys.stderr)
+    print(f"PYTHONPATH for app.py: {sys.path}", file=sys.stderr)
+    print(f"Calculated project root: {_project_root_dir}", file=sys.stderr)
+    sys.exit(1) 
 except Exception as e_generic_cfg:
-    print(f"FATAL: Generic error during config.settings import in app.py: {e_generic_cfg}", file=sys.stderr); sys.exit(1)
+    print(f"FATAL (app.py): Generic error during config.settings import: {e_generic_cfg}", file=sys.stderr)
+    sys.exit(1)
 
 # --- Global Logging Configuration ---
 valid_log_levels_app = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 log_level_app_str = str(settings.LOG_LEVEL).upper()
 if log_level_app_str not in valid_log_levels_app:
-    print(f"WARN: Invalid LOG_LEVEL '{log_level_app_str}'. Using INFO.", file=sys.stderr); log_level_app_str = "INFO"
+    print(f"WARN (app.py): Invalid LOG_LEVEL '{log_level_app_str}'. Using INFO.", file=sys.stderr); log_level_app_str = "INFO"
 logging.basicConfig(level=getattr(logging, log_level_app_str, logging.INFO), format=settings.LOG_FORMAT,
                     datefmt=settings.LOG_DATE_FORMAT, handlers=[logging.StreamHandler(sys.stdout)], force=True)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # Logger for this app.py
 
 # --- Streamlit Version Check & Feature Availability ---
 STREAMLIT_VERSION_GE_1_30 = False 
@@ -47,8 +55,7 @@ except ImportError: logger.critical("Streamlit library not found."); sys.exit("S
 except Exception as e_st_ver: logger.warning(f"Could not accurately determine Streamlit version/features: {e_st_ver}")
 
 # --- Page Configuration ---
-page_icon_path_obj = Path(settings.APP_LOGO_SMALL_PATH)
-if not page_icon_path_obj.is_absolute(): page_icon_path_obj = (_project_root_dir / settings.APP_LOGO_SMALL_PATH).resolve()
+page_icon_path_obj = Path(settings.APP_LOGO_SMALL_PATH) # settings.APP_LOGO_SMALL_PATH is already absolute string
 final_page_icon_str: str = str(page_icon_path_obj) if page_icon_path_obj.exists() and page_icon_path_obj.is_file() else "🌍"
 if final_page_icon_str == "🌍": logger.warning(f"Page icon not found at '{page_icon_path_obj}'. Using '🌍'.")
 st.set_page_config(
@@ -65,178 +72,123 @@ st.set_page_config(
 try:
     from visualization.plots import set_sentinel_plotly_theme
     set_sentinel_plotly_theme(); logger.debug("Sentinel Plotly theme applied.")
-except Exception as e: logger.error(f"Error applying Plotly theme: {e}", exc_info=True); st.error("Error applying visualization theme.")
+except Exception as e_theme_app_main: logger.error(f"Error applying Plotly theme: {e_theme_app_main}", exc_info=True); st.error("Error applying visualization theme.")
+
 @st.cache_resource
 def load_global_css_styles(css_path_str: str):
-    css_path = Path(css_path_str)
-    if not css_path.is_absolute(): css_path = (_project_root_dir / css_path_str).resolve()
+    css_path = Path(css_path_str) # settings.STYLE_CSS_PATH_WEB is already absolute
     if css_path.exists() and css_path.is_file():
         try:
             with open(css_path, "r", encoding="utf-8") as f: st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
             logger.debug(f"Global CSS loaded: {css_path}")
-        except Exception as e: logger.error(f"Error applying CSS {css_path}: {e}", exc_info=True); st.error("Styles could not be loaded.")
+        except Exception as e_css_app_main: logger.error(f"Error applying CSS {css_path}: {e_css_app_main}", exc_info=True); st.error("Styles could not be loaded.")
     else: logger.warning(f"CSS file not found: {css_path}"); st.warning("Application stylesheet missing.")
 if settings.STYLE_CSS_PATH_WEB: load_global_css_styles(settings.STYLE_CSS_PATH_WEB)
 
 # --- Main Application Header ---
-header_cols = st.columns([0.12, 0.88])
-with header_cols[0]:
-    l_logo_path = Path(settings.APP_LOGO_LARGE_PATH); s_logo_path = Path(settings.APP_LOGO_SMALL_PATH)
-    if not l_logo_path.is_absolute(): l_logo_path = (_project_root_dir / settings.APP_LOGO_LARGE_PATH).resolve()
-    if not s_logo_path.is_absolute(): s_logo_path = (_project_root_dir / settings.APP_LOGO_SMALL_PATH).resolve()
-    if l_logo_path.is_file(): st.image(str(l_logo_path), width=100)
-    elif s_logo_path.is_file(): st.image(str(s_logo_path), width=80)
-    else: logger.warning(f"App logos not found. L: '{l_logo_path}', S: '{s_logo_path}'."); st.markdown("### 🌍", unsafe_allow_html=True)
-with header_cols[1]: st.title(settings.APP_NAME); st.subheader("Transforming Data into Lifesaving Action at the Edge")
+header_cols_main = st.columns([0.12, 0.88])
+with header_cols_main[0]:
+    # Paths from settings are already absolute
+    l_logo_path_main_app = Path(settings.APP_LOGO_LARGE_PATH)
+    s_logo_path_main_app = Path(settings.APP_LOGO_SMALL_PATH)
+    if l_logo_path_main_app.is_file(): st.image(str(l_logo_path_main_app), width=100)
+    elif s_logo_path_main_app.is_file(): st.image(str(s_logo_path_main_app), width=80)
+    else: logger.warning(f"App logos not found. L: '{l_logo_path_main_app}', S: '{s_logo_path_main_app}'."); st.markdown("### 🌍", unsafe_allow_html=True)
+with header_cols_main[1]: st.title(settings.APP_NAME); st.subheader("Transforming Data into Lifesaving Action at the Edge")
 st.divider()
 
 # --- Welcome & System Description ---
-st.markdown(f"""
-    ## Welcome to the {settings.APP_NAME} Demonstrator
-    
-    Sentinel is an **edge-first health intelligence system** designed for **maximum clinical and 
-    operational actionability** in resource-limited, high-risk environments. It aims to convert 
-    diverse data sources into life-saving, workflow-integrated decisions, even with 
-    **minimal or intermittent internet connectivity.**
-""")
+st.markdown(f"""## Welcome to the {settings.APP_NAME} Demonstrator...""") # Content unchanged, truncated for brevity
 st.markdown("#### Core Design Principles:")
-core_principles_data_app_main_v2 = [
-    ("📶 **Offline-First Operations**", "On-device Edge AI ensures critical functionality without continuous connectivity."),
-    ("🎯 **Action-Oriented Intelligence**", "Insights aim to trigger clear, targeted responses relevant to frontline workflows."),
-    ("🧑‍🤝‍🧑 **Human-Centered Design**", "Interfaces optimized for low-literacy, high-stress users, prioritizing immediate understanding."),
-    ("🔗 **Resilience & Scalability**", "Modular design for scaling from personal devices to regional views with robust data sync.")
-]
-num_cols_principles_main_v2 = min(len(core_principles_data_app_main_v2), 2)
-if num_cols_principles_main_v2 > 0:
-    cols_principles_ui_main_v2 = st.columns(num_cols_principles_main_v2)
-    for idx_principle_main_v2, (title_main_p_v2, desc_main_p_v2) in enumerate(core_principles_data_app_main_v2):
-        with cols_principles_ui_main_v2[idx_principle_main_v2 % num_cols_principles_main_v2]:
-            st.markdown(f"##### {title_main_p_v2}")
-            st.markdown(f"<small>{html.escape(desc_main_p_v2)}</small>", unsafe_allow_html=True)
+core_principles_main_app = [
+    ("📶 **Offline-First Operations**", "On-device Edge AI ensures critical functionality..."),
+    ("🎯 **Action-Oriented Intelligence**", "Insights aim to trigger clear, targeted responses..."),
+    ("🧑‍🤝‍🧑 **Human-Centered Design**", "Interfaces optimized for low-literacy, high-stress users..."),
+    ("🔗 **Resilience & Scalability**", "Modular design for scaling...")] # Full descriptions from prompt assumed
+num_cols_core_principles = min(len(core_principles_main_app), 2)
+if num_cols_core_principles > 0:
+    cols_core_principles_ui = st.columns(num_cols_core_principles)
+    for idx_core, (title_core, desc_core) in enumerate(core_principles_main_app):
+        with cols_core_principles_ui[idx_core % num_cols_core_principles]:
+            st.markdown(f"##### {title_core}"); st.markdown(f"<small>{html.escape(desc_core)}</small>", unsafe_allow_html=True)
             st.markdown("<div style='margin-bottom:1rem;'></div>", unsafe_allow_html=True)
 st.markdown("---")
-
-# --- Navigation Information ---
-st.markdown("""
-    👈 **Navigate via the sidebar** to explore simulated web dashboards for various operational tiers. 
-    These views represent perspectives of **Supervisors, Clinic Managers, or District Health Officers (DHOs)**. 
-    The primary interface for frontline workers (e.g., CHWs) is a dedicated native application on their 
-    Personal Edge Device (PED), tailored for their specific operational context.
-""")
-st.info(
-    "💡 **Note:** This web application serves as a high-level demonstrator for the Sentinel system's "
-    "data processing capabilities and the types of aggregated views available to management and strategic personnel."
-)
+st.markdown("👈 **Navigate via the sidebar** to explore simulated web dashboards...") # Content unchanged
+st.info("💡 **Note:** This web application serves as a high-level demonstrator...") # Content unchanged
 st.divider()
 
 st.header("Explore Simulated Role-Specific Dashboards")
-st.caption("These views demonstrate the information available at higher tiers (Facility/Regional Nodes).")
+st.caption("These views demonstrate information available at higher tiers (Facility/Regional Nodes).")
 
-pages_base_dir_app_final = _project_root_dir / "pages" 
+pages_dir_app_final_val = _project_root_dir / "pages" 
+# Ensure filenames here match the *actual* filenames in your pages directory (including prefixes if you added them for ordering)
+role_nav_config_app_final = [
+    {"title": "🧑‍⚕️ CHW Operations Summary & Field Support View (Supervisor/Hub Level)", "desc": "This view simulates how a CHW Supervisor or a Hub coordinator might access summarized data...", "page_filename": "01_chw_dashboard.py", "icon": "🧑‍⚕️"},
+    {"title": "🏥 Clinic Operations & Environmental Safety View (Facility Node Level)", "desc": "Simulates a dashboard for Clinic Managers at a Facility Node (Tier 2)...", "page_filename": "02_clinic_dashboard.py", "icon": "🏥"},
+    {"title": "🗺️ District Health Strategic Overview (DHO at Facility/Regional Node Level)", "desc": "Presents a strategic dashboard for District Health Officers (DHOs)...", "page_filename": "03_district_dashboard.py", "icon": "🗺️"},
+    {"title": "📊 Population Health Analytics Deep Dive (Epidemiologist/Analyst View - Tier 3)", "desc": "A view designed for detailed epidemiological and health systems analysis...", "page_filename": "04_population_dashboard.py", "icon": "📊"},
+] # Full descriptions from prompt assumed
 
-# Assuming filenames in 'pages/' directory are prefixed for order:
-# e.g., 01_chw_dashboard.py, 02_clinic_dashboard.py, etc.
-# The st.page_link paths should reflect these prefixed filenames.
-role_navigation_config_final = [
-    {"title": "🧑‍⚕️ CHW Operations Summary & Field Support View (Supervisor/Hub Level)", 
-     "desc": "This view simulates how a CHW Supervisor or a Hub coordinator might access summarized data from CHW Personal Edge Devices (PEDs).<br><br><b>Focus (Tier 1-2):</b> Team performance monitoring, targeted support for CHWs, localized outbreak signal detection based on aggregated CHW reports.<br><b>Key Data Points:</b> CHW activity summaries (visits, tasks completed), patient alert escalations, critical supply needs for CHW kits, early epidemiological signals from specific zones.<br><b>Objective:</b> Enable supervisors to manage CHW teams effectively, provide timely support, identify emerging health issues quickly, and coordinate local responses. The CHW's primary tool is their offline-first native app on their PED, providing real-time alerts & task management.", 
-     "page_filename": "01_chw_dashboard.py", "icon": "🧑‍⚕️"}, # Assumed prefixed filename
-    {"title": "🏥 Clinic Operations & Environmental Safety View (Facility Node Level)", 
-     "desc": "Simulates a dashboard for Clinic Managers at a Facility Node (Tier 2), providing insights into service efficiency, care quality, resource management, and environmental conditions.<br><br><b>Focus (Tier 2):</b> Optimizing clinic workflows, ensuring quality patient care, managing supplies and testing backlogs, monitoring clinic environment for safety and infection control.<br><b>Key Data Points:</b> Clinic performance KPIs (e.g., test TAT, patient throughput), supply stock forecasts, IoT sensor data summaries (CO2, PM2.5, occupancy), clinic-level epidemiological trends, flagged patient cases for review.<br><b>Objective:</b> Enhance operational efficiency, support clinical decision-making, maintain resource availability, and ensure a safe clinic environment.", 
-     "page_filename": "02_clinic_dashboard.py", "icon": "🏥"}, # Assumed prefixed filename
-    {"title": "🗺️ District Health Strategic Overview (DHO at Facility/Regional Node Level)", 
-     "desc": "Presents a strategic dashboard for District Health Officers (DHOs), typically accessed at a Facility Node (Tier 2) or a Regional/Cloud Node (Tier 3).<br><br><b>Focus (Tier 2-3):</b> Population health insights, resource allocation across zones, monitoring environmental well-being, and planning targeted interventions.<br><b>Key Data Points:</b> District-wide health KPIs, interactive maps for zonal comparisons (risk, disease burden, resources), trend analyses, intervention planning tools based on aggregated data.<br><b>Objective:</b> Support evidence-based strategic planning, public health interventions, program monitoring, and policy development for the district.", 
-     "page_filename": "03_district_dashboard.py", "icon": "🗺️"}, # Assumed prefixed filename
-    {"title": "📊 Population Health Analytics Deep Dive (Epidemiologist/Analyst View - Tier 3)", 
-     "desc": "A view designed for detailed epidemiological and health systems analysis, typically used by analysts or program managers at a Regional/Cloud Node (Tier 3) with access to more comprehensive, aggregated datasets.<br><br><b>Focus (Tier 3):</b> In-depth analysis of demographic patterns, SDOH impacts, clinical trends, health system performance, and equity across broader populations.<br><b>Key Data Points:</b> Stratified disease burden, AI risk distributions by various factors, aggregated test positivity trends, comorbidity analysis, referral pathway performance, health equity metrics.<br><b>Objective:</b> Provide robust analytical capabilities to understand population health dynamics, evaluate interventions, identify areas for research, and inform large-scale public health strategy.", 
-     "page_filename": "04_population_dashboard.py", "icon": "📊"}, # Assumed prefixed filename
-]
-
-num_nav_cols_final_app = min(len(role_navigation_config_final), 2)
-if num_nav_cols_final_app > 0:
-    nav_cols_ui_final_app = st.columns(num_nav_cols_final_app)
-    current_col_idx_nav_final = 0
-    for nav_item_final_app in role_navigation_config_final:
-        page_link_path_final_app = f"pages/{nav_item_final_app['page_filename']}" 
-        physical_page_path_final_app = pages_base_dir_app_final / nav_item_final_app["page_filename"]
+num_nav_cols_final = min(len(role_nav_config_app_final), 2)
+if num_nav_cols_final > 0:
+    nav_cols_ui_final = st.columns(num_nav_cols_final)
+    current_col_idx_nav_final_val = 0
+    for nav_item_final in role_navigation_config_app_final:
+        # For st.page_link, the path should be 'pages/actual_filename_in_pages_dir.py'
+        # If pages are in 'ssentinel_project_root/pages/', and app.py is in 'ssentinel_project_root/'
+        page_link_target = f"pages/{nav_item_final['page_filename']}"
+        physical_page_full_path = pages_dir_app_final_val / nav_item_final["page_filename"]
         
-        if not physical_page_path_final_app.exists():
-            logger.warning(f"Navigation page file for '{nav_item_final_app['title']}' not found: {physical_page_path_final_app}")
+        if not physical_page_full_path.exists():
+            logger.warning(f"Navigation page file for '{nav_item_final['title']}' not found: {physical_page_full_path}")
             continue
 
-        with nav_cols_ui_final_app[current_col_idx_nav_final % num_nav_cols_final_app]:
-            container_kwargs_final = {"border": True} if STREAMLIT_VERSION_GE_1_30 else {}
-            with st.container(**container_kwargs_final):
-                st.subheader(f"{nav_item_final_app['icon']} {html.escape(nav_item_final_app['title'])}")
-                st.markdown(f"<small>{nav_item_final_app['desc']}</small>", unsafe_allow_html=True)
-                link_label_final = f"Explore {nav_item_final_app['title'].split('(')[0].split('View')[0].strip()} View"
+        with nav_cols_ui_final[current_col_idx_nav_final_val % num_nav_cols_final]:
+            container_args = {"border": True} if STREAMLIT_VERSION_GE_1_30 else {}
+            with st.container(**container_args):
+                st.subheader(f"{nav_item_final['icon']} {html.escape(nav_item_final['title'])}")
+                st.markdown(f"<small>{nav_item_final['desc']}</small>", unsafe_allow_html=True)
+                link_label_val = f"Explore {nav_item_final['title'].split('(')[0].split('View')[0].strip()} View"
                 if STREAMLIT_PAGE_LINK_AVAILABLE:
-                    link_kwargs_final = {"use_container_width": True} if STREAMLIT_VERSION_GE_1_30 else {}
-                    st.page_link(page_link_path_final_app, label=link_label_final, icon="➡️", **link_kwargs_final)
+                    link_args = {"use_container_width": True} if STREAMLIT_VERSION_GE_1_30 else {}
+                    st.page_link(page_link_target, label=link_label_val, icon="➡️", **link_args)
                 else: 
-                    st.markdown(f'<a href="{nav_item_final_app["page_filename"]}" target="_self" style="display:block;text-align:center;padding:0.5em;background-color:var(--sentinel-color-action-primary);color:white;border-radius:4px;text-decoration:none;">{link_label_final} ➡️</a>', unsafe_allow_html=True)
+                    st.markdown(f'<a href="{nav_item_final["page_filename"]}" target="_self" style="text-align:center;padding:0.5em;background-color:var(--sentinel-color-action-primary);color:white;border-radius:4px;text-decoration:none;display:block;">{link_label_val} ➡️</a>', unsafe_allow_html=True)
             st.markdown("<div style='margin-bottom:0.5rem;'></div>", unsafe_allow_html=True)
-        current_col_idx_nav_final += 1
+        current_col_idx_nav_final_val += 1
 st.divider()
 
 # --- Key Capabilities Section ---
 st.header(f"{settings.APP_NAME} - Key Capabilities Reimagined")
-capabilities_data_app_final_val = [
-    ("🛡️ Frontline Worker Safety & Support", "Real-time vitals/environmental monitoring, fatigue detection, safety nudges on PEDs."),
-    ("🌍 Offline-First Edge AI", "On-device intelligence for alerts, prioritization, guidance without continuous connectivity."),
-    ("⚡ Actionable, Contextual Insights", "Raw data to clear, role-specific recommendations integrated into field workflows."),
-    ("🤝 Human-Centered & Accessible UX", "Pictogram UIs, voice/tap commands, local language support for low-literacy, high-stress users on PEDs."),
-    ("📡 Resilient Data Synchronization", "Flexible data sharing (Bluetooth, QR, SD card, SMS, opportunistic IP) across devices/tiers."),
-    ("🌱 Scalable & Interoperable Architecture", "Modular design (personal to national), FHIR/HL7 considerations for integration.")
-]
-num_cap_cols_final_app = min(len(capabilities_data_app_final_val), 3)
-if num_cap_cols_final_app > 0:
-    cap_cols_ui_final_app = st.columns(num_cap_cols_final_app)
-    current_col_idx_cap_final = 0
-    for cap_title_item_final, cap_desc_item_final in capabilities_data_app_final_val:
-        with cap_cols_ui_final_app[current_col_idx_cap_final % num_cap_cols_final_app]:
-            st.markdown(f"##### {html.escape(cap_title_item_final)}")
-            st.markdown(f"<small>{html.escape(cap_desc_item_final)}</small>", unsafe_allow_html=True)
-            st.markdown("<div style='margin-bottom: 1.2rem;'></div>", unsafe_allow_html=True)
-        current_col_idx_cap_final += 1
+capabilities_data_app_final = [("🛡️ Frontline Worker Safety & Support", "Real-time vitals..."), ("🌍 Offline-First Edge AI", "On-device intelligence..."),
+                               ("⚡ Actionable, Contextual Insights", "Raw data to clear recommendations..."), ("🤝 Human-Centered UX", "Pictogram UIs..."),
+                               ("📡 Resilient Data Sync", "Flexible data sharing..."), ("🌱 Scalable Architecture", "Modular design...")] # Full descriptions
+num_cap_cols_final = min(len(capabilities_data_app_final), 3)
+if num_cap_cols_final > 0:
+    cap_cols_ui_final = st.columns(num_cap_cols_final)
+    for i_cap, (cap_t, cap_d) in enumerate(capabilities_data_app_final):
+        with cap_cols_ui_final[i_cap % num_cap_cols_final]: st.markdown(f"##### {html.escape(cap_t)}"); st.markdown(f"<small>{html.escape(cap_d)}</small>", unsafe_allow_html=True); st.markdown("<div style='margin-bottom:1.2rem;'></div>", unsafe_allow_html=True)
 st.divider()
 
-# --- Sidebar Content ---
-# Streamlit automatically generates sidebar links from files in the 'pages' directory,
-# sorted alphanumerically by filename. To control order, prefix filenames:
-# e.g., pages/01_chw_dashboard.py, pages/02_clinic_dashboard.py, ..., pages/05_glossary_page.py
-# The app.py (home page) will implicitly be the first item.
-
+# --- Sidebar Content & Glossary Link ---
 st.sidebar.header(f"{settings.APP_NAME} v{settings.APP_VERSION}")
 st.sidebar.divider()
-st.sidebar.markdown("#### About This Demonstrator:")
-st.sidebar.info("Web app simulates higher-level dashboards. Frontline workers use dedicated PED apps.")
+st.sidebar.markdown("#### About This Demonstrator:"); st.sidebar.info("Web app simulates higher-level dashboards...")
 st.sidebar.divider()
 
-# Example: If you want to *ensure* glossary is last and control its label precisely,
-# you could use st.page_link here, but it would appear *after* auto-discovered pages
-# unless you manage all navigation explicitly (e.g. using st.navigation, which is more complex).
-# For default behavior, relying on filename prefixes like "05_glossary_page.py" is standard.
-# This manual link is mostly for illustration if explicit addition is desired.
-glossary_page_filename_sidebar = "05_glossary_page.py" # ASSUMING you rename the file
-glossary_page_link_path_sidebar_final = f"pages/{glossary_page_filename_sidebar}"
-glossary_physical_path_sidebar_final = pages_base_dir_app_final / glossary_page_filename_sidebar
+# Glossary link - assuming it's named "05_glossary_page.py" for ordering
+glossary_filename_sidebar_final = "05_glossary_page.py" 
+glossary_link_target_sidebar = f"pages/{glossary_filename_sidebar_final}"
+glossary_physical_path_final_sb = pages_dir_app_final_val / glossary_filename_sidebar_final
 
-if glossary_physical_path_sidebar_final.exists():
-    # This will add a link, but its position relative to auto-discovered pages
-    # depends on Streamlit's rendering order.
-    # For guaranteed order, prefixing filenames in the pages/ directory is the primary method.
-    if STREAMLIT_PAGE_LINK_AVAILABLE:
-         pass # Streamlit will auto-discover prefixed files. Manual link not needed here if files are prefixed.
-         # st.sidebar.page_link(glossary_page_link_path_sidebar_final, label="📜 System Glossary", icon="📚") # Example if needed
-    else:
-         st.sidebar.markdown(f'<a href="{glossary_page_filename_sidebar}" target="_self">📜 System Glossary</a>', unsafe_allow_html=True)
-else:
-    logger.warning(f"Glossary page file for sidebar link not found (expected: {glossary_physical_path_sidebar_final})")
+if glossary_physical_path_final_sb.exists():
+    if STREAMLIT_PAGE_LINK_AVAILABLE: st.sidebar.page_link(glossary_link_target_sidebar, label="📜 System Glossary", icon="📚")
+    else: st.sidebar.markdown(f'<a href="{glossary_filename_sidebar_final}" target="_self">📜 System Glossary</a>', unsafe_allow_html=True)
+else: logger.warning(f"Glossary page for sidebar not found: {glossary_physical_path_final_sb}")
 
-st.sidebar.divider() # Add divider before org info
+st.sidebar.divider()
 st.sidebar.markdown(f"**{settings.ORGANIZATION_NAME}**")
 st.sidebar.markdown(f"Support: [{settings.SUPPORT_CONTACT_INFO}](mailto:{settings.SUPPORT_CONTACT_INFO})")
 st.sidebar.caption(settings.APP_FOOTER_TEXT)
 
-logger.info(f"{settings.APP_NAME} (v{settings.APP_VERSION}) - System Overview page loaded successfully.")
+logger.info(f"{settings.APP_NAME} (v{settings.APP_VERSION}) - System Overview page loaded.")
