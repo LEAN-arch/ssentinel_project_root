@@ -31,7 +31,7 @@ APP_VERSION = "4.0.1" # Updated version after fixes
 ORGANIZATION_NAME = "LMIC Health Futures Initiative"
 APP_FOOTER_TEXT = f"© {datetime.now().year} {ORGANIZATION_NAME}. Actionable Intelligence for Resilient Health Systems."
 SUPPORT_CONTACT_INFO = "support@lmic-health-futures.org"
-LOG_LEVEL = os.getenv("SENTINEL_LOG_LEVEL", "INFO")
+LOG_LEVEL = os.getenv("SENTINEL_LOG_LEVEL", "INFO").upper()
 LOG_FORMAT = os.getenv("SENTINEL_LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 LOG_DATE_FORMAT = os.getenv("SENTINEL_LOG_DATE_FORMAT", "%Y-%m-%d %H:%M:%S")
 
@@ -55,19 +55,14 @@ ZONE_GEOMETRIES_GEOJSON_FILE_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_g
 IOT_CLINIC_ENVIRONMENT_CSV_PATH = str(validate_path(DATA_SOURCES_DIR / "iot_clinic_environment.csv", "IoT clinic environment CSV"))
 
 # --- II. Health & Operational Thresholds ---
-# Vitals
 ALERT_SPO2_CRITICAL_LOW_PCT = 90
 ALERT_SPO2_WARNING_LOW_PCT = 94
 ALERT_BODY_TEMP_FEVER_C = 38.0
 ALERT_BODY_TEMP_HIGH_FEVER_C = 39.5
 ALERT_HR_TACHYCARDIA_BPM = 100
 ALERT_HR_BRADYCARDIA_BPM = 50
-
-# Worker/Patient Specific
 HEAT_STRESS_RISK_BODY_TEMP_C = 37.5
 HEAT_STRESS_DANGER_BODY_TEMP_C = 38.5
-
-# Environmental
 ALERT_AMBIENT_CO2_HIGH_PPM = 1500
 ALERT_AMBIENT_CO2_VERY_HIGH_PPM = 2500
 ALERT_AMBIENT_PM25_HIGH_UGM3 = 35
@@ -75,42 +70,28 @@ ALERT_AMBIENT_PM25_VERY_HIGH_UGM3 = 50
 ALERT_AMBIENT_NOISE_HIGH_DBA = 85
 ALERT_AMBIENT_HEAT_INDEX_RISK_C = 32
 ALERT_AMBIENT_HEAT_INDEX_DANGER_C = 41
-
-# AI & System Scores
 FATIGUE_INDEX_MODERATE_THRESHOLD = 60
 FATIGUE_INDEX_HIGH_THRESHOLD = 80
 STRESS_HRV_LOW_THRESHOLD_MS = 20
-
 RISK_SCORE_LOW_THRESHOLD = 40
 RISK_SCORE_MODERATE_THRESHOLD = 60
 RISK_SCORE_HIGH_THRESHOLD = 75
-
-# Clinic Operations
 TARGET_CLINIC_WAITING_ROOM_OCCUPANCY_MAX = 10
 TARGET_CLINIC_PATIENT_THROUGHPUT_MIN_PER_HOUR = 5
-
-# District Level
 DISTRICT_ZONE_HIGH_RISK_AVG_SCORE = 70
 DISTRICT_INTERVENTION_FACILITY_COVERAGE_LOW_PCT = 60
 DISTRICT_INTERVENTION_TB_BURDEN_HIGH_ABS = 10
 DISTRICT_DISEASE_PREVALENCE_HIGH_PERCENTILE = 0.80
-
-# Supply Chain
 CRITICAL_SUPPLY_DAYS_REMAINING = 7
 LOW_SUPPLY_DAYS_REMAINING = 14
-
-# General Activity / Wellness
 TARGET_DAILY_STEPS = 8000
 RANDOM_SEED = 42
-
-# Age Thresholds
 AGE_THRESHOLD_LOW = 5
 AGE_THRESHOLD_MODERATE = 18
 AGE_THRESHOLD_HIGH = 60
 AGE_THRESHOLD_VERY_HIGH = 75
 
-
-# --- III. Edge Device Configuration (PED specific) ---
+# --- III. Edge Device Configuration ---
 EDGE_APP_DEFAULT_LANGUAGE = "en"
 EDGE_APP_SUPPORTED_LANGUAGES = ["en", "sw", "fr"]
 EDGE_MODEL_VITALS_DETERIORATION = "vitals_deterioration_v1.tflite"
@@ -141,17 +122,13 @@ KEY_TEST_TYPES_FOR_ANALYSIS = {
     "PulseOx": {"disease_group": "Vitals", "target_tat_days": 0, "critical": False, "display_name": "Pulse Oximetry"},
 }
 CRITICAL_TESTS = [k for k, v in KEY_TEST_TYPES_FOR_ANALYSIS.items() if v.get("critical", False)]
-
 TARGET_TEST_TURNAROUND_DAYS = 2
 TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY = 85.0
 TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY = 5.0
 OVERDUE_PENDING_TEST_DAYS_GENERAL_FALLBACK = 7
-
 KEY_CONDITIONS_FOR_ACTION = ['TB', 'Malaria', 'HIV-Positive', 'Pneumonia', 'Severe Dehydration', 'Heat Stroke', 'Sepsis', 'Diarrheal Diseases (Severe)']
 KEY_DRUG_SUBSTRINGS_SUPPLY = ['TB-Regimen', 'ACT', 'ARV-Regimen', 'ORS', 'Amoxicillin', 'Paracetamol', 'Penicillin', 'Iron-Folate', 'Insulin']
-
 TARGET_MALARIA_POSITIVITY_RATE = 10.0
-
 SYMPTOM_CLUSTERS_CONFIG = {
     "Fever, Cough, Fatigue": ["fever", "cough", "fatigue"],
     "Diarrhea & Vomiting": ["diarrhea", "vomit"],
@@ -159,47 +136,39 @@ SYMPTOM_CLUSTERS_CONFIG = {
 }
 
 # --- VI. Web Dashboard & Visualization Configuration ---
-CACHE_TTL_SECONDS_WEB_REPORTS = 3600
+CACHE_TTL_SECONDS_WEB_REPORTS = int(os.getenv("SENTINEL_CACHE_TTL", 3600))
 WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND = 30
 WEB_PLOT_DEFAULT_HEIGHT = 400
 WEB_PLOT_COMPACT_HEIGHT = 320
 WEB_MAP_DEFAULT_HEIGHT = 600
-
 MAPBOX_STYLE_WEB = "carto-positron"
 DEFAULT_CRS_STANDARD = "EPSG:4326"
 MAP_DEFAULT_CENTER_LAT = -1.286389
 MAP_DEFAULT_CENTER_LON = 36.817223
 MAP_DEFAULT_ZOOM_LEVEL = 5
 
-# --- VII. Color Palette (Consistent with style_web_reports.css) ---
+# --- VII. Color Palette ---
 COLOR_RISK_HIGH = "#D32F2F"
 COLOR_RISK_MODERATE = "#FBC02D"
 COLOR_RISK_LOW = "#388E3C"
 COLOR_RISK_NEUTRAL = "#757575"
-
 COLOR_ACTION_PRIMARY = "#1976D2"
 COLOR_ACTION_SECONDARY = "#546E7A"
 COLOR_ACCENT_BRIGHT = "#4D7BF3"
-
 COLOR_POSITIVE_DELTA = "#27AE60"
 COLOR_NEGATIVE_DELTA = "#C0392B"
-
 COLOR_TEXT_DARK = "#343a40"
 COLOR_TEXT_HEADINGS_MAIN = "#1A2557"
 COLOR_TEXT_HEADINGS_SUB = "#2C3E50"
 COLOR_TEXT_MUTED = "#6c757d"
 COLOR_TEXT_LINK_DEFAULT = COLOR_ACTION_PRIMARY
-
 COLOR_BACKGROUND_PAGE = "#f8f9fa"
 COLOR_BACKGROUND_CONTENT = "#ffffff"
 COLOR_BACKGROUND_SUBTLE = "#e9ecef"
 COLOR_BACKGROUND_WHITE = "#FFFFFF"
 COLOR_BACKGROUND_CONTENT_TRANSPARENT = 'rgba(255,255,255,0.85)'
-
-
 COLOR_BORDER_LIGHT = "#dee2e6"
 COLOR_BORDER_MEDIUM = "#ced4da"
-
 LEGACY_DISEASE_COLORS_WEB = {
     "TB": "#EF4444", "Malaria": "#F59E0B", "HIV-Positive": "#8B5CF6", "Pneumonia": "#3B82F6",
     "Anemia": "#10B981", "STI": "#EC4899", "Dengue": "#6366F1", "Hypertension": "#F97316",
@@ -208,5 +177,9 @@ LEGACY_DISEASE_COLORS_WEB = {
     "Other": "#6B7280"
 }
 
-# --- End of Configuration ---
+# Ensure log level is valid
+if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    settings_logger.warning(f"Invalid LOG_LEVEL '{LOG_LEVEL}'. Defaulting to INFO.")
+    LOG_LEVEL = "INFO"
+
 settings_logger.info(f"Sentinel settings loaded. APP_NAME: {APP_NAME} v{APP_VERSION}")
