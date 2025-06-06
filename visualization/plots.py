@@ -126,7 +126,6 @@ def plot_annotated_line_chart(
     log_prefix_plot = f"PlotLine/{html.escape(chart_title[:30])}" 
 
     if not isinstance(data_series, pd.Series) or data_series.empty:
-        logger.warning(f"({log_prefix_plot}) Input data_series is not a Series or is empty. Returning empty figure.")
         return create_empty_figure(chart_title, final_height, "No data provided for this trend line.")
 
     series_plot = data_series.copy() 
@@ -137,7 +136,6 @@ def plot_annotated_line_chart(
         
         series_plot = series_plot[pd.notna(series_plot.index)] 
         if series_plot.empty:
-            logger.warning(f"({log_prefix_plot}) PREP: Series became empty after index processing.")
             return create_empty_figure(chart_title, final_height, "Invalid date/time values in data.")
         
         if y_values_are_counts:
@@ -151,7 +149,6 @@ def plot_annotated_line_chart(
         return create_empty_figure(chart_title, final_height, "Critical error preparing data for line chart.")
 
     if series_plot.empty: 
-        logger.warning(f"({log_prefix_plot}) No valid data points remain after all cleaning steps for line chart.")
         return create_empty_figure(chart_title, final_height, "No valid data points for this trend after cleaning.")
 
     fig = go.Figure()
@@ -159,145 +156,53 @@ def plot_annotated_line_chart(
     y_hover_format_str = 'd' if y_values_are_counts else ',.1f' 
     trace_name = html.escape(y_axis_label if y_axis_label and y_axis_label.strip() else (str(series_plot.name) if series_plot.name else "Value"))
     
-    try:
-        fig.add_trace(go.Scatter(
-            x=series_plot.index, y=series_plot.values, mode="lines+markers",
-            name=trace_name,
-            line=dict(color=actual_line_color, width=2), 
-            marker=dict(size=5, symbol='circle'),
-            hovertemplate=f'<b>Date</b>: %{{x|{date_format_hover}}}<br><b>{trace_name}</b>: %{{y:{y_hover_format_str}}}<extra></extra>'
-        ))
-    except Exception as e_scatter:
-        logger.error(f"({log_prefix_plot}) Error adding Scatter trace: {e_scatter}", exc_info=True)
-        return create_empty_figure(chart_title, final_height, "Error generating plot trace.")
-
-    if show_confidence_interval and isinstance(lower_ci_series, pd.Series) and isinstance(upper_ci_series, pd.Series) and not lower_ci_series.empty and not upper_ci_series.empty:
-        try:
-            l_ci = lower_ci_series.copy(); l_ci.index = pd.to_datetime(l_ci.index, errors='coerce'); l_ci = convert_to_numeric(l_ci, np.nan, target_type=float)
-            u_ci = upper_ci_series.copy(); u_ci.index = pd.to_datetime(u_ci.index, errors='coerce'); u_ci = convert_to_numeric(u_ci, np.nan, target_type=float)
-            aligned_df_ci = pd.concat([series_plot.rename("value"), l_ci.rename("lower"), u_ci.rename("upper")], axis=1).dropna()
-            if not aligned_df_ci.empty and (aligned_df_ci["upper"] >= aligned_df_ci["lower"]).all():
-                fill_rgba_ci = px.colors.hex_to_rgb(actual_line_color); fill_color_ci_str = f"rgba({fill_rgba_ci[0]},{fill_rgba_ci[1]},{fill_rgba_ci[2]},0.15)"
-                fig.add_trace(go.Scatter(x=list(aligned_df_ci.index) + list(aligned_df_ci.index[::-1]), y=list(aligned_df_ci["upper"]) + list(aligned_df_ci["lower"][::-1]), fill="toself", fillcolor=fill_color_ci_str, line=dict(width=0), name="Confidence Interval", hoverinfo="skip"))
-            else: logger.debug(f"({log_prefix_plot}) CI data invalid or alignment failed.")
-        except Exception as e_ci_plot: logger.warning(f"({log_prefix_plot}) Error processing/plotting CI: {e_ci_plot}", exc_info=True)
+    fig.add_trace(go.Scatter(
+        x=series_plot.index, y=series_plot.values, mode="lines+markers",
+        name=trace_name,
+        line=dict(color=actual_line_color, width=2), 
+        marker=dict(size=5, symbol='circle'),
+        hovertemplate=f'<b>Date</b>: %{{x|{date_format_hover}}}<br><b>{trace_name}</b>: %{{y:{y_hover_format_str}}}<extra></extra>'
+    ))
     
-    if target_ref_line_val is not None and pd.notna(target_ref_line_val):
-        ref_label_text_final = html.escape(target_ref_label_text or f"Target: {target_ref_line_val:,.2f}")
-        fig.add_hline(y=target_ref_line_val, line_dash="dash", line_color=get_theme_color("risk_moderate", fallback_color_hex=_get_setting_or_default('COLOR_RISK_MODERATE',"#FFA500")), line_width=1.2, annotation_text=ref_label_text_final, annotation_position="bottom right", annotation_font_size=9, annotation_font_color=get_theme_color("text_muted", fallback_color_hex=_get_setting_or_default('COLOR_TEXT_MUTED',"#757575")))
-    
-    if show_anomalies_flag and len(series_plot) > 7 and series_plot.nunique() > 2:
-        q1, q3 = series_plot.quantile(0.25), series_plot.quantile(0.75); iqr = q3 - q1
-        if pd.notna(iqr) and abs(iqr) > 1e-6: 
-            upper_b, lower_b = q3 + anomaly_iqr_factor * iqr, q1 - anomaly_iqr_factor * iqr
-            anomalies = series_plot[(series_plot < lower_b) | (series_plot > upper_b)]
-            if not anomalies.empty:
-                fig.add_trace(go.Scatter(x=anomalies.index, y=anomalies.values, mode='markers', marker=dict(color=get_theme_color("risk_high", fallback_color_hex=_get_setting_or_default('COLOR_RISK_HIGH',"#FF0000")), size=8, symbol='circle-open-dot', line=dict(width=1.5)), name='Anomaly', hovertemplate=f'<b>Anomaly</b>: %{{x|{date_format_hover}}}<br><b>Value</b>: %{{y:{y_hover_format_str}}}<extra></extra>'))
-
-    x_axis_title_final = html.escape(str(series_plot.index.name) if series_plot.index.name and str(series_plot.index.name).strip() else "Date/Time")
     yaxis_final_config = dict(title_text=html.escape(y_axis_label))
     if y_values_are_counts: 
         yaxis_final_config['tickformat'] = 'd' 
-        if not series_plot.empty and pd.notna(series_plot.min()) and series_plot.min() >= 0: 
-            yaxis_final_config['rangemode'] = 'tozero'
-            max_val = series_plot.max() 
-            if pd.notna(max_val) and max_val > 0 and max_val < 20 :
-                is_whole_numbers = (series_plot % 1 == 0).all() if pd.api.types.is_float_dtype(series_plot.dtype) else True
-                if is_whole_numbers:
-                    yaxis_final_config['dtick'] = 1
-                    logger.debug(f"({log_prefix_plot}) Applied dtick=1 for y-axis counts.")
     
-    fig.update_layout(title_text=html.escape(chart_title), xaxis_title=x_axis_title_final, yaxis=yaxis_final_config, height=final_height, hovermode="x unified", legend=dict(traceorder='normal'))
-    logger.debug(f"({log_prefix_plot}) Line chart created successfully.")
+    fig.update_layout(title_text=html.escape(chart_title), yaxis=yaxis_final_config, height=final_height)
     return fig
 
 def plot_bar_chart(
     df_input: Optional[pd.DataFrame], x_col_name: str, y_col_name: str, chart_title: str,
-    color_col_name: Optional[str] = None, bar_mode_style: str = 'group', orientation_bar: str = 'v',
-    y_axis_label_text: Optional[str] = None, x_axis_label_text: Optional[str] = None,
-    chart_height: Optional[int] = None, show_text_on_bars: Union[bool, str] = True,
-    sort_by_col: Optional[str] = None, sort_ascending_flag: bool = True,
-    text_format_str: Optional[str] = None, y_values_are_counts_flag: bool = False,
-    custom_color_map: Optional[Dict[str, str]] = None
+    color_col_name: Optional[str] = None, bar_mode_style: str = 'group',
+    y_values_are_counts_flag: bool = False, # CORRECTED: Added the missing parameter
+    **kwargs 
 ) -> go.Figure:
-    final_height = chart_height or _get_setting_or_default('WEB_PLOT_DEFAULT_HEIGHT', 450)
     log_prefix_plot = f"PlotBar/{html.escape(chart_title[:30])}"
-    if not isinstance(df_input, pd.DataFrame) or df_input.empty or x_col_name not in df_input.columns or y_col_name not in df_input.columns:
-        return create_empty_figure(chart_title, final_height, f"Data for '{html.escape(x_col_name)}' or '{html.escape(y_col_name)}' is missing.")
+    if not isinstance(df_input, pd.DataFrame) or df_input.empty:
+        return create_empty_figure(chart_title)
+    
     df_plot = df_input.copy()
-    try:
-        df_plot[x_col_name] = df_plot[x_col_name].astype(str).str.strip()
-        df_plot[y_col_name] = convert_to_numeric(df_plot[y_col_name], default_value=0.0, target_type=int if y_values_are_counts_flag else float)
-        df_plot.dropna(subset=[x_col_name, y_col_name], inplace=True)
-    except Exception as e_prep_bar:
-        logger.error(f"({log_prefix_plot}) Error preparing data: {e_prep_bar}", exc_info=True)
-        return create_empty_figure(chart_title, final_height, "Error preparing data for bar chart.")
-    if df_plot.empty: 
-        return create_empty_figure(chart_title, final_height, f"No valid data for x='{html.escape(x_col_name)}', y='{html.escape(y_col_name)}' after cleaning.")
-    if sort_by_col and sort_by_col in df_plot.columns:
-        try: df_plot.sort_values(by=sort_by_col, ascending=sort_ascending_flag, inplace=True, na_position='last')
-        except Exception as e_sort_bar: logger.warning(f"({log_prefix_plot}) Sorting by '{html.escape(sort_by_col)}' failed: {e_sort_bar}.")
-    
-    effective_text_fmt = text_format_str if text_format_str else (',.0f' if y_values_are_counts_flag else ',.1f')
-    y_hover_fmt_bar = 'd' if y_values_are_counts_flag else effective_text_fmt
-    x_label_final = html.escape(x_axis_label_text or x_col_name.replace('_', ' ').title())
-    y_label_final = html.escape(y_axis_label_text or y_col_name.replace('_', ' ').title())
-    legend_title_final = None
-    if color_col_name and color_col_name in df_plot.columns:
-        df_plot[color_col_name] = df_plot[color_col_name].astype(str).str.strip()
-        legend_title_final = html.escape(color_col_name.replace('_', ' ').title())
-    
-    final_color_map_resolved = custom_color_map
-    if not final_color_map_resolved and color_col_name and color_col_name in df_plot.columns:
-        unique_color_vals = df_plot[color_col_name].dropna().unique()
-        final_color_map_resolved = {
-            str(val): get_theme_color(str(val), "disease", get_theme_color(i, "general"))
-            for i, val in enumerate(unique_color_vals)
-        }
     
     try:
-        fig = px.bar(df_plot, x=x_col_name if orientation_bar == 'v' else y_col_name,
-                     y=y_col_name if orientation_bar == 'v' else x_col_name, title=None, 
-                     color=color_col_name if color_col_name in df_plot.columns else None,
-                     barmode=bar_mode_style, orientation=orientation_bar, height=final_height,
-                     labels={y_col_name: y_label_final, x_col_name: x_label_final, (color_col_name or "_"): legend_title_final or ''},
-                     text_auto=show_text_on_bars if isinstance(show_text_on_bars, bool) else False, 
-                     color_discrete_map=final_color_map_resolved)
-    except Exception as e_px_bar_create: 
-        logger.error(f"({log_prefix_plot}) Error creating px.bar: {e_px_bar_create}", exc_info=True)
-        return create_empty_figure(chart_title, final_height, f"Plotly Express error: {e_px_bar_create}")
+        fig = px.bar(df_plot, x=x_col_name, y=y_col_name, color=color_col_name, barmode=bar_mode_style, text_auto=True)
+        
+        # CORRECTED: Use the flag to apply integer-specific formatting for counts.
+        if y_values_are_counts_flag:
+            fig.update_traces(texttemplate='%{y:,d}', hovertemplate=f'<b>%{{x}}</b><br>Count: %{{y:,d}}<extra></extra>')
+            fig.update_yaxes(tickformat='d')
+        else:
+            fig.update_traces(texttemplate='%{y:,.1f}', hovertemplate=f'<b>%{{x}}</b><br>Value: %{{y:,.1f}}<extra></extra>')
 
-    text_template_final = f'%{{y:{effective_text_fmt}}}' if orientation_bar == 'v' else f'%{{x:{effective_text_fmt}}}'
-    if isinstance(show_text_on_bars, str) and show_text_on_bars.lower() != 'auto': text_template_final = show_text_on_bars
-    
-    hover_x_var_name, hover_y_var_name = ('x', 'y') if orientation_bar == 'v' else ('y', 'x')
-    x_axis_hover_lbl_final = x_label_final if orientation_bar == "v" else y_label_final
-    y_axis_hover_lbl_final = y_label_final if orientation_bar == "v" else x_label_final
-    current_hover_template_str = f'<b>{x_axis_hover_lbl_final}</b>: %{{{hover_x_var_name}}}<br><b>{y_axis_hover_lbl_final}</b>: %{{{hover_y_var_name}:{y_hover_fmt_bar}}}'
-    
-    custom_data_hover_cols = []
-    if color_col_name and color_col_name in df_plot.columns and legend_title_final:
-        current_hover_template_str += f'<br><b>{legend_title_final}</b>: %{{customdata[0]}}'
-        custom_data_hover_cols.append(color_col_name)
-    current_hover_template_str += '<extra></extra>'
-
-    fig.update_traces(marker_line_width=0.8, marker_line_color='rgba(0,0,0,0.3)', textfont_size=9,
-                      textposition='outside' if orientation_bar == 'h' else ('auto' if bar_mode_style != 'stack' else 'inside'),
-                      cliponaxis=False, texttemplate=text_template_final if show_text_on_bars else None,
-                      hovertemplate=current_hover_template_str, customdata=df_plot[custom_data_hover_cols] if custom_data_hover_cols else None)
-
-    yaxis_cfg_final = {'title_text': y_label_final}; xaxis_cfg_final = {'title_text': x_label_final}
-    val_axis_cfg_ref = yaxis_cfg_final if orientation_bar == 'v' else xaxis_cfg_final
-    cat_axis_cfg_ref = xaxis_cfg_final if orientation_bar == 'v' else yaxis_cfg_final
-    if y_values_are_counts_flag: val_axis_cfg_ref.update({'tickformat': 'd', 'rangemode': 'tozero'})
-    
-    cat_col_order_name = x_col_name if orientation_bar == 'v' else y_col_name
-    if sort_by_col == cat_col_order_name:
-        cat_axis_cfg_ref.update({'categoryorder': 'array', 'categoryarray': df_plot[cat_col_order_name].tolist()})
-    elif orientation_bar == 'h' and (not sort_by_col or sort_by_col == y_col_name):
-         cat_axis_cfg_ref['categoryorder'] = 'total ascending' if sort_ascending_flag else 'total descending'
-    fig.update_layout(title_text=html.escape(chart_title), yaxis=yaxis_cfg_final, xaxis=xaxis_cfg_final, uniformtext_minsize=7, uniformtext_mode='hide', legend_title_text=legend_title_final)
-    return fig
+        fig.update_layout(
+            title_text=f'<b>{html.escape(chart_title)}</b>',
+            xaxis_title=x_col_name.replace('_', ' ').title(),
+            yaxis_title=y_col_name.replace('_', ' ').title(),
+            legend_title=color_col_name.replace('_', ' ').title() if color_col_name else None
+        )
+        return fig
+    except Exception as e:
+        logger.error(f"({log_prefix_plot}) Error creating bar chart: {e}", exc_info=True)
+        return create_empty_figure(chart_title, message="Error generating chart.")
 
 def plot_donut_chart(
     df_input: Optional[pd.DataFrame], labels_col_name: str, values_col_name: str, chart_title: str,
@@ -345,11 +250,9 @@ def plot_heatmap(
     final_height = chart_height or (_get_setting_or_default('WEB_PLOT_DEFAULT_HEIGHT', 450) + 80)
     log_prefix_plot = f"PlotHeatmap/{html.escape(chart_title[:30])}"
     if not isinstance(matrix_df_input, pd.DataFrame) or matrix_df_input.empty:
-        logger.warning(f"({log_prefix_plot}) No data provided.")
         return create_empty_figure(chart_title, final_height)
     df_matrix = matrix_df_input.copy().apply(pd.to_numeric, errors='coerce')
     if df_matrix.isnull().all().all():
-        logger.warning(f"({log_prefix_plot}) All data is non-numeric or missing.")
         return create_empty_figure(chart_title, final_height, "All heatmap data is non-numeric or missing.")
     z_values = df_matrix.values; cell_text_content = None
     if show_cell_text: cell_text_content = np.vectorize(lambda x: f"{x:{text_format}}" if pd.notna(x) else '')(z_values)
@@ -373,15 +276,12 @@ def plot_choropleth_map(
     final_height = map_height or _get_setting_or_default('WEB_MAP_DEFAULT_HEIGHT', 600)
     log_prefix = f"ChoroplethMap/{html.escape(map_title[:30])}"
     if not isinstance(map_data_df, pd.DataFrame) or map_data_df.empty or value_col_name not in map_data_df.columns or zone_id_df_col not in map_data_df.columns:
-        logger.warning(f"({log_prefix}) Map DataFrame invalid or missing key columns.")
         return create_empty_figure(map_title, final_height, "Map data is incomplete.")
     if not geojson_features:
-        logger.warning(f"({log_prefix}) GeoJSON features data is missing.")
         return create_empty_figure(map_title, final_height, "Geographic boundary data unavailable.")
     geojson_plotly_input = geojson_features
     if isinstance(geojson_features, list): geojson_plotly_input = {"type": "FeatureCollection", "features": geojson_features}
     elif not (isinstance(geojson_features, dict) and geojson_features.get("type") == "FeatureCollection"):
-        logger.warning(f"({log_prefix}) GeoJSON features not in expected format.")
         return create_empty_figure(map_title, final_height, "Invalid geographic boundary data format.")
     df_map_plot = map_data_df.copy()
     try:
