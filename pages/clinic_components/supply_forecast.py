@@ -27,7 +27,7 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 # --- Placeholder/Simple Forecasting Model ---
 def generate_simple_supply_forecast(
     df_historical_consumption: pd.DataFrame,
-    forecast_horizon_days: int, # This is now passed correctly
+    forecast_horizon_days: int,
     items_to_forecast: List[str],
     log_prefix: str = "SimpleSupplyForecast"
 ) -> pd.DataFrame:
@@ -40,7 +40,7 @@ def generate_simple_supply_forecast(
     output_columns = [
         'item', 'current_stock_level', 'avg_daily_consumption_rate', 
         'days_of_supply_remaining', 'estimated_stockout_date', 
-        'forecast_date_horizon' # Added for clarity on what the forecast represents
+        'forecast_date_horizon'
     ]
 
     if not isinstance(df_historical_consumption, pd.DataFrame) or df_historical_consumption.empty or not items_to_forecast:
@@ -62,7 +62,6 @@ def generate_simple_supply_forecast(
         df_hist.dropna(subset=['encounter_date', 'item'], inplace=True) # Essential for grouping and latest record
         df_hist['item_stock_agg_zone'] = convert_to_numeric(df_hist['item_stock_agg_zone'], default_value=0.0)
         df_hist['consumption_rate_per_day'] = convert_to_numeric(df_hist['consumption_rate_per_day'], default_value=0.001) # Small default to avoid /0
-        # Ensure consumption is not zero or negative for DOS calculation
         df_hist.loc[df_hist['consumption_rate_per_day'] <= 0, 'consumption_rate_per_day'] = 0.001
     except Exception as e_prep:
         logger.error(f"({log_prefix}) Error preparing historical data for simple forecast: {e_prep}", exc_info=True)
@@ -72,40 +71,38 @@ def generate_simple_supply_forecast(
         logger.warning(f"({log_prefix}) No valid historical data after cleaning for forecasting.")
         return pd.DataFrame(columns=output_columns)
         
-    latest_date_in_overall_data = df_hist['encounter_date'].max()
-    if pd.NaT is latest_date_in_overall_data: # Check if any valid date exists at all
-        logger.warning(f"({log_prefix}) No valid dates in historical data. Cannot determine latest record for forecasting.")
-        return pd.DataFrame(columns=output_columns)
-
+    # CORRECTED LOGIC: Instead of a single latest date, we find the latest record per item.
+    latest_item_records = df_hist.sort_values('encounter_date').drop_duplicates(subset=['item'], keep='last')
+    
     forecast_results_list = []
     for item_name in items_to_forecast:
-        item_specific_hist_df = df_hist[df_hist['item'] == item_name].sort_values(by='encounter_date')
+        latest_item_record = latest_item_records[latest_item_records['item'] == item_name]
         
-        if item_specific_hist_df.empty:
+        if latest_item_record.empty:
             logger.debug(f"({log_prefix}) No historical data found for item: {item_name}")
             forecast_results_list.append({
                 "item": item_name, "current_stock_level": 0.0,
                 "avg_daily_consumption_rate": 0.0, "days_of_supply_remaining": 0.0,
                 "estimated_stockout_date": "N/A (No History)", 
-                "forecast_date_horizon": (latest_date_in_overall_data + pd.Timedelta(days=forecast_horizon_days)).strftime('%Y-%m-%d') if pd.notna(latest_date_in_overall_data) else "N/A"
+                "forecast_date_horizon": "N/A"
             })
             continue
 
-        latest_item_record = item_specific_hist_df.iloc[-1]
-        current_item_stock = float(latest_item_record['item_stock_agg_zone'])
+        latest_record_series = latest_item_record.iloc[0]
+        current_item_stock = float(latest_record_series['item_stock_agg_zone'])
         
         # Calculate average daily consumption based on available history for that item
-        # Consider a more robust way if consumption rates vary wildly or are sparse
+        item_specific_hist_df = df_hist[df_hist['item'] == item_name]
         avg_daily_item_consumption = float(item_specific_hist_df['consumption_rate_per_day'].mean())
-        if avg_daily_item_consumption <= 0: # If mean is still zero (e.g. only one record with 0.001)
-            avg_daily_item_consumption = 0.001 # Fallback to small positive number
+        if avg_daily_item_consumption <= 0:
+            avg_daily_item_consumption = 0.001
 
         days_of_supply_val = current_item_stock / avg_daily_item_consumption if avg_daily_item_consumption > 0 else float('inf')
         
         estimated_stockout_date_str = "N/A"
         if days_of_supply_val != float('inf') and days_of_supply_val >= 0 :
             try:
-                stockout_datetime = latest_item_record['encounter_date'] + pd.to_timedelta(days_of_supply_val, unit='D')
+                stockout_datetime = latest_record_series['encounter_date'] + pd.to_timedelta(days_of_supply_val, unit='D')
                 estimated_stockout_date_str = stockout_datetime.strftime('%Y-%m-%d')
             except OverflowError: 
                 estimated_stockout_date_str = ">5Y" # Indicate very far stockout
@@ -115,10 +112,7 @@ def generate_simple_supply_forecast(
         elif days_of_supply_val == float('inf'):
              estimated_stockout_date_str = "N/A (>5Y or zero consumption)"
 
-
-        forecast_date_horizon_str = "N/A"
-        if pd.notna(latest_item_record['encounter_date']):
-            forecast_date_horizon_str = (latest_item_record['encounter_date'] + pd.Timedelta(days=forecast_horizon_days)).strftime('%Y-%m-%d')
+        forecast_date_horizon_str = (latest_record_series['encounter_date'] + pd.Timedelta(days=forecast_horizon_days)).strftime('%Y-%m-%d')
         
         forecast_results_list.append({
             "item": item_name,
@@ -259,7 +253,7 @@ def prepare_clinic_supply_forecast_overview_data(
             forecast_detail_df['dos_numeric_for_status'] = forecast_detail_df['days_of_supply_remaining'].apply(dos_to_numeric)
             
             critical_dos_thresh = _get_setting('CRITICAL_SUPPLY_DAYS_REMAINING', 7)
-            warning_dos_thresh = _get_setting('WARNING_SUPPLY_DAYS_REMAINING', 14)
+            warning_dos_thresh = _get_setting('LOW_SUPPLY_DAYS_REMAINING', 14) # Changed from WARNING_... to LOW_... to match settings.py
 
             def get_stock_status_from_dos(dos_numeric):
                 if pd.isna(dos_numeric): return "Unknown"
