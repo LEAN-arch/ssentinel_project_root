@@ -184,7 +184,8 @@ if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_d
         total_pop = f"{total_pop_val:,.0f}"
     kpi_data.append({
         "icon": "👥", "title": "Total District Population", "value": total_pop,
-        "help_text": "Sum of the estimated population across all health zones in the district."
+        # DEBUG FIX: Changed key from 'help_text' to 'help'
+        "help": "Sum of the estimated population across all health zones in the district."
     })
 
     # 2. Avg. AI Risk Score (Population Weighted)
@@ -197,7 +198,8 @@ if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_d
             weighted_risk_score = f"{weighted_avg:.2f}"
     kpi_data.append({
         "icon": "⚠️", "title": "Avg. AI Risk Score (Pop. Weighted)", "value": weighted_risk_score,
-        "help_text": "The average patient AI-Risk Score, weighted by the population of each zone. Gives a more representative district-wide risk level."
+        # DEBUG FIX: Changed key from 'help_text' to 'help'
+        "help": "The average patient AI-Risk Score, weighted by the population of each zone. Gives a more representative district-wide risk level."
     })
 
     # 3. Key Disease Prevalence (/1k Pop.)
@@ -211,7 +213,8 @@ if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_d
         prevalence_kpi = f"{prevalence_rate:.1f}"
     kpi_data.append({
         "icon": "🔬", "title": f"{key_disease_name} Prevalence (/1k Pop.)", "value": prevalence_kpi,
-        "help_text": f"Estimated number of active {key_disease_name.lower()} cases per 1,000 people in the district population."
+        # DEBUG FIX: Changed key from 'help_text' to 'help'
+        "help": f"Estimated number of active {key_disease_name.lower()} cases per 1,000 people in the district population."
     })
 
     # 4. High-Risk Zones Count
@@ -228,7 +231,8 @@ if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_d
             help_text_risk = "Could not determine a valid risk threshold. All zones are considered non-high-risk."
     kpi_data.append({
         "icon": "🚩", "title": "High-Risk Zones Count", "value": high_risk_zones,
-        "help_text": help_text_risk
+        # DEBUG FIX: Changed key from 'help_text' to 'help'
+        "help": help_text_risk
     })
     
     # Render the KPIs
