@@ -4,29 +4,99 @@
 import pandas as pd
 import numpy as np
 import logging
-import re # For condition matching
-from typing import Dict, Any, Optional, List
+import re 
+from typing import Dict, Any, Optional, List, Union
+from datetime import date as date_type, datetime # Added datetime for robust parsing
 
-from config import settings
-from analytics.alerting import get_patient_alerts_for_clinic # For flagged patients
-from data_processing.helpers import convert_to_numeric
+try:
+    from config import settings
+    # Assuming get_patient_alerts_for_clinic is defined and robust
+    from analytics.alerting import get_patient_alerts_for_clinic 
+    from data_processing.helpers import convert_to_numeric # Ensure this is robust
+except ImportError as e:
+    logging.basicConfig(level=logging.ERROR)
+    logger = logging.getLogger(__name__)
+    logger.error(f"Critical import error in patient_focus.py: {e}. Ensure paths/dependencies are correct.")
+    raise
 
 logger = logging.getLogger(__name__)
+
+# Common NA strings for robust replacement
+COMMON_NA_STRINGS_FOCUS = frozenset(['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown'])
+NA_REGEX_FOCUS_PATTERN = r'^(?:' + '|'.join(re.escape(s) for s in COMMON_NA_STRINGS_FOCUS if s) + r')$' if COMMON_NA_STRINGS_FOCUS else None
+
+# Helper to safely get attributes from settings
+def _get_setting(attr_name: str, default_value: Any) -> Any:
+    return getattr(settings, attr_name, default_value)
+
+
+def _prepare_patient_focus_dataframe(
+    df: pd.DataFrame,
+    cols_config: Dict[str, Dict[str, Any]],
+    log_prefix: str,
+    default_patient_id_prefix: str
+) -> pd.DataFrame:
+    """Prepares the DataFrame for patient focus analysis."""
+    df_prepared = df.copy()
+    for col_name, config in cols_config.items():
+        default_value = config.get("default")
+        target_type_str = config.get("type")
+
+        if col_name not in df_prepared.columns:
+            if col_name == 'patient_id': default_value = default_patient_id_prefix
+            
+            if target_type_str == "datetime" and default_value is pd.NaT:
+                 df_prepared[col_name] = pd.NaT
+            elif isinstance(default_value, (list, dict)): 
+                 df_prepared[col_name] = [default_value.copy() for _ in range(len(df_prepared))]
+            else:
+                 df_prepared[col_name] = default_value
+        
+        current_col_dtype = df_prepared[col_name].dtype
+        if target_type_str in [float, "datetime"] and pd.api.types.is_object_dtype(current_col_dtype): # Int handled by convert_to_numeric
+            if NA_REGEX_FOCUS_PATTERN:
+                try:
+                    df_prepared[col_name] = df_prepared[col_name].replace(NA_REGEX_FOCUS_PATTERN, np.nan, regex=True)
+                except Exception as e_regex:
+                     logger.warning(f"({log_prefix}) Regex NA replacement failed for '{col_name}': {e_regex}. Proceeding.")
+        
+        try:
+            if target_type_str == "datetime":
+                df_prepared[col_name] = pd.to_datetime(df_prepared[col_name], errors='coerce')
+            elif target_type_str == float: # Includes int that might become float due to NaNs
+                df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value)
+            elif target_type_str == str:
+                df_prepared[col_name] = df_prepared[col_name].fillna(str(default_value)).astype(str)
+                if NA_REGEX_FOCUS_PATTERN:
+                    df_prepared[col_name] = df_prepared[col_name].replace(NA_REGEX_FOCUS_PATTERN, str(default_value), regex=True)
+                df_prepared[col_name] = df_prepared[col_name].str.strip()
+        except Exception as e_conv:
+            logger.error(f"({log_prefix}) Error converting column '{col_name}' to {target_type_str}: {e_conv}. Using defaults.", exc_info=True)
+            if target_type_str == "datetime" and default_value is pd.NaT: df_prepared[col_name] = pd.NaT
+            else: df_prepared[col_name] = default_value
+            
+    if 'patient_id' in df_prepared.columns:
+        df_prepared['patient_id'] = df_prepared['patient_id'].replace('', default_patient_id_prefix).fillna(default_patient_id_prefix)
+    return df_prepared
 
 
 def prepare_clinic_patient_focus_overview_data(
     filtered_health_df_for_clinic_period: Optional[pd.DataFrame],
-    reporting_period_context_str: str,
-    patient_load_time_aggregation_period: str = 'W-MON', # Weekly (Monday start)
+    reporting_period_context_str: str, # For logging and context
+    patient_load_time_aggregation_period: str = 'W-MON', # Weekly, Monday start
 ) -> Dict[str, Any]:
     """
     Prepares data for patient load analysis and flagged patient cases.
     """
     module_log_prefix = "ClinicPatientFocusPrep"
-    logger.info(f"({module_log_prefix}) Preparing patient focus data. Period: {reporting_period_context_str}, Load Agg: {patient_load_time_aggregation_period}")
+    logger.info(f"({module_log_prefix}) Preparing patient focus data. Period Context: {reporting_period_context_str}, Load Aggregation: {patient_load_time_aggregation_period}")
 
+    # Define default column names for output DataFrames for schema consistency
     default_load_cols = ['period_start_date', 'condition', 'unique_patients_count']
-    default_flagged_cols = ['patient_id', 'encounter_date', 'condition', 'Alert Reason', 'Priority Score', 'ai_risk_score', 'age', 'gender', 'zone_id'] # Simplified example
+    default_flagged_cols = [ # Example columns; should match output of get_patient_alerts_for_clinic
+        'patient_id', 'encounter_date', 'condition', 'Alert Reason', 'priority_score', 
+        'ai_risk_score', 'age', 'gender', 'zone_id', 'alert_details' 
+    ]
     
     output_data: Dict[str, Any] = {
         "reporting_period": reporting_period_context_str,
@@ -36,82 +106,115 @@ def prepare_clinic_patient_focus_overview_data(
     }
 
     if not isinstance(filtered_health_df_for_clinic_period, pd.DataFrame) or filtered_health_df_for_clinic_period.empty:
-        note = "No health data for patient focus data preparation. Output will be empty."
-        logger.warning(f"({module_log_prefix}) {note}"); output_data["processing_notes"].append(note)
+        note = "No health data provided for patient focus data preparation. All outputs will be empty."
+        logger.warning(f"({module_log_prefix}) {note}")
+        output_data["processing_notes"].append(note)
         return output_data
 
-    df_focus_src = filtered_health_df_for_clinic_period.copy()
-
-    # Standardize essential columns for patient load calculation
-    load_calc_cols_cfg = {
+    # --- Data Preparation for Patient Load ---
+    # Use a copy for modifications specific to patient load calculation
+    df_load_analysis_src = filtered_health_df_for_clinic_period.copy()
+    
+    pid_prefix_load = reporting_period_context_str.replace(" ", "_").replace("-", "")[:15] # Unique prefix
+    load_calc_cols_config = {
         'encounter_date': {"default": pd.NaT, "type": "datetime"},
-        'patient_id': {"default": f"UPID_Focus_{reporting_period_context_str[:10]}", "type": str},
+        'patient_id': {"default": f"UPID_Load_{pid_prefix_load}", "type": str},
         'condition': {"default": "UnknownCondition", "type": str}
     }
-    common_na_focus = ['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown']
-    na_regex_focus = r'^(?:' + '|'.join(re.escape(s) for s in common_na_focus if s) + r')$'
-
-    for col, cfg in load_calc_cols_cfg.items():
-        if col not in df_focus_src.columns: df_focus_src[col] = cfg["default"]
-        if cfg["type"] == "datetime": df_focus_src[col] = pd.to_datetime(df_focus_src[col], errors='coerce')
-        elif cfg["type"] == str:
-            df_focus_src[col] = df_focus_src[col].astype(str).fillna(str(cfg["default"]))
-            if any(common_na_focus): df_focus_src[col] = df_focus_src[col].replace(na_regex_focus, str(cfg["default"]), regex=True)
-            df_focus_src[col] = df_focus_src[col].str.strip()
+    df_load_analysis_prepared = _prepare_patient_focus_dataframe(
+        df_load_analysis_src, load_calc_cols_config, 
+        f"{module_log_prefix}/LoadPrep", f"UPID_Load_{pid_prefix_load}"
+    )
     
-    df_focus_src.dropna(subset=['encounter_date', 'patient_id', 'condition'], inplace=True)
-    if df_focus_src.empty:
+    # Drop rows if essential columns for load analysis are NaT/empty after preparation
+    df_load_analysis_prepared.dropna(subset=['encounter_date', 'patient_id', 'condition'], inplace=True)
+    df_load_analysis_prepared = df_load_analysis_prepared[df_load_analysis_prepared['condition'] != "UnknownCondition"] # Filter out default unknown conditions
+
+    if df_load_analysis_prepared.empty:
         note = "No valid records with encounter_date, patient_id, & condition after cleaning for patient load analysis."
-        logger.warning(f"({module_log_prefix}) {note}"); output_data["processing_notes"].append(note)
-        # Fall through to attempt flagged patient generation with original filtered_health_df...
-    
-    # Patient Load by Key Condition
-    key_conditions_load = settings.KEY_CONDITIONS_FOR_ACTION
-    if 'condition' in df_focus_src.columns and key_conditions_load and not df_focus_src.empty:
-        load_summaries: List[pd.DataFrame] = []
-        for cond_key in key_conditions_load:
-            # Use regex for flexible, case-insensitive matching of the condition key
-            cond_mask = df_focus_src['condition'].astype(str).str.contains(re.escape(cond_key), case=False, na=False, regex=True)
-            df_one_cond = df_focus_src[cond_mask]
-            if not df_one_cond.empty and 'patient_id' in df_one_cond.columns: # Ensure patient_id exists
-                # Group by period and count unique patients for this condition
-                grouped = df_one_cond.groupby(
-                    pd.Grouper(key='encounter_date', freq=patient_load_time_aggregation_period, label='left', closed='left')
-                )['patient_id'].nunique().reset_index()
-                grouped.rename(columns={'encounter_date': 'period_start_date', 'patient_id': 'unique_patients_count'}, inplace=True)
-                grouped['condition'] = cond_key # Assign the specific condition name
-                load_summaries.append(grouped)
-        
-        if load_summaries:
-            output_data["patient_load_by_key_condition_df"] = pd.concat(load_summaries, ignore_index=True)
-        else: output_data["processing_notes"].append("No patient load data aggregated for key conditions (empty after grouping).")
-    elif df_focus_src.empty: pass # Already noted if empty due to cleaning
+        logger.warning(f"({module_log_prefix}) {note}")
+        output_data["processing_notes"].append(note)
+        # Continue to flagged patient generation as it uses the original filtered_health_df
     else:
-        missing_reason = ""
-        if 'condition' not in df_focus_src.columns: missing_reason += "'condition' column missing. "
-        if not key_conditions_load: missing_reason += "KEY_CONDITIONS_FOR_ACTION in config empty. "
-        output_data["processing_notes"].append(f"Patient load by condition skipped. Reason: {missing_reason.strip()}")
+        # --- Patient Load by Key Condition ---
+        key_conditions_for_load = _get_setting('KEY_CONDITIONS_FOR_ACTION', []) # List of strings
+        if 'condition' in df_load_analysis_prepared.columns and key_conditions_for_load:
+            aggregated_load_summaries: List[pd.DataFrame] = []
+            for condition_key in key_conditions_for_load:
+                if not isinstance(condition_key, str) or not condition_key.strip():
+                    continue # Skip empty or invalid condition keys
+                try:
+                    # Use regex for flexible, case-insensitive partial matching of the condition key
+                    condition_mask = df_load_analysis_prepared['condition'].astype(str).str.contains(
+                        re.escape(condition_key), case=False, na=False, regex=True
+                    )
+                    df_for_one_condition = df_load_analysis_prepared[condition_mask]
+                    
+                    if not df_for_one_condition.empty and 'patient_id' in df_for_one_condition.columns:
+                        # Group by specified time period and count unique patients for this condition
+                        grouped_by_period = df_for_one_condition.groupby(
+                            pd.Grouper(key='encounter_date', freq=patient_load_time_aggregation_period, label='left', closed='left')
+                        )['patient_id'].nunique().reset_index()
+                        
+                        grouped_by_period.rename(columns={'encounter_date': 'period_start_date', 'patient_id': 'unique_patients_count'}, inplace=True)
+                        grouped_by_period['condition'] = condition_key # Assign the specific condition name
+                        aggregated_load_summaries.append(grouped_by_period)
+                except Exception as e_load_agg:
+                    logger.error(f"({module_log_prefix}) Error aggregating load for condition '{condition_key}': {e_load_agg}", exc_info=True)
+                    output_data["processing_notes"].append(f"Error processing patient load for condition: {condition_key}.")
+            
+            if aggregated_load_summaries:
+                final_load_df = pd.concat(aggregated_load_summaries, ignore_index=True)
+                # Ensure columns match default schema
+                output_data["patient_load_by_key_condition_df"] = final_load_df.reindex(columns=default_load_cols).fillna({'unique_patients_count': 0})
+            else: output_data["processing_notes"].append("No patient load data aggregated for key conditions (empty after grouping or no key conditions processed).")
+        elif df_load_analysis_prepared.empty: pass # Already noted if empty from cleaning
+        else:
+            missing_reason_load = ""
+            if 'condition' not in df_load_analysis_prepared.columns: missing_reason_load += "'condition' column missing. "
+            if not key_conditions_for_load: missing_reason_load += "KEY_CONDITIONS_FOR_ACTION in config empty or not a list. "
+            output_data["processing_notes"].append(f"Patient load by condition skipped. Reason: {missing_reason_load.strip()}")
 
-    # Flagged Patient Cases for Clinical Review (uses original period-filtered df)
+    # --- Flagged Patient Cases for Clinical Review ---
+    # This uses the original filtered_health_df_for_clinic_period for broader context if needed by get_patient_alerts_for_clinic
+    df_flagged_patients_final = pd.DataFrame(columns=default_flagged_cols) # Initialize with schema
     try:
-        df_flagged_patients = get_patient_alerts_for_clinic(
-            health_df_period=filtered_health_df_for_clinic_period, # Original, less aggressively cleaned df
-            risk_threshold_moderate=settings.RISK_SCORE_MODERATE_THRESHOLD,
+        # Ensure threshold is float
+        risk_moderate_threshold = float(_get_setting('RISK_SCORE_MODERATE_THRESHOLD', 0.5))
+        
+        # get_patient_alerts_for_clinic should be robust and return a DataFrame
+        # It might need specific columns from filtered_health_df_for_clinic_period
+        # If it modifies its input, ensure it receives a copy if filtered_health_df_for_clinic_period is used elsewhere
+        alerts_df_from_component = get_patient_alerts_for_clinic(
+            health_df_period=filtered_health_df_for_clinic_period.copy(), # Pass a copy
+            risk_threshold_moderate=risk_moderate_threshold,
             source_context=f"{module_log_prefix}/FlaggedPatients"
         )
+        if isinstance(alerts_df_from_component, pd.DataFrame) and not alerts_df_from_component.empty:
+            # Select and reorder columns to match default_flagged_cols, fill missing ones
+            cols_to_use_flagged = [col for col in default_flagged_cols if col in alerts_df_from_component.columns]
+            df_flagged_patients_final = alerts_df_from_component[cols_to_use_flagged]
+            # Add any missing default_flagged_cols with default values (e.g., NaN or empty string)
+            for col in default_flagged_cols:
+                if col not in df_flagged_patients_final.columns:
+                    df_flagged_patients_final[col] = np.nan # Or appropriate default
+            df_flagged_patients_final = df_flagged_patients_final[default_flagged_cols] # Ensure order and all columns
+
+            logger.info(f"({module_log_prefix}) Identified {len(df_flagged_patients_final)} patient cases flagged for clinical review.")
+        elif isinstance(alerts_df_from_component, pd.DataFrame): # Empty DataFrame from component
+            note_no_flagged = "No patient cases flagged for clinical review in this period based on criteria by alerting component."
+            logger.info(f"({module_log_prefix}) {note_no_flagged}")
+            output_data["processing_notes"].append(note_no_flagged)
+        else: # Component did not return a DataFrame
+             note_bad_return = "Flagged patient component did not return a DataFrame."
+             logger.warning(f"({module_log_prefix}) {note_bad_return}")
+             output_data["processing_notes"].append(note_bad_return)
+
     except Exception as e_flagged_calc:
-        logger.error(f"({module_log_prefix}) Error getting flagged patients: {e_flagged_calc}", exc_info=True)
-        df_flagged_patients = pd.DataFrame(columns=default_flagged_cols) # Ensure schema
+        logger.error(f"({module_log_prefix}) Error calling or processing output from get_patient_alerts_for_clinic: {e_flagged_calc}", exc_info=True)
         output_data["processing_notes"].append("Error generating list of flagged patients for review.")
+    
+    output_data["flagged_patients_for_review_df"] = df_flagged_patients_final
 
-    if isinstance(df_flagged_patients, pd.DataFrame) and not df_flagged_patients.empty:
-        output_data["flagged_patients_for_review_df"] = df_flagged_patients
-        logger.info(f"({module_log_prefix}) Identified {len(df_flagged_patients)} patient cases flagged for clinical review.")
-    elif isinstance(df_flagged_patients, pd.DataFrame): # Empty DataFrame means no one flagged
-        note_no_flagged = "No patient cases flagged for clinical review in this period based on criteria."
-        logger.info(f"({module_log_prefix}) {note_no_flagged}")
-        output_data["processing_notes"].append(note_no_flagged)
-        # output_data["flagged_patients_for_review_df"] is already an empty DF with schema
-
-    logger.info(f"({module_log_prefix}) Clinic patient focus data preparation complete. Notes: {len(output_data['processing_notes'])}")
+    logger.info(f"({module_log_prefix}) Clinic patient focus data preparation complete. Number of notes: {len(output_data['processing_notes'])}")
     return output_data
