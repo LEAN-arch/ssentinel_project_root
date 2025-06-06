@@ -14,7 +14,7 @@ try:
     from config import settings
     from data_processing.loaders import load_health_records
     from data_processing.helpers import hash_dataframe_safe
-    from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator # Ensure these are correctly defined
+    from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator 
     from visualization.plots import plot_annotated_line_chart, create_empty_figure 
 
     from pages.chw_components.summary_metrics import calculate_chw_daily_summary_metrics
@@ -358,7 +358,7 @@ if data_load_successful and not daily_activity_df.empty:
             daily_activity_df, 
             selected_daily_date, 
             active_zone_filter or "All Zones", 
-            max_alerts_to_return=15 # Corrected: was max_alerts
+            max_alerts_to_return=15 
         )
         alerts_generated_successfully = True
     except Exception as e_alerts:
@@ -371,7 +371,7 @@ if data_load_successful and not daily_activity_df.empty:
             selected_daily_date, 
             active_chw_filter, 
             active_zone_filter or "All Zones", 
-            max_tasks_to_return_for_summary=20 # Corrected: was max_tasks
+            max_tasks_to_return_for_summary=20 
         )
         tasks_generated_successfully = True
     except Exception as e_tasks:
@@ -379,10 +379,9 @@ if data_load_successful and not daily_activity_df.empty:
         st.warning("⚠️ Could not generate tasks list for display.")
 elif not data_load_successful:
     st.markdown("ℹ️ _Data loading failed. Cannot display alerts or tasks._")
-else: # daily_activity_df is empty
+else: 
     st.markdown("ℹ️ _No activity data to generate patient alerts or tasks for today._")
 
-# Enhanced Alert Display
 if alerts_generated_successfully:
     if chw_alerts:
         st.subheader("🚨 Priority Patient Alerts (Today)")
@@ -419,19 +418,18 @@ if alerts_generated_successfully:
                     st.markdown(f"**Details:** {alert.get('brief_details', 'N/A')}")
                     st.markdown(f"**Context:** {alert.get('context_info', 'N/A')}")
         
-        if not chw_alerts: # Should only happen if component returns empty list but no error
+        if not chw_alerts: 
             st.success("✅ No specific alerts generated based on current criteria.")
     elif data_load_successful and not daily_activity_df.empty :
         st.success("✅ No significant patient alerts needing immediate attention generated for today's selection.")
 
 st.markdown("---") 
 
-# Enhanced Task Display
 if tasks_generated_successfully:
     if chw_tasks:
         st.subheader("📋 Top Priority Tasks (Today/Next Day)")
         tasks_df = pd.DataFrame(chw_tasks)
-        if 'priority_score' in tasks_df.columns and 'due_date' in tasks_df.columns: # Ensure columns for sorting exist
+        if 'priority_score' in tasks_df.columns and 'due_date' in tasks_df.columns: 
             tasks_df.sort_values(by=['priority_score', 'due_date'], ascending=[False, True], inplace=True)
         
         high_prio_tasks_count = 0
@@ -443,9 +441,9 @@ if tasks_generated_successfully:
 
         for index, task in tasks_df.iterrows():
             task_title = f"{task.get('task_description', 'N/A')} for Pt. {task.get('patient_id', 'N/A')}"
-            priority_score = task.get('priority_score', 0.0) # Default to float
+            priority_score = task.get('priority_score', 0.0) 
             due_date_str = task.get('due_date', 'N/A')
-            status = str(task.get('status', 'PENDING')).upper() # Ensure upper for consistent matching
+            status = str(task.get('status', 'PENDING')).upper() 
 
             col1_task, col2_task = st.columns([3, 1])
             with col1_task:
@@ -463,12 +461,10 @@ if tasks_generated_successfully:
                 elif status == "IN_PROGRESS": st.warning(f"**Status:** {status}")
                 elif status == "COMPLETED": st.success(f"**Status:** {status}")
                 else: st.markdown(f"**Status:** {status}")
-            st.markdown("""<hr style="margin-top:0.5rem; margin-bottom:0.5rem;" />""", unsafe_allow_html=True) # Thinner hr
+            st.markdown("""<hr style="margin-top:0.5rem; margin-bottom:0.5rem;" />""", unsafe_allow_html=True) 
     elif data_load_successful and not daily_activity_df.empty:
         st.info("ℹ️ No high-priority tasks identified based on current data.")
-
 st.divider()
-
 
 # --- Section 3: Local Epi Signals Watch ---
 st.header("🔬 Local Epi Signals Watch (Today)")
@@ -531,7 +527,7 @@ if data_load_successful and not trend_activity_df.empty:
             trend_start_date_filter, 
             trend_end_date_filter, 
             active_zone_filter, 
-            time_period_aggregation='D' # Corrected from freq_alias
+            time_period_aggregation='D' 
         )
         activity_trends_calculated_successfully = True
     except Exception as e_trends:
@@ -544,7 +540,12 @@ if data_load_successful and not trend_activity_df.empty:
             visits_trend = activity_trends.get("patient_visits_trend")
             if isinstance(visits_trend, pd.Series) and not visits_trend.empty:
                 try:
-                    fig_visits = plot_annotated_line_chart(visits_trend, "Daily Patient Visits Trend", "Unique Patients Visited", y_values_are_counts=True)
+                    fig_visits = plot_annotated_line_chart(
+                        visits_trend, 
+                        "Daily Patient Visits Trend", 
+                        "Unique Patients Visited", 
+                        y_values_are_counts=True 
+                    )
                     st.plotly_chart(fig_visits, use_container_width=True)
                 except Exception as e_plot_visits:
                     logger.error(f"Error plotting patient visits trend: {e_plot_visits}", exc_info=True)
@@ -555,14 +556,19 @@ if data_load_successful and not trend_activity_df.empty:
             prio_trend = activity_trends.get("high_priority_followups_trend")
             if isinstance(prio_trend, pd.Series) and not prio_trend.empty:
                 try:
-                    fig_prio = plot_annotated_line_chart(prio_trend, "Daily High Prio. Follow-ups Trend", "High Prio. Follow-ups", y_values_are_counts=True)
+                    fig_prio = plot_annotated_line_chart(
+                        prio_trend, 
+                        "Daily High Prio. Follow-ups Trend", 
+                        "High Prio. Follow-ups (Patients)", 
+                        y_values_are_counts=True 
+                    )
                     st.plotly_chart(fig_prio, use_container_width=True)
                 except Exception as e_plot_prio:
                     logger.error(f"Error plotting high priority followups trend: {e_plot_prio}", exc_info=True)
                     st.caption("⚠️ Error displaying high priority follow-ups trend plot.")
             else:
                 st.caption("ℹ️ No high-priority follow-up trend data for this selection.")
-    elif trend_activity_df.empty and not data_load_successful:
+    elif trend_activity_df.empty and not data_load_successful: 
         st.markdown("ℹ️ _Data loading failed. Cannot display activity trends._")
     else: 
         st.markdown("ℹ️ _No historical data available for the selected trend period and/or filters._")
