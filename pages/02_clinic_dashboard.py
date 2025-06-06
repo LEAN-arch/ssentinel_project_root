@@ -17,7 +17,7 @@ try:
     from data_processing.helpers import hash_dataframe_safe 
     from analytics.orchestrator import apply_ai_models
     from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator
-    from visualization.plots import plot_annotated_line_chart, plot_bar_chart
+    from visualization.plots import plot_annotated_line_chart, plot_bar_chart, create_empty_figure
 
     from pages.clinic_components.env_details import prepare_clinic_environmental_detail_data
     from pages.clinic_components.kpi_structuring import structure_main_clinic_kpis, structure_disease_specific_clinic_kpis
@@ -93,9 +93,18 @@ st.title("🏥 Clinic Operations & Management Console")
 st.markdown("**Service Performance, Patient Care Quality, Resource Management, and Facility Environment Monitoring**")
 st.divider()
 
-full_health_df = load_and_prepare_health_data()
-full_iot_df = load_and_prepare_iot_data()
-iot_available_flag = not full_iot_df.empty
+full_health_df = pd.DataFrame()
+full_iot_df = pd.DataFrame()
+iot_available_flag = False
+
+try:
+    full_health_df = load_and_prepare_health_data()
+    full_iot_df = load_and_prepare_iot_data()
+    iot_available_flag = not full_iot_df.empty
+except Exception as e:
+    logger.error(f"FATAL: Could not load initial data. {e}", exc_info=True)
+    st.error(f"A critical error occurred while loading base data: {e}. The dashboard cannot proceed.")
+    st.stop()
 
 st.sidebar.image(str(Path(_get_setting('APP_LOGO_SMALL_PATH', ''))), width=230)
 st.sidebar.header("Console Filters")
@@ -103,18 +112,12 @@ st.sidebar.header("Console Filters")
 if not full_health_df.empty:
     min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
     start_date, end_date = manage_date_range_filter(min_date, max_date)
+    health_df_period = full_health_df[(full_health_df['encounter_date'].dt.date >= start_date) & (full_health_df['encounter_date'].dt.date <= end_date)]
+    iot_df_period = full_iot_df[(full_iot_df['timestamp'].dt.date >= start_date) & (full_iot_df['timestamp'].dt.date <= end_date)] if iot_available_flag else pd.DataFrame()
 else:
     st.sidebar.warning("Health data is empty or unavailable.")
     start_date, end_date = date.today() - timedelta(days=29), date.today()
-
-# CORRECTED: Decoupled data filtering. Each dataframe is filtered independently.
-health_df_period = pd.DataFrame()
-if not full_health_df.empty:
-    health_df_period = full_health_df[(full_health_df['encounter_date'].dt.date >= start_date) & (full_health_df['encounter_date'].dt.date <= end_date)]
-
-iot_df_period = pd.DataFrame()
-if iot_available_flag:
-    iot_df_period = full_iot_df[(full_iot_df['timestamp'].dt.date >= start_date) & (full_iot_df['timestamp'].dt.date <= end_date)]
+    health_df_period, iot_df_period = pd.DataFrame(), pd.DataFrame()
 
 current_period_str = f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
 st.info(f"Displaying data for: **{current_period_str}**")
@@ -129,15 +132,20 @@ try:
         
         if main_kpis:
             st.markdown("##### **Overall Service Performance:**")
-            cols = st.columns(min(len(main_kpis), 4))
+            # CORRECTED: Use a robust pattern for rendering KPIs in columns that prevents IndexError.
+            num_cols = min(len(main_kpis), 4)
+            cols = st.columns(num_cols)
             for i, kpi_data in enumerate(main_kpis):
-                with cols[i]: render_kpi_card(**kpi_data)
+                with cols[i % num_cols]:
+                    render_kpi_card(**kpi_data)
         
         if disease_kpis:
             st.markdown("##### **Key Disease & Supply Indicators:**")
-            cols = st.columns(min(len(disease_kpis), 4))
+            num_cols = min(len(disease_kpis), 4)
+            cols = st.columns(num_cols)
             for i, kpi_data in enumerate(disease_kpis):
-                with cols[i]: render_kpi_card(**kpi_data)
+                with cols[i % num_cols]:
+                    render_kpi_card(**kpi_data)
     else:
         st.info("ℹ️ No health data in the selected period for service KPIs.")
 
