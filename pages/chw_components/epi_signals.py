@@ -105,12 +105,13 @@ def _calculate_demographics_high_risk(
             getattr(settings, 'AGE_THRESHOLD_VERY_HIGH', 75), 
             np.inf
         ]
+        # CORRECTED: Ensure labels use integers for clean presentation, regardless of setting's type.
         age_labels = [
-            f'0-{age_bins[1]-1}', 
-            f'{age_bins[1]}-{age_bins[2]-1}', 
-            f'{age_bins[2]}-{age_bins[3]-1}', 
-            f'{age_bins[3]}-{age_bins[4]-1}', 
-            f'{age_bins[4]}+'
+            f'0-{int(age_bins[1])-1}', 
+            f'{int(age_bins[1])}-{int(age_bins[2])-1}', 
+            f'{int(age_bins[2])}-{int(age_bins[3])-1}', 
+            f'{int(age_bins[3])}-{int(age_bins[4])-1}', 
+            f'{int(age_bins[4])}+'
         ]
         age_series_for_cut = convert_to_numeric(df_high_risk['age'], default_value=np.nan).dropna()
         if not age_series_for_cut.empty:
