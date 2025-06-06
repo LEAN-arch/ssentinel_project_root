@@ -48,10 +48,15 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 try:
     page_icon_value = "🧑‍🏫" 
-    if hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'APP_FAVICON_PATH'):
-        favicon_path = Path(_get_setting('PROJECT_ROOT_DIR', '.')) / _get_setting('APP_FAVICON_PATH', 'assets/favicon.ico')
-        if favicon_path.is_file(): page_icon_value = str(favicon_path)
-        else: logger.warning(f"Favicon for CHW Dashboard not found: {favicon_path}")
+    # CORRECTED: Use the defined small logo path for the favicon, which is a common practice.
+    app_logo_small_path_str = _get_setting('APP_LOGO_SMALL_PATH', None)
+    if app_logo_small_path_str:
+        favicon_path = Path(app_logo_small_path_str)
+        if favicon_path.is_file():
+            page_icon_value = str(favicon_path)
+        else:
+            logger.warning(f"Favicon for CHW Dashboard not found at path from setting APP_LOGO_SMALL_PATH: {favicon_path}")
+    
     page_layout_value = _get_setting('APP_LAYOUT', "wide")
     
     st.set_page_config(
@@ -99,10 +104,11 @@ def load_chw_dashboard_data(
 
     if not isinstance(all_health_df, pd.DataFrame) or all_health_df.empty:
         csv_path_setting = _get_setting('HEALTH_RECORDS_CSV_PATH', "health_records_expanded.csv")
-        data_dir_setting = _get_setting('DATA_DIR', "data_sources")
+        # CORRECTED: Use DATA_SOURCES_DIR which is defined in settings.py. Fallback is a Path object.
+        data_dir_setting_path = _get_setting('DATA_SOURCES_DIR', Path("data_sources"))
         expected_filename = Path(csv_path_setting).name 
-        full_expected_path = Path(data_dir_setting) / expected_filename
-        logger.error(f"({log_context}) CRITICAL: Health records failed to load or are empty. Expected at: {full_expected_path}")
+        full_expected_path = data_dir_setting_path / expected_filename
+        logger.error(f"({log_context}) CRITICAL: Health records failed to load or are empty. Expected at: {full_expected_path.resolve()}")
         return pd.DataFrame(), pd.DataFrame(), {}
 
     if 'encounter_date' not in all_health_df.columns:
