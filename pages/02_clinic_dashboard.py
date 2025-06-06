@@ -34,11 +34,9 @@ logger = logging.getLogger(__name__)
 
 # --- Configuration & Page Setup ---
 def _get_setting(attr_name: str, default_value: Any) -> Any:
-    """Safely retrieves a configuration setting or returns a default value."""
     return getattr(settings, attr_name, default_value)
 
 def setup_page_config():
-    """Sets the Streamlit page configuration."""
     st.set_page_config(
         page_title=f"Clinic Console - {_get_setting('APP_NAME', 'Sentinel')}",
         page_icon="🏥",
@@ -50,7 +48,6 @@ setup_page_config()
 # --- Data Loading & Caching ---
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 3600), show_spinner="Loading and enriching health records...")
 def load_and_prepare_health_data() -> pd.DataFrame:
-    """Loads raw health records, applies AI models, and prepares dates. This is cached for performance."""
     raw_df = load_health_records()
     if raw_df.empty: return pd.DataFrame()
     enriched_df, _ = apply_ai_models(raw_df)
@@ -62,7 +59,6 @@ def load_and_prepare_health_data() -> pd.DataFrame:
 
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 3600), show_spinner="Loading IoT environmental data...")
 def load_and_prepare_iot_data() -> pd.DataFrame:
-    """Loads and prepares IoT environmental data, cached for performance."""
     raw_df = load_iot_clinic_environment_data()
     if raw_df.empty or 'timestamp' not in raw_df.columns: return pd.DataFrame()
     if not pd.api.types.is_datetime64_any_dtype(raw_df['timestamp']):
@@ -71,7 +67,6 @@ def load_and_prepare_iot_data() -> pd.DataFrame:
 
 # --- UI Components & Filters ---
 def manage_date_range_filter(data_min_date: date, data_max_date: date) -> Tuple[date, date]:
-    """Manages the Streamlit date range filter widget with data-aware defaults."""
     default_days = _get_setting('WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND', 30)
     default_start = max(data_min_date, data_max_date - timedelta(days=default_days - 1))
     
@@ -93,36 +88,36 @@ st.title("🏥 Clinic Operations & Management Console")
 st.markdown("**Service Performance, Patient Care Quality, Resource Management, and Facility Environment Monitoring**")
 st.divider()
 
-full_health_df = pd.DataFrame()
-full_iot_df = pd.DataFrame()
-iot_available_flag = False
-
-try:
-    full_health_df = load_and_prepare_health_data()
-    full_iot_df = load_and_prepare_iot_data()
-    iot_available_flag = not full_iot_df.empty
-except Exception as e:
-    logger.error(f"FATAL: Could not load initial data. {e}", exc_info=True)
-    st.error(f"A critical error occurred while loading base data: {e}. The dashboard cannot proceed.")
-    st.stop()
+full_health_df = load_and_prepare_health_data()
+full_iot_df = load_and_prepare_iot_data()
+iot_available_flag = not full_iot_df.empty
 
 st.sidebar.image(str(Path(_get_setting('APP_LOGO_SMALL_PATH', ''))), width=230)
 st.sidebar.header("Console Filters")
 
+# CORRECTED: Determine the global date range from ALL available data sources.
+all_dates = []
 if not full_health_df.empty:
-    min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
+    all_dates.extend([full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()])
+if not full_iot_df.empty:
+    all_dates.extend([full_iot_df['timestamp'].min().date(), full_iot_df['timestamp'].max().date()])
+
+if all_dates:
+    min_date = min(all_dates)
+    max_date = max(all_dates)
     start_date, end_date = manage_date_range_filter(min_date, max_date)
-    health_df_period = full_health_df[(full_health_df['encounter_date'].dt.date >= start_date) & (full_health_df['encounter_date'].dt.date <= end_date)]
-    iot_df_period = full_iot_df[(full_iot_df['timestamp'].dt.date >= start_date) & (full_iot_df['timestamp'].dt.date <= end_date)] if iot_available_flag else pd.DataFrame()
 else:
-    st.sidebar.warning("Health data is empty or unavailable.")
+    st.sidebar.warning("All data sources are empty or unavailable.")
     start_date, end_date = date.today() - timedelta(days=29), date.today()
-    health_df_period, iot_df_period = pd.DataFrame(), pd.DataFrame()
+
+# Filter data for the selected period
+health_df_period = full_health_df[(full_health_df['encounter_date'].dt.date >= start_date) & (full_health_df['encounter_date'].dt.date <= end_date)] if not full_health_df.empty else pd.DataFrame()
+iot_df_period = full_iot_df[(full_iot_df['timestamp'].dt.date >= start_date) & (full_iot_df['timestamp'].dt.date <= end_date)] if iot_available_flag else pd.DataFrame()
 
 current_period_str = f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
 st.info(f"Displaying data for: **{current_period_str}**")
 
-# --- KPI Snapshot Section ---
+# --- KPI Snapshot & Deep Dive Tabs ---
 st.header("🚀 Clinic Performance & Environment Snapshot")
 try:
     if not health_df_period.empty:
@@ -132,20 +127,15 @@ try:
         
         if main_kpis:
             st.markdown("##### **Overall Service Performance:**")
-            # CORRECTED: Use a robust pattern for rendering KPIs in columns that prevents IndexError.
-            num_cols = min(len(main_kpis), 4)
-            cols = st.columns(num_cols)
+            cols = st.columns(min(len(main_kpis), 4))
             for i, kpi_data in enumerate(main_kpis):
-                with cols[i % num_cols]:
-                    render_kpi_card(**kpi_data)
+                with cols[i % len(cols)]: render_kpi_card(**kpi_data)
         
         if disease_kpis:
             st.markdown("##### **Key Disease & Supply Indicators:**")
-            num_cols = min(len(disease_kpis), 4)
-            cols = st.columns(num_cols)
+            cols = st.columns(min(len(disease_kpis), 4))
             for i, kpi_data in enumerate(disease_kpis):
-                with cols[i % num_cols]:
-                    render_kpi_card(**kpi_data)
+                with cols[i % len(cols)]: render_kpi_card(**kpi_data)
     else:
         st.info("ℹ️ No health data in the selected period for service KPIs.")
 
