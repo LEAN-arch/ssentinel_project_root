@@ -9,14 +9,14 @@ import hashlib
 import os 
 import re 
 from typing import Any, Optional, Union, List, Dict, Type
-from pathlib import Path # <--- ADDED THIS IMPORT
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 # Common NA strings for robust replacement, defined as a frozenset for efficiency
 COMMON_NA_STRINGS_SET = frozenset(['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'nil', 'na', 'undefined', 'unknown', '-'])
 VALID_NA_FOR_REGEX = [s for s in COMMON_NA_STRINGS_SET if s] # Filter out empty string if problematic for regex
-NA_REGEX_PATTERN = r'^(?:' + '|'.join(re.escape(s) for s in VALID_NA_FOR_REGEX) + r')$' if VALID_NA_FOR_REGEX else None
+NA_REGEX_PATTERN = r'^\s*$' + (r'|^(?:' + '|'.join(re.escape(s) for s in VALID_NA_FOR_REGEX) + r')$' if VALID_NA_FOR_REGEX else '')
 
 
 def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
@@ -77,42 +77,49 @@ def convert_to_numeric(
     # Ensure series_to_process is a Series, even if input is scalar or list-like
     if not is_series:
         try:
-            series_to_process = pd.Series(data_input, dtype=object if not isinstance(data_input, (int, float, bool)) else None)
+            # Use object dtype to handle mixed types before numeric conversion
+            series_to_process = pd.Series(data_input, dtype=object)
         except Exception as e_series_create: # Handle potential errors creating series from unusual input
             logger.warning(f"Could not robustly convert input to Series in convert_to_numeric: {e_series_create}. Input type: {type(data_input)}. Returning default.")
-            return default_value if not is_series else pd.Series([default_value] * (len(data_input) if hasattr(data_input, '__len__') else 1))
+            # Determine length for Series creation if possible, otherwise scalar
+            length = len(data_input) if hasattr(data_input, '__len__') and not isinstance(data_input, str) else 1
+            return default_value if length == 1 else pd.Series([default_value] * length)
     else:
-        series_to_process = data_input
+        series_to_process = data_input.copy() # Work on a copy to avoid side effects
 
+    # First, replace common NA strings with np.nan for robust numeric conversion
+    if pd.api.types.is_object_dtype(series_to_process.dtype) and NA_REGEX_PATTERN:
+        series_to_process.replace(NA_REGEX_PATTERN, np.nan, regex=True, inplace=True)
 
     numeric_series = pd.to_numeric(series_to_process, errors='coerce')
 
-    # Fill NaNs from coercion if default_value is not NaN itself
-    if default_value is not np.nan:
+    # Fill NaNs from coercion if a specific default_value is provided (i.e., not np.nan)
+    if default_value is not np.nan and not pd.isna(default_value):
         numeric_series = numeric_series.fillna(default_value)
 
     if target_type is int:
-        if numeric_series.isnull().any() and default_value is np.nan: # NaNs exist and should be preserved
+        # If NaNs exist and the default is also NaN, we need a nullable integer type
+        if numeric_series.isnull().any() and (pd.isna(default_value)):
             try:
                 numeric_series = numeric_series.astype(pd.Int64Dtype())
-            except Exception:
-                logger.debug("Cannot convert to Int64Dtype (possibly non-integer floats present even after coercion). Keeping as float.")
+            except (TypeError, ValueError):
+                logger.debug("Cannot convert to Int64Dtype (possibly non-integer floats present). Keeping as float.")
+                # Ensure it's float if conversion fails
                 if not pd.api.types.is_float_dtype(numeric_series.dtype):
                     numeric_series = numeric_series.astype(float)
-        else: # No NaNs, or NaNs were filled
+        else: # No NaNs, or NaNs were filled with a non-NaN value.
             try:
-                # Check if all *non-NaN* values are whole numbers before attempting int conversion
-                # This handles cases where default_value might be a float like 0.0
+                # CORRECTED: Check if all *non-NaN* values are whole numbers before converting to a standard int.
+                # This prevents ValueError if floats like 3.14 are present.
                 non_na_series = numeric_series.dropna()
                 if non_na_series.empty or (non_na_series % 1 == 0).all():
-                    # If default_value was float (e.g. 0.0) and filled NaNs, astype(int) is fine
-                    # If default_value was int (e.g. 0), astype(int) is fine
-                    # If series originally had floats that are whole numbers, astype(int) is fine
-                    numeric_series = numeric_series.astype(int) 
-                else: # Contains non-integer numbers that were not NaNs
+                    # It's safe to convert to a standard integer type now.
+                    numeric_series = numeric_series.astype(int)
+                else:
+                    logger.debug("Series contains non-integer float values. Keeping as float to avoid data loss.")
                     if not pd.api.types.is_float_dtype(numeric_series.dtype):
-                         numeric_series = numeric_series.astype(float) 
-            except Exception: 
+                         numeric_series = numeric_series.astype(float)
+            except (TypeError, ValueError):
                 logger.debug("Failed to convert to standard int. Keeping as float.")
                 if not pd.api.types.is_float_dtype(numeric_series.dtype):
                     numeric_series = numeric_series.astype(float)
@@ -121,22 +128,16 @@ def convert_to_numeric(
         if not pd.api.types.is_float_dtype(numeric_series.dtype):
             try:
                 numeric_series = numeric_series.astype(float)
-            except Exception as e_float_cast:
+            except (TypeError, ValueError) as e_float_cast:
                 logger.warning(f"Could not cast series to float: {e_float_cast}. Dtype: {numeric_series.dtype}", exc_info=True)
     
-    # If default_value was np.nan and it wasn't filled (e.g. target_type was float or Int64Dtype handled it)
-    # and NaNs still exist from coercion, fill them now. This is somewhat redundant given the earlier fillna
-    # if default_value is not np.nan, but ensures that if default_value IS np.nan, it's the final state for NaNs.
-    if default_value is np.nan and numeric_series.isnull().any() and not pd.api.types.is_integer_dtype(numeric_series.dtype): # Don't fill pd.NA from Int64Dtype
-        numeric_series = numeric_series.fillna(default_value)
-
-
-    return numeric_series if is_series else numeric_series.iloc[0]
+    # If the original input was a scalar, return a scalar
+    return numeric_series if is_series else (numeric_series.iloc[0] if not numeric_series.empty else default_value)
 
 
 def robust_json_load(file_path: Union[str, Path]) -> Optional[Union[Dict, List]]:
     """Loads JSON data from a file with robust error handling."""
-    path_obj = Path(file_path) # Path() is now defined due to import
+    path_obj = Path(file_path)
     if not path_obj.is_file(): 
         logger.error(f"JSON file not found: {path_obj.resolve()}")
         return None
@@ -167,10 +168,10 @@ def hash_dataframe_safe(df: Optional[pd.DataFrame]) -> Optional[str]:
         return hashlib.sha256(empty_df_representation.encode('utf-8')).hexdigest()
     
     try:
-        df_sorted_cols = df.reindex(sorted(df.columns), axis=1)
-        df_sorted_all = df_sorted_cols.sort_index().sort_index(axis=1) 
-        
-        return str(pd.util.hash_pandas_object(df_sorted_all, index=True).sum())
+        # More robust hashing using pd.util.hash_pandas_object
+        # Sorting columns ensures consistency
+        df_sorted = df.reindex(sorted(df.columns), axis=1)
+        return str(pd.util.hash_pandas_object(df_sorted, index=True).sum())
     except Exception as e:
         logger.warning(f"Could not create standard hash for DataFrame: {e}. Falling back to less precise hash.", exc_info=True)
         try:
@@ -196,10 +197,6 @@ def convert_date_columns(df: pd.DataFrame, date_columns: List[str], errors: str 
                 continue
             try:
                 df_copy[col] = pd.to_datetime(df_copy[col], errors=errors)
-                # Optional: Make timezone-naive after conversion
-                # if pd.api.types.is_datetime64_any_dtype(df_copy[col]) and df_copy[col].dt.tz is not None:
-                #    logger.debug(f"Converting column '{col}' to timezone-naive.")
-                #    df_copy[col] = df_copy[col].dt.tz_localize(None)
             except Exception as e_date_conv:
                 logger.warning(f"Could not convert column '{col}' to datetime: {e_date_conv}. Original data kept if coercion failed.", exc_info=False) 
         else:
@@ -213,7 +210,8 @@ def standardize_missing_values(
     numeric_cols_defaults: Optional[Dict[str, Any]] = None 
 ) -> pd.DataFrame:
     """
-    Standardizes missing values in specified columns.
+    Standardizes missing values in specified columns by replacing common NA strings
+    and filling remaining NaNs with provided defaults.
     """
     if not isinstance(df, pd.DataFrame):
         logger.warning("standardize_missing_values: Input is not a DataFrame. Returning as is.")
@@ -228,34 +226,42 @@ def standardize_missing_values(
                  logger.debug(f"String col '{col}' not found in standardize_missing_values. Creating with default '{default_str_val}'.")
                  continue
 
-            series = df_copy[col].astype(object) 
+            series = df_copy[col]
+            # Ensure series is object type for robust string replacement
+            if not pd.api.types.is_object_dtype(series.dtype):
+                series = series.astype(object)
+
+            # Replace all common NA strings and empty/whitespace strings with np.nan
             if NA_REGEX_PATTERN:
                 try:
-                    series = series.replace(NA_REGEX_PATTERN, np.nan, regex=True) 
+                    series.replace(NA_REGEX_PATTERN, np.nan, regex=True, inplace=True)
                 except Exception as e_regex_str:
                     logger.warning(f"Regex NA replacement for string col '{col}' failed: {e_regex_str}. Proceeding.")
+            
+            # Fill remaining NaNs with the specified default and ensure string type
             df_copy[col] = series.fillna(default_str_val).astype(str).str.strip()
 
     if numeric_cols_defaults:
         for col, default_num_val in numeric_cols_defaults.items():
-            target_num_type = int if isinstance(default_num_val, int) and default_num_val is not np.nan else float
+            target_num_type = int if isinstance(default_num_val, int) and not pd.isna(default_num_val) else float
             
             if col not in df_copy.columns:
                 logger.debug(f"Numeric col '{col}' not found in standardize_missing_values. Creating with default {default_num_val}.")
-                temp_series = pd.Series([default_num_val] * len(df_copy), index=df_copy.index)
-                if target_num_type == int and default_num_val is not np.nan:
-                    try: df_copy[col] = temp_series.astype(pd.Int64Dtype())
-                    except: df_copy[col] = temp_series.astype(float) 
-                else: df_copy[col] = temp_series.astype(float)
+                # Create a series with the default value and correct type
+                df_copy[col] = pd.Series(default_num_val, index=df_copy.index)
+                if target_num_type == int:
+                    # Use nullable int if default is NaN, otherwise standard int
+                    dtype = pd.Int64Dtype() if pd.isna(default_num_val) else int
+                    df_copy[col] = df_copy[col].astype(dtype)
+                else:
+                    df_copy[col] = df_copy[col].astype(float)
                 continue
-
-            series = df_copy[col]
-            if pd.api.types.is_object_dtype(series.dtype) and NA_REGEX_PATTERN: 
-                try:
-                    series = series.replace(NA_REGEX_PATTERN, np.nan, regex=True)
-                except Exception as e_regex_num:
-                    logger.warning(f"Regex NA replacement for numeric col '{col}' failed: {e_regex_num}. Proceeding.")
             
-            df_copy[col] = convert_to_numeric(series, default_value=default_num_val, target_type=target_num_type)
+            # Pass to the robust convert_to_numeric function for consistent handling
+            df_copy[col] = convert_to_numeric(
+                df_copy[col], 
+                default_value=default_num_val, 
+                target_type=target_num_type
+            )
             
     return df_copy
