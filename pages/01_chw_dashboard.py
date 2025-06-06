@@ -304,23 +304,24 @@ if not daily_activity_df.empty:
 
     kpi_cols = st.columns(4)
     visits_today = daily_summary_metrics.get("visits_count", 0)
-    # Assuming render_kpi_card expects: title, value (str), icon, status (optional), units (optional), help_text (optional), container (optional)
-    render_kpi_card(title="Visits Today", value=str(visits_today), icon="👥", help_text="Total unique patients encountered.", container=kpi_cols[0])
+    # ***** RENAMED 'value' to 'value_str' assuming that's what render_kpi_card expects *****
+    # ***** YOU MUST VERIFY THE ACTUAL PARAMETER NAME IN render_kpi_card *****
+    render_kpi_card(title="Visits Today", value_str=str(visits_today), icon="👥", help_text="Total unique patients encountered.", container=kpi_cols[0])
 
     prio_followups = daily_summary_metrics.get("high_ai_prio_followups_count", 0)
     prio_threshold_setting = settings.FATIGUE_INDEX_HIGH_THRESHOLD if hasattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD') else 0.7 
     prio_status = "ACCEPTABLE" if prio_followups <= 2 else ("MODERATE_CONCERN" if prio_followups <= 5 else "HIGH_CONCERN")
-    render_kpi_card(title="High Prio Follow-ups", value=str(prio_followups), icon="🎯", status=prio_status, help_text=f"Patients needing urgent follow-up (AI prio score ≥ {prio_threshold_setting:.1f}).", container=kpi_cols[1])
+    render_kpi_card(title="High Prio Follow-ups", value_str=str(prio_followups), icon="🎯", status=prio_status, help_text=f"Patients needing urgent follow-up (AI prio score ≥ {prio_threshold_setting:.1f}).", container=kpi_cols[1])
 
     critical_spo2_threshold_setting = settings.ALERT_SPO2_CRITICAL_LOW_PCT if hasattr(settings, 'ALERT_SPO2_CRITICAL_LOW_PCT') else 90
     critical_spo2_cases = daily_summary_metrics.get("critical_spo2_cases_identified_count", 0)
     spo2_status = "HIGH_CONCERN" if critical_spo2_cases > 0 else "ACCEPTABLE"
-    render_kpi_card(title="Critical SpO2 Cases", value=str(critical_spo2_cases), icon="💨", status=spo2_status, help_text=f"Patients with SpO2 < {critical_spo2_threshold_setting}%.", container=kpi_cols[2])
+    render_kpi_card(title="Critical SpO2 Cases", value_str=str(critical_spo2_cases), icon="💨", status=spo2_status, help_text=f"Patients with SpO2 < {critical_spo2_threshold_setting}%.", container=kpi_cols[2])
     
     high_fever_threshold_setting = settings.ALERT_BODY_TEMP_HIGH_FEVER_C if hasattr(settings, 'ALERT_BODY_TEMP_HIGH_FEVER_C') else 39.0
     high_fever_cases = daily_summary_metrics.get("high_fever_cases_identified_count", 0)
     fever_status = "HIGH_CONCERN" if high_fever_cases > 0 else "ACCEPTABLE"
-    render_kpi_card(title="High Fever Cases", value=str(high_fever_cases), icon="🔥", status=fever_status, help_text=f"Patients with body temp ≥ {high_fever_threshold_setting}°C.", container=kpi_cols[3])
+    render_kpi_card(title="High Fever Cases", value_str=str(high_fever_cases), icon="🔥", status=fever_status, help_text=f"Patients with body temp ≥ {high_fever_threshold_setting}°C.", container=kpi_cols[3])
 else:
     st.markdown("ℹ️ _No activity data for selected date/filters for daily performance snapshot._")
 st.divider()
@@ -391,15 +392,16 @@ if not daily_activity_df.empty:
         st.warning("⚠️ Could not extract epi signals.")
 
     epi_kpi_cols = st.columns(3)
-    render_kpi_card(title="Symptomatic (Key Cond.)", value=str(epi_signals.get("symptomatic_patients_key_conditions_count", "N/A")), icon="🤒", units="cases today", help_text="Patients seen today with symptoms related to key conditions.", container=epi_kpi_cols[0])
+    # ***** RENAMED 'value' to 'value_str' assuming that's what render_kpi_card expects *****
+    render_kpi_card(title="Symptomatic (Key Cond.)", value_str=str(epi_signals.get("symptomatic_patients_key_conditions_count", "N/A")), icon="🤒", units="cases today", help_text="Patients seen today with symptoms related to key conditions.", container=epi_kpi_cols[0])
     
     new_malaria_cases = epi_signals.get("newly_identified_malaria_patients_count", 0)
     malaria_status = "HIGH_CONCERN" if new_malaria_cases > 1 else ("MODERATE_CONCERN" if new_malaria_cases == 1 else "ACCEPTABLE")
-    render_kpi_card(title="New Malaria Cases", value=str(new_malaria_cases), icon="🦟", status=malaria_status, units="cases today", help_text="New malaria cases identified today.", container=epi_kpi_cols[1])
+    render_kpi_card(title="New Malaria Cases", value_str=str(new_malaria_cases), icon="🦟", status=malaria_status, units="cases today", help_text="New malaria cases identified today.", container=epi_kpi_cols[1])
 
     pending_tb_contacts = epi_signals.get("pending_tb_contact_tracing_tasks_count", 0)
     tb_status = "MODERATE_CONCERN" if pending_tb_contacts > 0 else "ACCEPTABLE"
-    render_kpi_card(title="Pending TB Contacts", value=str(pending_tb_contacts), icon="👥", status=tb_status, units="to trace", help_text="TB contacts needing follow-up.", container=epi_kpi_cols[2])
+    render_kpi_card(title="Pending TB Contacts", value_str=str(pending_tb_contacts), icon="👥", status=tb_status, units="to trace", help_text="TB contacts needing follow-up.", container=epi_kpi_cols[2])
 
     symptom_clusters = epi_signals.get("detected_symptom_clusters", [])
     if symptom_clusters:
