@@ -10,6 +10,7 @@ import os
 import json
 import re # For condition name processing
 from pathlib import Path # For path operations
+import hashlib
 
 # --- Path Setup for Imports ---
 _current_conftest_dir = Path(__file__).resolve().parent
@@ -25,12 +26,11 @@ try:
     from analytics.orchestrator import apply_ai_models
     from data_processing.helpers import hash_dataframe_safe
 except ImportError as e_conftest:
-    # This is a critical failure for test setup.
     print(f"FATAL ERROR in conftest.py: Could not import core project modules.", file=sys.stderr)
     print(f"PYTHONPATH currently is: {sys.path}", file=sys.stderr)
     print(f"Attempted to add project root: {_project_root_dir_for_tests}", file=sys.stderr)
     print(f"Error details: {e_conftest}", file=sys.stderr)
-    raise # Re-raise the error to ensure test collection halts.
+    raise
 
 
 # --- Fixture for Sample Health Records ---
@@ -39,9 +39,10 @@ def sample_health_records_df_main_fixture() -> pd.DataFrame:
     """
     Provides a comprehensive DataFrame of sample health records, AI-enriched.
     """
-    base_date = datetime(2023, 10, 1, 9, 30, 0)
-    num_records = 75 # Slightly increased for more data points
-    record_dates = [base_date + timedelta(hours=i * 2, days=i // 7) for i in range(num_records)] # More spread out
+    num_records = 75
+    # CORRECTED: Generate data relative to the current date to ensure it appears in default UI views.
+    base_date = datetime.now() - timedelta(days=num_records // 2)
+    record_dates = [base_date + timedelta(days=i) for i in range(num_records)]
 
     raw_data = {
         'encounter_id': [f'SENC_FIX_{i:03d}' for i in range(1, num_records + 1)],
@@ -89,9 +90,9 @@ def sample_health_records_df_main_fixture() -> pd.DataFrame:
     
     df = pd.DataFrame({k: v for k, v in raw_data.items() if not callable(v)})
     if callable(raw_data.get('max_skin_temp_celsius')):
-        df['max_skin_temp_celsius'] = raw_data['max_skin_temp_celsius'](df) # type: ignore
+        df['max_skin_temp_celsius'] = raw_data['max_skin_temp_celsius'](df)
     if callable(raw_data.get('sample_registered_lab_date')):
-        df['sample_registered_lab_date'] = raw_data['sample_registered_lab_date'](df) # type: ignore
+        df['sample_registered_lab_date'] = raw_data['sample_registered_lab_date'](df)
 
     enriched_df, _ = apply_ai_models(df.copy(), source_context="ConftestHealthFixtureAI")
     
@@ -105,8 +106,9 @@ def sample_health_records_df_main_fixture() -> pd.DataFrame:
 @pytest.fixture(scope="session")
 def sample_iot_clinic_df_main_fixture() -> pd.DataFrame:
     num_records = 25
-    base_date = datetime(2023, 10, 20, 6, 0, 0)
-    timestamps = [base_date + timedelta(hours=i*2) for i in range(num_records)]
+    # CORRECTED: Generate data relative to the current date.
+    base_date = datetime.now() - timedelta(days=num_records)
+    timestamps = [base_date + timedelta(days=i) for i in range(num_records)]
     
     data = {
         'timestamp': timestamps,
@@ -125,7 +127,7 @@ def sample_iot_clinic_df_main_fixture() -> pd.DataFrame:
         'sanitizer_dispenses_per_hour': np.random.randint(0, 30, num_records).tolist()
     }
     df = pd.DataFrame({k: v for k,v in data.items() if not callable(v)})
-    if callable(data.get('max_co2_ppm')): df['max_co2_ppm'] = data['max_co2_ppm'](df) #type: ignore
+    if callable(data.get('max_co2_ppm')): df['max_co2_ppm'] = data['max_co2_ppm'](df)
     
     num_cols_iot = ['avg_co2_ppm', 'max_co2_ppm', 'avg_pm25', 'voc_index', 'avg_temp_celsius', 'avg_humidity_rh', 'avg_noise_db', 'waiting_room_occupancy', 'patient_throughput_per_hour', 'sanitizer_dispenses_per_hour']
     for col in num_cols_iot:
@@ -145,13 +147,12 @@ def sample_zone_data_df_main_fixture() -> pd.DataFrame:
         {'zone_id': 'ZoneF', 'name': 'Foxtrot Park', 'population': 3200, 'socio_economic_index': 0.68, 'num_clinics': 0, 'avg_travel_time_clinic_min': 30, 'area_sqkm': 15.5}
     ]
     attr_df = pd.DataFrame(attributes)
-    geometries = [ # Simplified GeoJSON-like dicts
+    geometries = [
         {"zone_id": "ZoneA", "geometry_obj": {"type": "Polygon", "coordinates": [[[0,0],[0,1],[1,1],[1,0],[0,0]]]}},
         {"zone_id": "ZoneB", "geometry_obj": {"type": "Polygon", "coordinates": [[[1,0],[1,1],[2,1],[2,0],[1,0]]]}},
-        {"zone_id": "ZoneC", "geometry_obj": {"type": "MultiPolygon", "coordinates": [[[[0,1],[0,2],[1,2],[1,1],[0,1]]]]}}, # Example MultiPolygon
+        {"zone_id": "ZoneC", "geometry_obj": {"type": "MultiPolygon", "coordinates": [[[[0,1],[0,2],[1,2],[1,1],[0,1]]]]}},
         {"zone_id": "ZoneD", "geometry_obj": {"type": "Polygon", "coordinates": [[[1,1],[1,2],[2,2],[2,1],[1,1]]]}},
         {"zone_id": "ZoneE", "geometry_obj": {"type": "Polygon", "coordinates": [[[-1,0],[-1,1],[0,1],[0,0],[-1,0]]]}},
-        # ZoneF has no geometry in this list to test merge robustness
     ]
     geom_df = pd.DataFrame(geometries)
     geom_df['geometry'] = geom_df['geometry_obj'].apply(json.dumps)
@@ -179,65 +180,3 @@ def sample_enriched_zone_df_main_fixture(
         iot_df=sample_iot_clinic_df_main_fixture.copy(),
         source_context="ConftestEnrichment"
     )
-
-
-# --- Fixtures for Empty Schemas ---
-@pytest.fixture
-def empty_health_df_schema_fixture() -> pd.DataFrame:
-    cols = ['encounter_id', 'patient_id', 'encounter_date', 'encounter_date_obj', 'age', 'gender', 'zone_id', 
-            'min_spo2_pct', 'vital_signs_temperature_celsius', 'condition', 'test_type', 'test_result', 
-            'ai_risk_score', 'ai_followup_priority_score'] # Minimal representative set
-    return pd.DataFrame(columns=cols)
-
-@pytest.fixture
-def empty_iot_df_schema_fixture() -> pd.DataFrame:
-    cols = ['timestamp', 'clinic_id', 'room_name', 'avg_co2_ppm', 'avg_pm25', 'zone_id']
-    return pd.DataFrame(columns=cols)
-
-@pytest.fixture
-def empty_zone_data_df_schema_fixture() -> pd.DataFrame:
-    cols = ['zone_id', 'name', 'population', 'geometry', 'geometry_obj', 'crs', 'area_sqkm']
-    return pd.DataFrame(columns=cols)
-
-@pytest.fixture
-def empty_enriched_zone_df_schema_fixture() -> pd.DataFrame:
-    base_cols = ['zone_id', 'name', 'geometry_obj', 'population', 'avg_risk_score', 'prevalence_per_1000']
-    # CORRECTED: Use the same re.sub logic from enrichment.py to ensure the schema matches perfectly.
-    dyn_cond_cols = [f"active_{re.sub(r'[^a-z0-9_]+', '_', c.lower().strip())}_cases" 
-                     for c in settings.KEY_CONDITIONS_FOR_ACTION]
-    return pd.DataFrame(columns=list(set(base_cols + dyn_cond_cols)))
-
-
-# --- Generic Plotting Data Fixtures ---
-@pytest.fixture(scope="session")
-def sample_series_data_plotting_fixture() -> pd.Series:
-    idx = pd.to_datetime(['2023-03-01', '2023-03-08', '2023-03-15', '2023-03-22', '2023-03-29'])
-    return pd.Series([15.5, 18.2, 12.0, 20.7, 17.1], index=idx, name="MetricValue")
-
-@pytest.fixture(scope="session")
-def sample_bar_df_plotting_fixture() -> pd.DataFrame:
-    return pd.DataFrame({'category': ['A', 'B', 'C', 'A', 'B'], 'value': [25, 19, 30, 38, 12], 'group': ['X', 'Y', 'X', 'Y', 'X']})
-
-@pytest.fixture(scope="session")
-def sample_donut_df_plotting_fixture() -> pd.DataFrame:
-    return pd.DataFrame({'label': ['High', 'Medium', 'Low'], 'count': [12, 28, 65]})
-
-@pytest.fixture(scope="session")
-def sample_heatmap_df_plotting_fixture() -> pd.DataFrame:
-    rows = ['Feat1', 'Feat2', 'Feat3']; cols = ['ZoneX', 'ZoneY', 'ZoneZ']
-    data = np.array([[0.8, 0.2, 0.5], [0.1, 0.9, 0.3], [0.6, 0.4, 0.7]])
-    return pd.DataFrame(data, index=rows, columns=cols)
-
-@pytest.fixture(scope="session")
-def sample_map_data_df_plotting_fixture(sample_enriched_zone_df_main_fixture: Optional[pd.DataFrame]) -> pd.DataFrame:
-    if not isinstance(sample_enriched_zone_df_main_fixture, pd.DataFrame) or sample_enriched_zone_df_main_fixture.empty:
-        return pd.DataFrame(columns=['zone_id', 'name', 'avg_risk_score', 'population']) # Empty schema
-    
-    # Select a subset of columns relevant for map plotting from the enriched fixture
-    cols_for_map = ['zone_id', 'name', 'avg_risk_score', 'population', 'prevalence_per_1000']
-    map_df = sample_enriched_zone_df_main_fixture[[c for c in cols_for_map if c in sample_enriched_zone_df_main_fixture.columns]].copy()
-    
-    # Ensure avg_risk_score has some variance if it was all NaN or constant
-    if 'avg_risk_score' in map_df.columns and (map_df['avg_risk_score'].isnull().all() or map_df['avg_risk_score'].nunique() < 2) :
-        map_df['avg_risk_score'] = np.random.uniform(20, 85, len(map_df)).round(1)
-    return map_df
