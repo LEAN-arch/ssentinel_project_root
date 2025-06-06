@@ -121,27 +121,21 @@ def get_dho_command_center_processed_datasets() -> Tuple[Optional[pd.DataFrame],
 
     district_summary_kpis_map = get_district_summary_kpis(enriched_zone_df_for_dho, f"{log_ctx}/CalcDistrictKPIs")
     
-    # DEBUG FIX: Removed generation of intervention_criteria_opts from the cached function.
-    
     df_shape_log = enriched_zone_df_for_dho.shape if isinstance(enriched_zone_df_for_dho, pd.DataFrame) else 'N/A'
     logger.info(f"({log_ctx}) DHO data preparation complete. Enriched Zone DF shape: {df_shape_log}")
     return enriched_zone_df_for_dho, ai_enriched_health_df_dho, raw_iot_df_dho, district_summary_kpis_map
 
 # --- Load and Prepare Data for the Dashboard ---
-# DEBUG FIX: Initialize variables to match the new return signature of the cached function.
 enriched_zone_df_display, historical_health_df_for_trends, historical_iot_df_for_trends, district_kpis_summary_data = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
 intervention_criteria_options_data = {} # Will be populated after data loading.
 
 try:
-    # DEBUG FIX: Unpack fewer variables, as the cached function returns one less item.
     (enriched_zone_df_display, historical_health_df_for_trends, historical_iot_df_for_trends,
      district_kpis_summary_data) = get_dho_command_center_processed_datasets()
      
-    # DEBUG FIX: Generate the (potentially non-serializable) intervention options *after* loading data from the cache.
     intervention_criteria_options_data = get_district_intervention_criteria_options(
         district_zone_df_sample_check=enriched_zone_df_display.head(2) if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_display.empty else None
     )
-
 except Exception as e_dho_data_main_load:
     logger.error(f"DHO Dashboard: Failed to load/process main datasets: {e_dho_data_main_load}", exc_info=True)
     st.error(f"Error loading DHO dashboard data: {e_dho_data_main_load}. Check logs.")
@@ -177,18 +171,78 @@ if selected_start_date_trends > selected_end_date_trends:
 
 # --- Section 1: District Performance Dashboard (KPIs) ---
 st.header("📊 District Performance Dashboard")
-if district_kpis_summary_data and isinstance(district_kpis_summary_data, dict) and \
-   any(pd.notna(v_kpi) and v_kpi != 0 for k_kpi,v_kpi in district_kpis_summary_data.items() if k_kpi != 'total_zones_in_df' and isinstance(v_kpi, (int, float))): 
-    structured_dho_kpi_list_val = structure_district_summary_kpis(district_kpis_summary_data, enriched_zone_df_display, f"Snapshot as of {data_as_of_ts.strftime('%d %b %Y')}")
-    if structured_dho_kpi_list_val:
-        num_kpis_dho = len(structured_dho_kpi_list_val); kpis_per_row = 4
-        for i_row_dho in range(0, num_kpis_dho, kpis_per_row):
-            cols_kpi_dho = st.columns(kpis_per_row)
-            for idx_kpi_in_row, kpi_item_dho in enumerate(structured_dho_kpi_list_val[i_row_dho : i_row_dho + kpis_per_row]):
-                with cols_kpi_dho[idx_kpi_in_row % kpis_per_row]: render_kpi_card(**kpi_item_dho)
-    else: st.info("District KPIs could not be structured from available summary data.")
-else: st.warning("District-wide summary KPIs unavailable or contain no significant data.")
+
+# Check if the main dataframe for KPIs is valid
+if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_display.empty:
+    kpi_data = []
+    df_kpi = enriched_zone_df_display.copy() # Use a copy for safety
+    
+    # 1. Total District Population
+    total_pop = 'N/A'
+    if 'population' in df_kpi.columns and df_kpi['population'].notna().any():
+        total_pop_val = df_kpi['population'].sum()
+        total_pop = f"{total_pop_val:,.0f}"
+    kpi_data.append({
+        "icon": "👥", "title": "Total District Population", "value": total_pop,
+        "help_text": "Sum of the estimated population across all health zones in the district."
+    })
+
+    # 2. Avg. AI Risk Score (Population Weighted)
+    weighted_risk_score = 'N/A'
+    if 'population' in df_kpi.columns and 'avg_risk_score' in df_kpi.columns and \
+       df_kpi[['population', 'avg_risk_score']].notna().all(axis=1).any():
+        df_valid_pop = df_kpi[df_kpi['population'] > 0]
+        if not df_valid_pop.empty:
+            weighted_avg = np.average(df_valid_pop['avg_risk_score'], weights=df_valid_pop['population'])
+            weighted_risk_score = f"{weighted_avg:.2f}"
+    kpi_data.append({
+        "icon": "⚠️", "title": "Avg. AI Risk Score (Pop. Weighted)", "value": weighted_risk_score,
+        "help_text": "The average patient AI-Risk Score, weighted by the population of each zone. Gives a more representative district-wide risk level."
+    })
+
+    # 3. Key Disease Prevalence (/1k Pop.)
+    prevalence_kpi = 'N/A'
+    key_disease_col = 'active_diabetes_cases' # Assume this is our key disease column
+    key_disease_name = 'Diabetes'
+    if key_disease_col in df_kpi.columns and 'population' in df_kpi.columns and df_kpi['population'].sum() > 0:
+        total_cases = df_kpi[key_disease_col].sum()
+        total_population_for_prev = df_kpi['population'].sum()
+        prevalence_rate = (total_cases / total_population_for_prev) * 1000
+        prevalence_kpi = f"{prevalence_rate:.1f}"
+    kpi_data.append({
+        "icon": "🔬", "title": f"{key_disease_name} Prevalence (/1k Pop.)", "value": prevalence_kpi,
+        "help_text": f"Estimated number of active {key_disease_name.lower()} cases per 1,000 people in the district population."
+    })
+
+    # 4. High-Risk Zones Count
+    high_risk_zones = 'N/A'
+    help_text_risk = "AI Risk Score data is not available to identify high-risk zones."
+    if 'avg_risk_score' in df_kpi.columns and df_kpi['avg_risk_score'].notna().any():
+        risk_threshold = df_kpi['avg_risk_score'].quantile(0.75)
+        if pd.notna(risk_threshold) and risk_threshold > 0:
+            high_risk_count = df_kpi[df_kpi['avg_risk_score'] > risk_threshold].shape[0]
+            high_risk_zones = f"{high_risk_count}"
+            help_text_risk = f"Number of zones with an average AI Risk Score greater than the 75th percentile ({risk_threshold:.2f})."
+        else:
+            high_risk_zones = "0"
+            help_text_risk = "Could not determine a valid risk threshold. All zones are considered non-high-risk."
+    kpi_data.append({
+        "icon": "🚩", "title": "High-Risk Zones Count", "value": high_risk_zones,
+        "help_text": help_text_risk
+    })
+    
+    # Render the KPIs
+    kpi_cols = st.columns(len(kpi_data))
+    for i, kpi in enumerate(kpi_data):
+        with kpi_cols[i]:
+            render_kpi_card(**kpi)
+            
+else:
+    # Fallback if data is not available
+    st.warning("District-wide summary KPIs cannot be generated. Enriched zone data is missing or empty.")
+
 st.divider()
+
 
 # --- Section 2: In-Depth District Analysis Modules (Tabs) ---
 st.header("🔍 In-Depth District Analysis Modules")
