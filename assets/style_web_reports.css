@@ -87,8 +87,11 @@ h6 {font-size: 0.95rem; color: var(--sentinel-color-text-muted); font-weight: 50
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06); 
     border-left: 4px solid var(--sentinel-color-risk-neutral);
     margin-bottom: 1rem;
-    /* REMOVED: display:flex properties which were causing the rendering bug in st.columns */
-    min-height: 125px; /* min-height is safe and ensures cards in a row have similar height */
+    /* CORRECTED: The conflicting flex properties have been removed. */
+    /* display: flex; */
+    /* flex-direction: column; */
+    /* justify-content: space-between; */
+    min-height: 125px; 
     transition: box-shadow 0.2s ease-in-out, transform 0.15s ease-in-out; 
 }
 .kpi-card:hover {
@@ -156,7 +159,7 @@ h6 {font-size: 0.95rem; color: var(--sentinel-color-text-muted); font-weight: 50
     margin-bottom: 0.15rem; font-weight: 600; line-height: 1.25;
     text-transform: uppercase; letter-spacing: 0.03em;
 }
-.kpi-body { text-align: left; margin-top: auto; }
+.kpi-body { text-align: left; }
 .kpi-value {
     font-size: 1.8rem; font-weight: 700; color: var(--sentinel-color-text-headings-main);
     margin-bottom: 0.2rem; line-height: 1.1; word-wrap: break-word; 
