@@ -12,17 +12,17 @@ plotly>=5.15.0,<5.20.0
 # Geospatial - Lightweight (Only if specific non-GeoPandas geo operations are needed)
 # If using GeoJSON features directly with Plotly Express, these might not be strictly necessary
 # unless you perform transformations or complex geometry manipulations.
-shapely>=2.0.0,<2.1.0
-pyproj>=3.4.0,<3.7.0
-geojson>=3.0.0,<3.1.0
+# shapely>=2.0.0,<2.1.0
+# pyproj>=3.4.0,<3.7.0
+# geojson>=3.0.0,<3.1.0
 
 # NOTE: GeoPandas and its direct heavy dependencies like Fiona and RTree
 # have been explicitly REMOVED as per refactoring requirements.
 
 # Other potential utilities (uncomment and specify versions if used):
 python-dotenv>=1.0.0    # For loading .env files if used for configuration
-requests>=2.28.0        # For making HTTP requests (e.g., to FHIR server or other APIs)
-openpyxl>=3.1.0         # If reading/writing Excel files is a feature
+# requests>=2.28.0        # For making HTTP requests (e.g., to FHIR server or other APIs)
+# openpyxl>=3.1.0         # If reading/writing Excel files is a feature
 
 # --- Notes for this refactored requirements.txt ---
 # 1. VERSIONS: Specific versions or compatible ranges are used. For production,
@@ -46,12 +46,6 @@ openpyxl>=3.1.0         # If reading/writing Excel files is a feature
 #      (e.g., GEOS for Shapely, PROJ for Pyproj) are listed in `packages.txt`
 #      or handled by your deployment environment.
 #    - Consult individual package documentation if `pip install` fails.
-
-# 4. REVIEW AND PRUNE:
-#    - This list is based on the provided files. After refactoring, ensure this
-#      `requirements.txt` accurately reflects all *necessary* Python packages.
-#    - Remove any packages not actively used.
-#    - Add any new packages introduced during refactoring.
 
 # 4. REVIEW AND PRUNE:
 #    - After refactoring, review this `requirements.txt` carefully.
