@@ -4,190 +4,438 @@
 import streamlit as st 
 import pandas as pd
 import numpy as np
-import os # Retain os for os.path.exists if direct string paths are ever used
+import os
 import logging
 import json
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Union # Added Union
 from pathlib import Path
 
-from config import settings # This now provides absolute paths
-from .helpers import (
-    clean_column_names, 
-    convert_to_numeric, 
-    robust_json_load, 
-    convert_date_columns, 
-    standardize_missing_values, 
-    hash_dataframe_safe
-)
+try:
+    from config import settings 
+    from .helpers import ( # Relative import for helpers within the same package
+        clean_column_names, 
+        convert_to_numeric, 
+        robust_json_load, 
+        convert_date_columns, 
+        standardize_missing_values, 
+        hash_dataframe_safe # Keep for st.cache_data in pages
+    )
+except ImportError as e:
+    logging.basicConfig(level=logging.ERROR)
+    logger_init = logging.getLogger(__name__) # Use a different name to avoid conflict
+    logger_init.error(f"Critical import error in loaders.py: {e}. Ensure config.py and helpers.py are accessible.")
+    # If settings is critical for module-level constants, this might need a more complex fallback.
+    # For now, assume settings will be available when functions are called.
+    raise # Re-raise as loaders are fundamental
 
 logger = logging.getLogger(__name__)
 
 # --- Common Data Loading Utilities ---
-def _load_csv_data(file_path_obj: Path, source_context: str) -> pd.DataFrame: # Expect Path object
-    """Helper to load and minimally clean a CSV file. Uses absolute path."""
-    # Ensure file_path_obj is absolute for clear logging
-    abs_file_path = file_path_obj.resolve()
-    logger.info(f"({source_context}) Attempting to load CSV data from absolute path: {abs_file_path}")
+def _load_csv_data(file_path_obj: Path, source_context: str, low_memory_setting: bool = False) -> pd.DataFrame:
+    """
+    Helper to load and minimally clean a CSV file. Expects an absolute Path object.
+    Returns an empty DataFrame on any critical error.
+    """
+    abs_file_path = file_path_obj.resolve() # Ensure path is absolute for clarity
+    logger.info(f"({source_context}) Attempting to load CSV data from: {abs_file_path}")
 
     if not abs_file_path.is_file():
-        err_msg = f"({source_context}) CSV file NOT FOUND or is not a file at resolved absolute path: {abs_file_path}"
+        err_msg = f"({source_context}) CSV file NOT FOUND or is not a file at: {abs_file_path}"
         logger.error(err_msg)
-        try: st.error(f"Data file missing: {abs_file_path.name}. Expected at: {abs_file_path}. Please check application setup and data availability.")
-        except Exception: pass # In case Streamlit context not available
+        try: 
+            # Avoid showing full path in user-facing error for security/simplicity
+            st.error(f"Data file missing: '{abs_file_path.name}'. Please check application setup.")
+        except Exception: pass # Silently fail if Streamlit context not available
         return pd.DataFrame()
     
     try:
-        df = pd.read_csv(abs_file_path, low_memory=False, on_bad_lines='warn')
-        if df.empty and abs_file_path.stat().st_size > 0: # File has size but pandas reads as empty (e.g. only headers)
-             logger.warning(f"({source_context}) CSV file at {abs_file_path} loaded as empty by pandas, but file has size {abs_file_path.stat().st_size} bytes. Check content/format.")
-             try: st.warning(f"Data file '{abs_file_path.name}' seems to have content but loaded empty. Please check CSV format.")
-             except: pass
-             return pd.DataFrame()
-        elif df.empty: # File is genuinely empty or read as such
-             logger.warning(f"({source_context}) CSV file at {abs_file_path} is empty (or read as empty by pandas).")
-             try: st.warning(f"Data file is empty: {abs_file_path.name}.")
-             except: pass
-             return pd.DataFrame()
+        df = pd.read_csv(abs_file_path, low_memory=low_memory_setting, on_bad_lines='warn')
+        
+        if df.empty:
+            file_size = abs_file_path.stat().st_size
+            if file_size > 0: # File has size but pandas reads as empty
+                 logger.warning(f"({source_context}) CSV file at {abs_file_path} loaded as empty by pandas, but file has size {file_size} bytes. Check content/format (e.g., encoding, delimiter, only headers).")
+                 try: st.warning(f"Data file '{abs_file_path.name}' appears to have content but loaded empty. Please check CSV format and encoding.")
+                 except Exception: pass
+            else: # File is genuinely empty
+                 logger.warning(f"({source_context}) CSV file at {abs_file_path} is empty (0 bytes or read as such).")
+                 try: st.info(f"Data file is empty: {abs_file_path.name}.") # Info might be more appropriate than warning
+                 except Exception: pass
+            return pd.DataFrame() # Return empty DataFrame
 
-        df = clean_column_names(df)
-        logger.info(f"({source_context}) Successfully loaded {len(df)} raw records from {abs_file_path.name}. Columns: {df.columns.tolist()}")
+        df = clean_column_names(df) # Apply consistent column naming
+        logger.info(f"({source_context}) Successfully loaded {len(df)} raw records from '{abs_file_path.name}'. Columns: {df.columns.tolist()[:10]}...") # Log first 10 columns
         return df
-    except pd.errors.EmptyDataError: # Specifically for when read_csv finds an empty file
-        logger.warning(f"({source_context}) EmptyDataError: CSV file at {abs_file_path} is empty.")
-        try: st.warning(f"Data file is empty: {abs_file_path.name}.")
-        except: pass
+    except pd.errors.EmptyDataError: # Specifically for when read_csv finds an empty file or only headers
+        logger.warning(f"({source_context}) EmptyDataError: CSV file at {abs_file_path} is effectively empty or contains only headers.")
+        try: st.info(f"Data file is empty or contains only headers: {abs_file_path.name}.")
+        except Exception: pass
         return pd.DataFrame()
     except Exception as e:
         logger.error(f"({source_context}) Error loading/processing CSV from {abs_file_path}: {e}", exc_info=True)
-        try: st.error(f"Error loading data from {abs_file_path.name}. Details: {e}")
-        except: pass
+        try: st.error(f"Error loading data from '{abs_file_path.name}'. Details logged. Error: {type(e).__name__}")
+        except Exception: pass
         return pd.DataFrame()
 
 # --- Specific Data Loaders ---
-@st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, hash_funcs={pd.DataFrame: hash_dataframe_safe})
+# Caching is applied at the page level where these functions are called.
+# This makes these loaders more generally usable outside Streamlit too.
+
 def load_health_records(file_path_str: Optional[str] = None, source_context: str = "HealthRecordsLoader") -> pd.DataFrame:
-    # settings.HEALTH_RECORDS_CSV_PATH is now an absolute string path from settings.py
-    actual_file_path = Path(file_path_str if file_path_str else settings.HEALTH_RECORDS_CSV_PATH)
-    logger.info(f"({source_context}) Preparing to load health records from: {actual_file_path}") # Log path being used
-    df = _load_csv_data(actual_file_path, source_context)
+    """
+    Loads, cleans, and standardizes health records data.
+    Uses settings.HEALTH_RECORDS_CSV_PATH (expected to be absolute) if file_path_str is None.
+    """
+    # Determine file path: use provided path or fallback to settings
+    # HEALTH_RECORDS_CSV_PATH from settings is expected to be an absolute path string.
+    path_to_load_str = file_path_str
+    if not path_to_load_str:
+        if hasattr(settings, 'HEALTH_RECORDS_CSV_PATH'):
+            path_to_load_str = settings.HEALTH_RECORDS_CSV_PATH
+        else:
+            logger.error(f"({source_context}) HEALTH_RECORDS_CSV_PATH not found in settings and no explicit path provided.")
+            return pd.DataFrame()
+            
+    actual_file_path = Path(path_to_load_str)
+    if not actual_file_path.is_absolute(): # If by chance it's not absolute, try resolving from DATA_DIR
+        logger.warning(f"({source_context}) Health records path '{path_to_load_str}' is not absolute. Attempting to resolve from DATA_DIR.")
+        if hasattr(settings, 'DATA_DIR'):
+            actual_file_path = (Path(settings.DATA_DIR) / actual_file_path).resolve()
+        else:
+            logger.error(f"({source_context}) DATA_DIR not in settings, cannot resolve relative health records path. Path used: {actual_file_path}")
+            return pd.DataFrame()
+
+
+    logger.info(f"({source_context}) Preparing to load health records from: {actual_file_path}")
+    df = _load_csv_data(actual_file_path, source_context, low_memory_setting=True) # Health records can be large
+
     if df.empty:
         logger.warning(f"({source_context}) Health records DataFrame is empty after _load_csv_data from {actual_file_path}.")
-        return pd.DataFrame()
+        return pd.DataFrame() # Return empty DataFrame, not None
 
-    date_cols_to_convert = ['encounter_date', 'sample_collection_date', 'sample_registered_lab_date', 'referral_outcome_date']
+    # Date conversions
+    date_cols_to_convert = getattr(settings, 'HEALTH_RECORDS_DATE_COLS', [ # Get from settings or use defaults
+        'encounter_date', 'sample_collection_date', 'sample_registered_lab_date', 
+        'referral_outcome_date', 'date_of_birth' # Added DOB as common date col
+    ])
     df = convert_date_columns(df, date_cols_to_convert)
 
+    # Derived date object column (useful for filtering by date part)
     if 'encounter_date' in df.columns and pd.api.types.is_datetime64_any_dtype(df['encounter_date']):
         df['encounter_date_obj'] = df['encounter_date'].dt.date
     else:
-        df['encounter_date_obj'] = pd.NaT 
-        if 'encounter_date' in df.columns: logger.warning(f"({source_context}) 'encounter_date' not datetime. 'encounter_date_obj' is NaT.")
-        else: logger.warning(f"({source_context}) 'encounter_date' missing. 'encounter_date_obj' created as NaT.")
+        df['encounter_date_obj'] = pd.NaT # pd.NaT is the correct "Not a Time" for date/datetime
+        logger.warning(f"({source_context}) 'encounter_date' not datetime or missing. 'encounter_date_obj' column is NaT.")
 
-    numeric_cols_with_defaults = {
-        'age': np.nan, 'pregnancy_status': 0, 'chronic_condition_flag': 0, 'hrv_rmssd_ms': np.nan, 
-        'min_spo2_pct': np.nan, 'vital_signs_temperature_celsius': np.nan, 'max_skin_temp_celsius': np.nan,
-        'movement_activity_level': 0, 'fall_detected_today': 0, 'ambient_heat_index_c': np.nan, 
-        'ppe_compliant_flag': 1, 'signs_of_fatigue_observed_flag': 0, 'rapid_psychometric_distress_score': np.nan,
-        'test_turnaround_days': np.nan, 'quantity_dispensed': 0, 'item_stock_agg_zone': 0.0, 
-        'consumption_rate_per_day': 0.001, 'ai_risk_score': np.nan, 'ai_followup_priority_score': np.nan,
-        'avg_spo2': np.nan, 'avg_daily_steps': np.nan, 'resting_heart_rate': np.nan,
-        'avg_sleep_duration_hrs': np.nan, 'sleep_score_pct': np.nan, 'stress_level_score': np.nan,
-        'hiv_viral_load_copies_ml': np.nan, 'chw_visit': 0, 'tb_contact_traced': 0,
-        'patient_latitude': np.nan, 'patient_longitude': np.nan, 'days_task_overdue': 0
-    }
-    string_cols_with_defaults = {
+    # Standardize missing values and types using configured defaults
+    # These defaults should be comprehensive and types should match expected analysis types
+    numeric_cols_config = getattr(settings, 'HEALTH_RECORDS_NUMERIC_COLS_DEFAULTS', {
+        'age': np.nan, 'pregnancy_status': 0, 'chronic_condition_flag': 0, 
+        'min_spo2_pct': np.nan, 'vital_signs_temperature_celsius': np.nan, 
+        'fall_detected_today': 0, 'test_turnaround_days': np.nan, 
+        'quantity_dispensed': 0, 'item_stock_agg_zone': 0.0, 
+        'consumption_rate_per_day': 0.001, 'ai_risk_score': np.nan, 
+        'ai_followup_priority_score': np.nan, 'avg_daily_steps': np.nan,
+        'tb_contact_traced': 0 # 0 for No/Not yet, 1 for Yes
+    })
+    string_cols_config = getattr(settings, 'HEALTH_RECORDS_STRING_COLS_DEFAULTS', {
         'encounter_id': "UnknownEncID", 'patient_id': "UnknownPID", 'encounter_type': "UnknownType",
-        'gender': "Unknown", 'zone_id': "UnknownZone", 'clinic_id': "UnknownClinic", 'chw_id': "UnknownCHW",
-        'condition': "UnknownCondition", 'patient_reported_symptoms': "Unknown", 'test_type': "UnknownTest",
-        'test_result': "UnknownResult", 'sample_status': "UnknownStatus", 'rejection_reason': "N/A",
-        'referral_status': "Unknown", 'referral_reason': "N/A", 'referred_to_facility_id': "N/A",
-        'referral_outcome': "Unknown", 'medication_adherence_self_report': "Unknown", 'item': "UnknownItem",
-        'notes': "N/A", 'diagnosis_code_icd10': "N/A", 'physician_id': "N/A",
-        'screening_hpv_status': "Unknown", 'key_chronic_conditions_summary': "N/A"
-    }
-    df = standardize_missing_values(df, string_cols_with_defaults, numeric_cols_with_defaults)
-    logger.info(f"({source_context}) Health records processed. Shape: {df.shape}")
+        'gender': "Unknown", 'zone_id': "UnknownZone", 'clinic_id': "UnknownClinic", 
+        'chw_id': "UnknownCHW", 'condition': "UnknownCondition", 
+        'patient_reported_symptoms': "", 'test_type': "UnknownTest",
+        'test_result': "UnknownResult", 'sample_status': "UnknownStatus", 
+        'referral_status': "Unknown", 'item': "UnknownItem"
+    })
+    
+    df = standardize_missing_values(df, string_cols_config, numeric_cols_config)
+    logger.info(f"({source_context}) Health records loaded and processed. Shape: {df.shape}")
     return df
 
-@st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, hash_funcs={pd.DataFrame: hash_dataframe_safe})
+
 def load_iot_clinic_environment_data(file_path_str: Optional[str] = None, source_context: str = "IoTDataLoader") -> pd.DataFrame:
-    actual_file_path = Path(file_path_str if file_path_str else settings.IOT_CLINIC_ENVIRONMENT_CSV_PATH)
+    """Loads, cleans, and standardizes IoT clinic environment data."""
+    path_to_load_str = file_path_str
+    if not path_to_load_str:
+        if hasattr(settings, 'IOT_CLINIC_ENVIRONMENT_CSV_PATH'):
+            path_to_load_str = settings.IOT_CLINIC_ENVIRONMENT_CSV_PATH
+        else:
+            logger.error(f"({source_context}) IOT_CLINIC_ENVIRONMENT_CSV_PATH not in settings and no explicit path provided.")
+            return pd.DataFrame()
+
+    actual_file_path = Path(path_to_load_str)
+    if not actual_file_path.is_absolute():
+        if hasattr(settings, 'DATA_DIR'):
+            actual_file_path = (Path(settings.DATA_DIR) / actual_file_path).resolve()
+        else:
+            logger.error(f"({source_context}) DATA_DIR not in settings, cannot resolve relative IoT path. Path used: {actual_file_path}")
+            return pd.DataFrame()
+            
+    logger.info(f"({source_context}) Preparing to load IoT data from: {actual_file_path}")
     df = _load_csv_data(actual_file_path, source_context)
-    if df.empty: return pd.DataFrame()
-    df = convert_date_columns(df, ['timestamp'])
-    numeric_cols = {'avg_co2_ppm': np.nan, 'max_co2_ppm': np.nan, 'avg_pm25': np.nan, 'voc_index': np.nan, 
-                    'avg_temp_celsius': np.nan, 'avg_humidity_rh': np.nan, 'avg_noise_db': np.nan, 
-                    'waiting_room_occupancy': np.nan, 'patient_throughput_per_hour': np.nan, 'sanitizer_dispenses_per_hour': np.nan}
-    string_cols = {'clinic_id': "UnknownClinic", 'room_name': "UnknownRoom", 'zone_id': "UnknownZone"}
-    df = standardize_missing_values(df, string_cols, numeric_cols)
-    logger.info(f"({source_context}) IoT data processed. Shape: {df.shape}")
+    if df.empty: 
+        logger.warning(f"({source_context}) IoT data DataFrame is empty after _load_csv_data from {actual_file_path}.")
+        return pd.DataFrame()
+
+    date_cols_iot = getattr(settings, 'IOT_DATE_COLS', ['timestamp'])
+    df = convert_date_columns(df, date_cols_iot)
+
+    numeric_cols_iot_config = getattr(settings, 'IOT_NUMERIC_COLS_DEFAULTS', {
+        'avg_co2_ppm': np.nan, 'max_co2_ppm': np.nan, 'avg_pm25': np.nan, 
+        'voc_index': np.nan, 'avg_temp_celsius': np.nan, 'avg_humidity_rh': np.nan, 
+        'avg_noise_db': np.nan, 'waiting_room_occupancy': np.nan, 
+        'patient_throughput_per_hour': np.nan, 'sanitizer_dispenses_per_hour': np.nan
+    })
+    string_cols_iot_config = getattr(settings, 'IOT_STRING_COLS_DEFAULTS', {
+        'clinic_id': "UnknownClinic", 'room_name': "UnknownRoom", 'zone_id': "UnknownZone", 'sensor_id': "UnknownSensor"
+    })
+    df = standardize_missing_values(df, string_cols_iot_config, numeric_cols_iot_config)
+    
+    logger.info(f"({source_context}) IoT data loaded and processed. Shape: {df.shape}")
     return df
 
-@st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, hash_funcs={pd.DataFrame: hash_dataframe_safe})
+
 def load_zone_data(
     attributes_file_path_str: Optional[str] = None,
     geometries_file_path_str: Optional[str] = None,
     source_context: str = "ZoneDataLoader"
 ) -> pd.DataFrame:
-    actual_attributes_path = Path(attributes_file_path_str if attributes_file_path_str else settings.ZONE_ATTRIBUTES_CSV_PATH)
-    actual_geometries_path = Path(geometries_file_path_str if geometries_file_path_str else settings.ZONE_GEOMETRIES_GEOJSON_FILE_PATH)
-    logger.info(f"({source_context}) Loading zones: Attrs='{actual_attributes_path}', Geoms='{actual_geometries_path}'")
+    """Loads and merges zone attribute data (CSV) and zone geometries (GeoJSON)."""
+    
+    # Determine paths for attributes and geometries
+    attr_path_str = attributes_file_path_str
+    if not attr_path_str:
+        if hasattr(settings, 'ZONE_ATTRIBUTES_CSV_PATH'): attr_path_str = settings.ZONE_ATTRIBUTES_CSV_PATH
+        else: logger.error(f"({source_context}) ZONE_ATTRIBUTES_CSV_PATH not in settings. Cannot load attributes."); return pd.DataFrame()
+    
+    geom_path_str = geometries_file_path_str
+    if not geom_path_str:
+        if hasattr(settings, 'ZONE_GEOMETRIES_GEOJSON_FILE_PATH'): geom_path_str = settings.ZONE_GEOMETRIES_GEOJSON_FILE_PATH
+        else: logger.error(f"({source_context}) ZONE_GEOMETRIES_GEOJSON_FILE_PATH not in settings. Cannot load geometries."); return pd.DataFrame()
+
+    actual_attributes_path = Path(attr_path_str)
+    if not actual_attributes_path.is_absolute():
+        if hasattr(settings, 'DATA_DIR'): actual_attributes_path = (Path(settings.DATA_DIR) / actual_attributes_path).resolve()
+        else: logger.error(f"({source_context}) Cannot resolve relative attributes path '{attr_path_str}'. DATA_DIR missing."); return pd.DataFrame()
+
+    actual_geometries_path = Path(geom_path_str)
+    if not actual_geometries_path.is_absolute():
+        if hasattr(settings, 'DATA_DIR'): actual_geometries_path = (Path(settings.DATA_DIR) / actual_geometries_path).resolve()
+        else: logger.error(f"({source_context}) Cannot resolve relative geometries path '{geom_path_str}'. DATA_DIR missing."); return pd.DataFrame()
+
+    logger.info(f"({source_context}) Loading zone data: Attributes='{actual_attributes_path}', Geometries='{actual_geometries_path}'")
 
     attributes_df = _load_csv_data(actual_attributes_path, f"{source_context}/Attributes")
-    if attributes_df.empty and 'zone_id' not in attributes_df.columns: attributes_df = pd.DataFrame(columns=['zone_id'])
-    elif 'zone_id' not in attributes_df.columns: logger.error(f"({source_context}) 'zone_id' missing in attributes CSV.")
+    if 'zone_id' not in attributes_df.columns:
+        logger.error(f"({source_context}) 'zone_id' column missing in attributes CSV '{actual_attributes_path.name}'. Zone data merge will be incomplete.")
+        # If zone_id is critical and missing, could return empty or proceed with attributes_df as is.
+        # For now, let it proceed, merge might fail or result in only attributes.
+    else:
+        attributes_df['zone_id'] = attributes_df['zone_id'].astype(str).str.strip()
 
-    geometries_data = robust_json_load(str(actual_geometries_path))
-    default_crs = settings.DEFAULT_CRS_STANDARD; geometries_list: List[Dict[str, Any]] = []
+
+    geometries_list: List[Dict[str, Any]] = []
+    default_crs_setting = getattr(settings, 'DEFAULT_CRS_STANDARD', 'EPSG:4326') # Default CRS
+    
+    geometries_data = robust_json_load(actual_geometries_path) # Use Path object
     if geometries_data and isinstance(geometries_data.get("features"), list):
-        default_crs = geometries_data.get("crs", {}).get("properties", {}).get("name", default_crs)
+        # Attempt to get CRS from GeoJSON, fallback to setting
+        try:
+            loaded_crs = geometries_data.get("crs", {}).get("properties", {}).get("name", default_crs_setting)
+        except: # Handle if 'crs' or sub-keys are not dicts
+            loaded_crs = default_crs_setting
+            logger.debug(f"({source_context}) Could not parse CRS from GeoJSON, using default: {default_crs_setting}")
+
         for feature in geometries_data['features']:
-            props = feature.get("properties", {}); zid_prop = props.get("zone_id", props.get("ZONE_ID", props.get("id")))
-            geom = feature.get("geometry")
-            if zid_prop and geom:
-                geometries_list.append({"zone_id": str(zid_prop).strip(), "geometry": json.dumps(geom), "geometry_obj": geom,
-                                        "name_geojson": str(props.get("name", props.get("NAME", ""))).strip(),
-                                        "description_geojson": str(props.get("description", "")).strip()})
-            else: logger.warning(f"({source_context}) GeoJSON feature missing zone_id/geometry. Props: {props}")
-    else: logger.error(f"({source_context}) Invalid/missing GeoJSON features: {actual_geometries_path}")
+            props = feature.get("properties", {}) if isinstance(feature, dict) and isinstance(feature.get("properties"), dict) else {}
+            geom = feature.get("geometry") if isinstance(feature, dict) else None
+            
+            # Try common property names for zone ID and name
+            zid_prop_val = props.get("zone_id", props.get("ZONE_ID", props.get("id", props.get("OBJECTID"))))
+            name_prop_val = props.get("name", props.get("NAME", props.get("zone_name", ""))) # Add more fallbacks if needed
+            
+            if zid_prop_val is not None and geom: # zone_id must exist
+                geometries_list.append({
+                    "zone_id": str(zid_prop_val).strip(), 
+                    "geometry_str": json.dumps(geom), # Store geometry as string for DataFrame
+                    "geometry_obj": geom, # Store raw geometry object
+                    "name_geojson": str(name_prop_val).strip(),
+                    "description_geojson": str(props.get("description", "")).strip()
+                })
+            else: 
+                logger.debug(f"({source_context}) GeoJSON feature missing 'zone_id' (or equivalent) or 'geometry'. Properties: {list(props.keys())}")
+    else: 
+        logger.warning(f"({source_context}) Invalid or missing GeoJSON features in '{actual_geometries_path.name}'. No geometries will be loaded.")
 
-    geometries_df = pd.DataFrame(geometries_list) if geometries_list else pd.DataFrame(columns=['zone_id', 'geometry', 'geometry_obj', 'name_geojson', 'description_geojson'])
-    if 'zone_id' in geometries_df.columns: geometries_df['zone_id'] = geometries_df['zone_id'].astype(str)
+    geometries_df = pd.DataFrame(geometries_list) if geometries_list else pd.DataFrame(columns=['zone_id', 'geometry_str', 'geometry_obj', 'name_geojson', 'description_geojson'])
+    if 'zone_id' in geometries_df.columns: 
+        geometries_df['zone_id'] = geometries_df['zone_id'].astype(str).str.strip()
 
-    if 'zone_id' in attributes_df.columns: attributes_df['zone_id'] = attributes_df['zone_id'].astype(str).str.strip()
-    merged_df = pd.merge(attributes_df, geometries_df, on="zone_id", how="outer") if 'zone_id' in attributes_df.columns and 'zone_id' in geometries_df.columns else \
-                  (attributes_df if not geometries_df.empty else geometries_df) # Fallback if one is missing zone_id
 
-    merged_df['name'] = merged_df.get('name', pd.Series(dtype=str)).fillna(merged_df.get('name_geojson', pd.Series(dtype=str)))
-    merged_df['name'] = merged_df['name'].fillna("Zone " + merged_df.get('zone_id', pd.Series(dtype=str)).astype(str)) if 'zone_id' in merged_df.columns else merged_df['name'].fillna("Unknown Zone")
+    # Merge attributes and geometries
+    if attributes_df.empty and geometries_df.empty:
+        logger.error(f"({source_context}) Both zone attributes and geometries are empty. Returning empty DataFrame.")
+        return pd.DataFrame()
+    elif attributes_df.empty:
+        logger.warning(f"({source_context}) Zone attributes DataFrame is empty. Using only geometries data.")
+        merged_df = geometries_df
+    elif geometries_df.empty:
+        logger.warning(f"({source_context}) Zone geometries DataFrame is empty. Using only attributes data.")
+        merged_df = attributes_df
+    elif 'zone_id' not in attributes_df.columns:
+        logger.error(f"({source_context}) 'zone_id' missing in attributes. Cannot merge with geometries. Returning attributes only.")
+        merged_df = attributes_df
+    elif 'zone_id' not in geometries_df.columns:
+        logger.warning(f"({source_context}) 'zone_id' missing in geometries. Cannot merge with attributes. Returning attributes only.")
+        merged_df = attributes_df
+    else: # Both have zone_id, proceed with merge
+        merged_df = pd.merge(attributes_df, geometries_df, on="zone_id", how="outer")
+
+    # Coalesce 'name' from attributes or GeoJSON, fallback to 'Zone ' + zone_id
+    if 'name' not in merged_df.columns and 'name_geojson' in merged_df.columns:
+        merged_df['name'] = merged_df['name_geojson']
+    elif 'name' in merged_df.columns and 'name_geojson' in merged_df.columns:
+        merged_df['name'] = merged_df['name'].fillna(merged_df['name_geojson'])
+    
+    if 'name' in merged_df.columns and 'zone_id' in merged_df.columns:
+        merged_df['name'] = merged_df['name'].fillna("Zone " + merged_df['zone_id'].astype(str))
+    elif 'name' not in merged_df.columns and 'zone_id' in merged_df.columns:
+         merged_df['name'] = "Zone " + merged_df['zone_id'].astype(str)
+    elif 'name' not in merged_df.columns: # Absolute fallback if no zone_id either
+         merged_df['name'] = [f"UnknownZone_{i}" for i in range(len(merged_df))]
+
+
     merged_df.drop(columns=['name_geojson'], errors='ignore', inplace=True)
 
-    num_cols_zone = {'population': 0.0, 'socio_economic_index': np.nan, 'num_clinics': 0, 'avg_travel_time_clinic_min': np.nan, 'area_sqkm': np.nan}
-    str_cols_zone = {'predominant_hazard_type': "Unknown", 'typical_workforce_exposure_level': "Unknown", 'primary_livelihood': "Unknown", 'water_source_main': "Unknown", 'description_geojson': "N/A"}
-    merged_df = standardize_missing_values(merged_df, str_cols_zone, num_cols_zone)
-    merged_df['crs'] = default_crs
-    if 'geometry_obj' not in merged_df.columns: merged_df['geometry_obj'] = merged_df.get('geometry', pd.Series(dtype=object)).apply(lambda x: json.loads(x) if isinstance(x, str) and x.strip().startswith('{') else None)
-    if 'zone_id' not in merged_df.columns: merged_df['zone_id'] = [f"GEN_ZONE_{i}" for i in range(len(merged_df))]
-    logger.info(f"({source_context}) Zone data loaded/merged. Shape: {merged_df.shape}")
+    # Standardize known numeric and string columns
+    zone_numeric_cols_config = getattr(settings, 'ZONE_NUMERIC_COLS_DEFAULTS', {
+        'population': 0.0, 'socio_economic_index': np.nan, 'num_clinics': 0, 
+        'num_chws': 0, 'avg_travel_time_clinic_min': np.nan, 'area_sqkm': np.nan
+    })
+    zone_string_cols_config = getattr(settings, 'ZONE_STRING_COLS_DEFAULTS', {
+        'predominant_hazard_type': "Unknown", 'typical_workforce_exposure_level': "Unknown", 
+        'primary_livelihood': "Unknown", 'water_source_main': "Unknown", 
+        'description_geojson': "N/A"
+    })
+    merged_df = standardize_missing_values(merged_df, zone_string_cols_config, zone_numeric_cols_config)
+    
+    merged_df['crs'] = loaded_crs if 'loaded_crs' in locals() else default_crs_setting # Store the CRS
+
+    # Ensure geometry_obj exists, try to parse from geometry_str if needed
+    if 'geometry_obj' not in merged_df.columns and 'geometry_str' in merged_df.columns:
+        def safe_json_loads(x):
+            if isinstance(x, str) and x.strip().startswith('{'):
+                try: return json.loads(x)
+                except json.JSONDecodeError: return None
+            return None
+        merged_df['geometry_obj'] = merged_df['geometry_str'].apply(safe_json_loads)
+    elif 'geometry_obj' not in merged_df.columns:
+         merged_df['geometry_obj'] = None # Ensure column exists
+
+    # Ensure zone_id column if somehow lost or never existed (e.g., only geojson without ID property)
+    if 'zone_id' not in merged_df.columns:
+        logger.warning(f"({source_context}) 'zone_id' column still missing after processing. Generating generic IDs.")
+        merged_df['zone_id'] = [f"GEN_ZONE_IDX_{i}" for i in range(len(merged_df))]
+
+    logger.info(f"({source_context}) Zone data loaded and merged. Final shape: {merged_df.shape}")
     return merged_df
 
-@st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS)
-def load_escalation_protocols(file_path_str: Optional[str] = None, source_context: str = "EscalationProtocolLoader") -> Dict[str, Any]:
-    data = robust_json_load(file_path_str or settings.ESCALATION_PROTOCOLS_JSON_PATH)
-    if not data or not isinstance(data, dict) or not isinstance(data.get("protocols"), list):
-        logger.error(f"({source_context}) Escalation protocols invalid or missing 'protocols' list."); return {"protocols": [], "contacts": {}, "message_templates": {}}
-    logger.info(f"({source_context}) Escalation protocols loaded: {len(data.get('protocols',[]))} protocols.")
+
+def load_json_config_file(
+    file_path_str_or_setting_attr: str, 
+    default_return_value: Union[Dict, List],
+    source_context: str = "JSONConfigLoader"
+) -> Union[Dict, List]:
+    """
+    Loads a JSON configuration file. The input can be a direct file path string
+    or an attribute name from `settings` that holds the file path string.
+    """
+    path_to_load_str = ""
+    if hasattr(settings, file_path_str_or_setting_attr): # Check if it's a settings attribute name
+        path_to_load_str = getattr(settings, file_path_str_or_setting_attr)
+        logger.debug(f"({source_context}) Loading JSON from settings attribute '{file_path_str_or_setting_attr}' -> path '{path_to_load_str}'")
+    elif isinstance(file_path_str_or_setting_attr, str) and (Path(file_path_str_or_setting_attr).exists() or '/' in file_path_str_or_setting_attr or '\\' in file_path_str_or_setting_attr):
+        # Likely a direct path string
+        path_to_load_str = file_path_str_or_setting_attr
+        logger.debug(f"({source_context}) Loading JSON from direct path string: '{path_to_load_str}'")
+    else:
+        logger.error(f"({source_context}) Invalid file path or settings attribute: '{file_path_str_or_setting_attr}'. Cannot load JSON.")
+        return default_return_value
+
+    if not path_to_load_str or not isinstance(path_to_load_str, str):
+        logger.error(f"({source_context}) Resolved path to load is empty or not a string for '{file_path_str_or_setting_attr}'.")
+        return default_return_value
+
+    actual_file_path = Path(path_to_load_str)
+    if not actual_file_path.is_absolute():
+        if hasattr(settings, 'CONFIG_DIR'): # Try resolving from a CONFIG_DIR if it exists in settings
+            actual_file_path = (Path(settings.CONFIG_DIR) / actual_file_path).resolve()
+        elif hasattr(settings, 'PROJECT_ROOT_DIR'): # Fallback to PROJECT_ROOT_DIR
+            actual_file_path = (Path(settings.PROJECT_ROOT_DIR) / actual_file_path).resolve()
+        else:
+            logger.warning(f"({source_context}) Cannot resolve relative JSON path '{actual_file_path}' as CONFIG_DIR/PROJECT_ROOT_DIR are not in settings. Trying current dir.")
+            actual_file_path = actual_file_path.resolve() # Resolve from CWD as last resort
+
+
+    data = robust_json_load(actual_file_path)
+    if data is None: # robust_json_load returns None on failure
+        logger.warning(f"({source_context}) Failed to load JSON from '{actual_file_path}'. Returning default.")
+        return default_return_value
+    
+    # Optional: Add validation for expected structure if default_return_value implies it
+    if isinstance(default_return_value, dict) and not isinstance(data, dict):
+        logger.warning(f"({source_context}) Loaded JSON from '{actual_file_path}' is not a dictionary as expected. Returning default.")
+        return default_return_value
+    if isinstance(default_return_value, list) and not isinstance(data, list):
+        logger.warning(f"({source_context}) Loaded JSON from '{actual_file_path}' is not a list as expected. Returning default.")
+        return default_return_value
+
+    logger.info(f"({source_context}) Successfully loaded JSON configuration from '{actual_file_path.name}'. Type: {type(data)}")
     return data
 
-@st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS)
-def load_pictogram_map(file_path_str: Optional[str] = None, source_context: str = "PictogramMapLoader") -> Dict[str, str]:
-    data = robust_json_load(file_path_str or settings.PICTOGRAM_MAP_JSON_PATH)
-    if not data or not isinstance(data, dict): logger.warning(f"({source_context}) Pictogram map invalid."); return {}
-    logger.info(f"({source_context}) Pictogram map loaded: {len(data)} entries."); return data
 
-@st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS)
+# --- Functions to be called from pages, now using the generic JSON loader ---
+
+def load_escalation_protocols(file_path_str: Optional[str] = None, source_context: str = "EscalationProtocolLoader") -> Dict[str, Any]:
+    """Loads escalation protocols. Expects a dictionary with a 'protocols' list."""
+    default_protocols_struct = {"protocols": [], "contacts": {}, "message_templates": {}}
+    # Use the setting attribute name if no direct path is given
+    path_or_attr = file_path_str if file_path_str else 'ESCALATION_PROTOCOLS_JSON_PATH'
+    
+    data = load_json_config_file(path_or_attr, default_protocols_struct, source_context)
+    
+    # Specific validation for escalation protocols structure
+    if not (isinstance(data, dict) and isinstance(data.get("protocols"), list)):
+        logger.error(f"({source_context}) Loaded escalation data from '{path_or_attr}' is invalid or missing 'protocols' list. Returning default structure.")
+        return default_protocols_struct
+        
+    logger.info(f"({source_context}) Escalation protocols processed: {len(data.get('protocols',[]))} protocols.")
+    return data
+
+def load_pictogram_map(file_path_str: Optional[str] = None, source_context: str = "PictogramMapLoader") -> Dict[str, str]:
+    """Loads pictogram map. Expects a dictionary."""
+    path_or_attr = file_path_str if file_path_str else 'PICTOGRAM_MAP_JSON_PATH'
+    data = load_json_config_file(path_or_attr, {}, source_context) # Default is empty dict
+    if not isinstance(data, dict): # Ensure it's a dict
+        logger.warning(f"({source_context}) Pictogram map data from '{path_or_attr}' is not a dictionary. Returning empty map.")
+        return {}
+    logger.info(f"({source_context}) Pictogram map processed: {len(data)} entries."); 
+    return data
+
 def load_haptic_patterns(file_path_str: Optional[str] = None, source_context: str = "HapticPatternLoader") -> Dict[str, List[int]]:
-    data = robust_json_load(file_path_str or settings.HAPTIC_PATTERNS_JSON_PATH)
-    if not data or not isinstance(data, dict): logger.warning(f"({source_context}) Haptic patterns invalid."); return {}
-    logger.info(f"({source_context}) Haptic patterns loaded: {len(data)} entries."); return data
+    """Loads haptic patterns. Expects a dictionary where values are lists of integers."""
+    path_or_attr = file_path_str if file_path_str else 'HAPTIC_PATTERNS_JSON_PATH'
+    data = load_json_config_file(path_or_attr, {}, source_context) # Default is empty dict
+    if not isinstance(data, dict):
+        logger.warning(f"({source_context}) Haptic patterns data from '{path_or_attr}' is not a dictionary. Returning empty map.")
+        return {}
+    
+    # Optional: Validate that values are lists of ints
+    valid_data = {}
+    for key, value in data.items():
+        if isinstance(value, list) and all(isinstance(item, int) for item in value):
+            valid_data[key] = value
+        else:
+            logger.warning(f"({source_context}) Invalid haptic pattern for key '{key}' in '{path_or_attr}'. Expected list of integers. Skipping.")
+            
+    logger.info(f"({source_context}) Haptic patterns processed: {len(valid_data)} valid entries."); 
+    return valid_data
