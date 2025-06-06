@@ -1,9 +1,17 @@
-timestamp,clinic_id,room_name,zone_id,avg_co2_ppm,max_co2_ppm,avg_pm25,voc_index,avg_temp_celsius,avg_humidity_rh,avg_noise_db,waiting_room_occupancy,patient_throughput_per_hour,sanitizer_dispenses_per_hour
-2023-10-05T08:00:00Z,CLINIC01,WaitingArea_A,ZoneA,850,1100,15,120,24.5,60,55,8,5,10
-2023-10-05T08:00:00Z,CLINIC01,ConsultRoom_1,ZoneA,600,750,8,80,23.0,55,45,,3,2
-2023-10-05T09:00:00Z,CLINIC02,WaitingArea_Main,ZoneB,1600,2200,38,250,26.1,72,68,15,3,5
-2023-10-05T09:00:00Z,CLINIC01,WaitingArea_A,ZoneA,950,1300,18,130,25.0,62,58,12,6,12
-2023-10-05T10:00:00Z,CLINIC01,Pharmacy,ZoneA,700,800,12,100,24.0,58,50,,,8
-2023-10-05T10:00:00Z,CLINIC03,Screening_Tent_Outdoor,ZoneD,450,550,25,70,28.5,45,65,5,7,4
-2023-10-05T11:00:00Z,CLINIC02,Lab_Main,ZoneB,900,1000,22,150,25.5,65,60,,,
-2023-10-05T11:00:00Z,CLINIC01,WaitingArea_A,ZoneA,1100,1500,20,145,25.3,63,60,10,5,11
+timestamp,clinic_id,room_name,sensor_id,avg_co2_ppm,max_co2_ppm,avg_pm25,voc_index,avg_temp_celsius,avg_humidity_rh,avg_noise_db,waiting_room_occupancy,patient_throughput_per_hour,sanitizer_dispenses_per_hour,zone_id
+2023-08-01 08:05:00,ClinicA,Waiting Room,Sensor_WR_A,850,950,15.2,120,24.5,60,65,8,12,20,ZoneA
+2023-08-01 08:05:00,ClinicA,Consultation 1,Sensor_C1_A,600,700,8.1,105,23.1,55,50,0,2,5,ZoneA
+2023-08-01 09:15:00,ClinicA,Waiting Room,Sensor_WR_A,1100,1450,18.9,135,25.1,62,72,15,10,25,ZoneA
+2023-08-01 09:15:00,ClinicA,Consultation 1,Sensor_C1_A,750,850,9.5,110,23.5,56,52,0,3,8,ZoneA
+2023-08-02 10:30:00,ClinicB,Waiting Room,Sensor_WR_B,1600,1900,25.5,180,26.2,65,75,18,8,15,ZoneB
+2023-08-02 10:30:00,ClinicB,Lab,Sensor_LAB_B,900,1100,12.3,115,22.8,58,68,0,0,10,ZoneB
+2023-08-03 11:00:00,ClinicA,Waiting Room,Sensor_WR_A,950,1200,16.8,125,24.8,61,68,12,14,22,ZoneA
+2023-08-03 11:00:00,ClinicA,Consultation 2,Sensor_C2_A,700,800,9.0,108,23.3,57,51,0,2,6,ZoneA
+2023-08-04 14:00:00,ClinicC,Waiting Room,Sensor_WR_C,2600,3100,38.1,250,28.0,70,80,25,5,12,ZoneC
+2023-08-04 14:00:00,ClinicC,Dispensary,Sensor_DISP_C,1200,1500,14.5,140,24.0,64,66,0,0,18,ZoneC
+2023-08-05 09:45:00,ClinicB,Waiting Room,Sensor_WR_B,1300,1600,22.1,160,25.5,63,73,16,9,18,ZoneB
+2023-08-06 12:20:00,ClinicA,Waiting Room,Sensor_WR_A,1050,1350,17.5,130,25.0,63,70,14,11,28,ZoneA
+2023-08-07 15:00:00,ClinicC,Waiting Room,Sensor_WR_C,2100,2500,33.0,220,27.5,68,78,22,6,14,ZoneC
+2023-08-08 08:55:00,ClinicA,Waiting Room,Sensor_WR_A,900,1100,16.2,122,24.6,59,66,10,13,24,ZoneA
+2023-08-09 11:30:00,ClinicB,Waiting Room,Sensor_WR_B,1400,1750,23.8,170,26.0,64,74,17,8,16,ZoneB
+2023-08-10 13:10:00,ClinicA,Consultation 1,Sensor_C1_A,800,950,10.1,112,23.8,58,53,0,3,7,ZoneA
