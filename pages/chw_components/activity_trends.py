@@ -41,17 +41,17 @@ def calculate_chw_activity_trends_data(
         return trends_output
     
     valid_agg_periods = ['D', 'B', 'W', 'W-SUN', 'W-MON', 'W-TUE', 'W-WED', 'W-THU', 'W-FRI', 'W-SAT', 
-                         'SM', 'SMS', 'M', 'MS', 'Q', 'QS', 'A', 'AS', 'Y', 'YS', 'H', 'T', 'MIN', 'S', 'L', 'MS', 'US', 'NS']
-    if time_period_aggregation.upper() not in valid_agg_periods:
-        logger.error(f"({source_context_log_prefix}) Invalid time_period_aggregation: '{time_period_aggregation}'.")
+                         'SM', 'SMS', 'M', 'MS', 'Q', 'QS', 'A', 'AS', 'Y', 'YS', 'H', 'T', 'MIN', 'S', 'L', 'US', 'NS']
+    if time_period_aggregation not in valid_agg_periods:
+        logger.error(f"({source_context_log_prefix}) Invalid time_period_aggregation: '{time_period_aggregation}'. Must be one of {valid_agg_periods}")
         return trends_output
 
     try:
         start_date_dt = pd.to_datetime(trend_start_date_input, errors='coerce')
         end_date_dt = pd.to_datetime(trend_end_date_input, errors='coerce')
         if pd.NaT in [start_date_dt, end_date_dt]: raise ValueError("Unparseable date inputs.")
-        start_date = start_date_dt.date() if isinstance(start_date_dt, pd.Timestamp) else start_date_dt
-        end_date = end_date_dt.date() if isinstance(end_date_dt, pd.Timestamp) else end_date_dt
+        start_date = start_date_dt.date()
+        end_date = end_date_dt.date()
         if start_date > end_date: start_date, end_date = end_date, start_date
     except Exception as e_date:
         logger.error(f"({source_context_log_prefix}) Invalid date inputs: {e_date}. Start: '{trend_start_date_input}', End: '{trend_end_date_input}'.", exc_info=True)
@@ -94,7 +94,6 @@ def calculate_chw_activity_trends_data(
 
     if df_period_filtered.empty:
         logger.info(f"({source_context_log_prefix}) No data after period/zone filtering. Trend Series will be empty.")
-        # trends_output will retain its initial None/empty Series values
         return trends_output
 
     patient_id_col = 'patient_id'
@@ -121,8 +120,10 @@ def calculate_chw_activity_trends_data(
             df_prio_analysis[prio_score_col] = convert_to_numeric(df_prio_analysis[prio_score_col], default_value=np.nan)
             df_prio_analysis.dropna(subset=[prio_score_col], inplace=True)
             
-            # CORRECTED: Simplified and more robust logic to get the threshold directly.
-            high_prio_threshold = _get_setting('FATIGUE_INDEX_HIGH_THRESHOLD', 70)
+            # CORRECTED: The threshold from settings is now safely converted to a numeric type
+            # before use, making the function resilient to configuration errors (e.g., "80" vs 80).
+            high_prio_threshold_raw = _get_setting('FATIGUE_INDEX_HIGH_THRESHOLD', 70)
+            high_prio_threshold = convert_to_numeric(high_prio_threshold_raw, default_value=70)
 
             df_high_prio_encounters = df_prio_analysis[df_prio_analysis[prio_score_col] >= high_prio_threshold]
             logger.debug(f"({source_context_log_prefix}/HighPrio) Num high priority encounters (score >= {high_prio_threshold}): {len(df_high_prio_encounters)}")
