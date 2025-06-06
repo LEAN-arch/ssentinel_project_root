@@ -50,10 +50,15 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 try:
     page_icon_value = "🏥" 
-    if hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'APP_FAVICON_PATH'):
-        favicon_path = Path(_get_setting('PROJECT_ROOT_DIR', '.')) / _get_setting('APP_FAVICON_PATH', 'assets/favicon.ico')
-        if favicon_path.is_file(): page_icon_value = str(favicon_path)
-        else: logger.warning(f"Favicon for Clinic Dashboard not found: {favicon_path}")
+    # CORRECTED: Use the defined small logo path for the favicon.
+    app_logo_small_path_str = _get_setting('APP_LOGO_SMALL_PATH', None)
+    if app_logo_small_path_str:
+        favicon_path = Path(app_logo_small_path_str)
+        if favicon_path.is_file():
+            page_icon_value = str(favicon_path)
+        else:
+            logger.warning(f"Favicon for Clinic Dashboard not found at path from setting APP_LOGO_SMALL_PATH: {favicon_path}")
+    
     page_layout_value = _get_setting('APP_LAYOUT', "wide")
     
     st.set_page_config(
@@ -83,11 +88,12 @@ def get_clinic_console_processed_data(
     iot_data_available_flag = False
     iot_csv_path_setting = _get_setting('IOT_CLINIC_ENVIRONMENT_CSV_PATH', None)
     project_root_dir_setting = _get_setting('PROJECT_ROOT_DIR', None)
-    data_dir_setting = _get_setting('DATA_DIR', None)
+    # CORRECTED: Use DATA_SOURCES_DIR which is defined in settings.py
+    data_dir_setting_path = _get_setting('DATA_SOURCES_DIR', None)
 
-    if iot_csv_path_setting and project_root_dir_setting and data_dir_setting:
+    if iot_csv_path_setting and project_root_dir_setting and data_dir_setting_path:
         iot_path = Path(iot_csv_path_setting)
-        if not iot_path.is_absolute(): iot_path = (Path(data_dir_setting) / iot_path).resolve()
+        if not iot_path.is_absolute(): iot_path = (Path(data_dir_setting_path) / iot_path).resolve()
         if iot_path.is_file():
             if isinstance(raw_iot_df, pd.DataFrame) and not raw_iot_df.empty: iot_data_available_flag = True
             else: logger.warning(f"({log_ctx}) IoT data file found at '{iot_path}', but failed to load/empty.")
