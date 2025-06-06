@@ -183,7 +183,7 @@ if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_d
         total_pop_val = df_kpi['population'].sum()
         total_pop = f"{total_pop_val:,.0f}"
     kpi_data.append({
-        "icon": "👥", "label": "Total District Population", "value": total_pop,
+        "icon": "👥", "kpi_title": "Total District Population", "kpi_value": total_pop,
         "help": "Sum of the estimated population across all health zones in the district."
     })
 
@@ -196,7 +196,7 @@ if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_d
             weighted_avg = np.average(df_valid_pop['avg_risk_score'], weights=df_valid_pop['population'])
             weighted_risk_score = f"{weighted_avg:.2f}"
     kpi_data.append({
-        "icon": "⚠️", "label": "Avg. AI Risk Score (Pop. Weighted)", "value": weighted_risk_score,
+        "icon": "⚠️", "kpi_title": "Avg. AI Risk Score (Pop. Weighted)", "kpi_value": weighted_risk_score,
         "help": "The average patient AI-Risk Score, weighted by the population of each zone. Gives a more representative district-wide risk level."
     })
 
@@ -210,7 +210,7 @@ if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_d
         prevalence_rate = (total_cases / total_population_for_prev) * 1000
         prevalence_kpi = f"{prevalence_rate:.1f}"
     kpi_data.append({
-        "icon": "🔬", "label": f"{key_disease_name} Prevalence (/1k Pop.)", "value": prevalence_kpi,
+        "icon": "🔬", "kpi_title": f"{key_disease_name} Prevalence (/1k Pop.)", "kpi_value": prevalence_kpi,
         "help": f"Estimated number of active {key_disease_name.lower()} cases per 1,000 people in the district population."
     })
 
@@ -227,7 +227,7 @@ if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_d
             high_risk_zones = "0"
             help_text_risk = "Could not determine a valid risk threshold. All zones are considered non-high-risk."
     kpi_data.append({
-        "icon": "🚩", "label": "High-Risk Zones Count", "value": high_risk_zones,
+        "icon": "🚩", "kpi_title": "High-Risk Zones Count", "kpi_value": high_risk_zones,
         "help": help_text_risk
     })
     
