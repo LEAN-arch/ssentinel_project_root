@@ -87,10 +87,8 @@ h6 {font-size: 0.95rem; color: var(--sentinel-color-text-muted); font-weight: 50
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06); 
     border-left: 4px solid var(--sentinel-color-risk-neutral);
     margin-bottom: 1rem;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    min-height: 125px;
+    /* REMOVED: display:flex properties which were causing the rendering bug in st.columns */
+    min-height: 125px; /* min-height is safe and ensures cards in a row have similar height */
     transition: box-shadow 0.2s ease-in-out, transform 0.15s ease-in-out; 
 }
 .kpi-card:hover {
@@ -147,11 +145,10 @@ h6 {font-size: 0.95rem; color: var(--sentinel-color-text-muted); font-weight: 50
 
 .kpi-card-header { display: flex; align-items: center; margin-bottom: 0.5rem; } 
 .kpi-icon {
-    /* CORRECTED: Further increased font size for more prominent emojis */
     font-size: 2.8rem;
     margin-right: 0.8rem;
     color: var(--sentinel-color-text-headings-sub);
-    line-height: 1; /* Adjust line-height for better vertical alignment with larger font */
+    line-height: 1; 
     flex-shrink: 0; 
 }
 .kpi-title { 
