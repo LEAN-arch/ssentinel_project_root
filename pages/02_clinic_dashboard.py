@@ -85,6 +85,8 @@ def get_clinic_console_processed_data(
     raw_health_df = load_health_records(source_context=f"{log_ctx}/LoadRawHealthRecs")
     raw_iot_df = load_iot_clinic_environment_data(source_context=f"{log_ctx}/LoadRawIoTData")
     
+    # CORRECTED: Simplified and robust check for IoT data availability.
+    # The flag now directly reflects whether the loader returned a valid, non-empty DataFrame.
     iot_data_available_flag = isinstance(raw_iot_df, pd.DataFrame) and not raw_iot_df.empty
     
     ai_enriched_health_df_full = pd.DataFrame() 
@@ -421,14 +423,13 @@ with tabs_list[3]:
 
 with tabs_list[4]: 
     st.subheader(f"Facility Environment Detailed Monitoring ({current_period_str})")
-    # CORRECTED: The logic is restructured to be more efficient and provide clearer user feedback.
     if data_load_error_occurred:
         st.warning("Data loading failed, cannot display environmental insights.")
     elif not iot_available_flag:
         st.warning("🔌 IoT environmental data source is unavailable. Detailed environmental monitoring not possible.")
     elif iot_df_period.empty:
         st.info("ℹ️ No IoT environmental data recorded for the selected period.")
-    else: # This block now only runs if there is IoT data for the period.
+    else: 
         try:
             env_details_data_map = prepare_clinic_environmental_detail_data(iot_df_period, current_period_str)
             
@@ -467,6 +468,7 @@ with tabs_list[4]:
         except Exception as e_env_tab:
             logger.error(f"Error processing Environment Detail Tab content: {e_env_tab}", exc_info=True)
             st.error("⚠️ An error occurred while generating environmental details.")
+
 
 st.divider()
 footer_text = _get_setting('APP_FOOTER_TEXT', "Sentinel Health Co-Pilot.")
