@@ -121,9 +121,8 @@ def calculate_chw_activity_trends_data(
             df_prio_analysis[prio_score_col] = convert_to_numeric(df_prio_analysis[prio_score_col], default_value=np.nan)
             df_prio_analysis.dropna(subset=[prio_score_col], inplace=True)
             
-            high_prio_threshold = _get_setting('FATIGUE_INDEX_HIGH_THRESHOLD', 0.7) * 100 # Assuming 0-100 scale if setting is 0-1
-            if _get_setting('FATIGUE_INDEX_HIGH_THRESHOLD', 0.7) > 1: # if setting is already 0-100 scale
-                 high_prio_threshold = _get_setting('FATIGUE_INDEX_HIGH_THRESHOLD', 70)
+            # CORRECTED: Simplified and more robust logic to get the threshold directly.
+            high_prio_threshold = _get_setting('FATIGUE_INDEX_HIGH_THRESHOLD', 70)
 
             df_high_prio_encounters = df_prio_analysis[df_prio_analysis[prio_score_col] >= high_prio_threshold]
             logger.debug(f"({source_context_log_prefix}/HighPrio) Num high priority encounters (score >= {high_prio_threshold}): {len(df_high_prio_encounters)}")
