@@ -7,8 +7,6 @@ import logging
 from typing import Any, Dict
 
 from config import settings
-# Removed unused import: from .protocol_executor import execute_escalation_protocol
-# Protocol execution is handled in RiskPredictionModel or Alerting based on current logic
 
 logger = logging.getLogger(__name__)
 
@@ -39,19 +37,16 @@ class FollowUpPrioritizer:
         if pd.notna(min_spo2) and min_spo2 < settings.ALERT_SPO2_CRITICAL_LOW_PCT:
             return True
 
-        # Prioritize 'vital_signs_temperature_celsius' then 'max_skin_temp_celsius'
         temp_c_vital = pd.to_numeric(features.get('vital_signs_temperature_celsius'), errors='coerce')
         temp_c_skin = pd.to_numeric(features.get('max_skin_temp_celsius'), errors='coerce')
         
-        # Use vital sign temp if available and valid, else skin temp
         effective_temp_c = temp_c_vital if pd.notna(temp_c_vital) else temp_c_skin
 
         if pd.notna(effective_temp_c) and effective_temp_c >= settings.ALERT_BODY_TEMP_HIGH_FEVER_C:
             return True
         
-        # Fall detection: ensure value is treated as string for '1' or 'true' checks
         fall_detected_str = str(features.get('fall_detected_today', '0')).strip().lower()
-        if fall_detected_str in ['1', 'true', 'yes']: # Check against common true-like strings
+        if fall_detected_str in ['1', 'true', 'yes']:
             return True
             
         return False
@@ -70,11 +65,6 @@ class FollowUpPrioritizer:
             
             if is_key_condition or is_urgent_reason:
                 return True
-        
-        # Example: Check for a direct task priority field if one exists in data schema
-        # chw_task_priority_str = str(features.get('chw_task_priority', 'normal')).strip().lower()
-        # if chw_task_priority_str == 'urgent':
-        #     return True
             
         return False
 
@@ -86,7 +76,7 @@ class FollowUpPrioritizer:
         
         min_spo2 = pd.to_numeric(features.get('min_spo2_pct'), errors='coerce')
         if "pneumonia" in condition_str and pd.notna(min_spo2) and \
-           min_spo2 < settings.ALERT_SPO2_WARNING_LOW_PCT: # Warning level, not critical (handled above)
+           min_spo2 < settings.ALERT_SPO2_WARNING_LOW_PCT:
             return True
             
         if any(crit_cond.lower() in condition_str for crit_cond in ["sepsis", "severe dehydration", "heat stroke"]):
@@ -102,7 +92,6 @@ class FollowUpPrioritizer:
         if pd.notna(ambient_heat) and ambient_heat >= settings.ALERT_AMBIENT_HEAT_INDEX_DANGER_C:
             return True
         
-        # Add other contextual hazards checks here (e.g., air quality, flooding alerts if available in `features`)
         return False
 
     def calculate_priority_score(self, features: pd.Series, days_task_overdue: int = 0) -> float:
@@ -116,8 +105,13 @@ class FollowUpPrioritizer:
         
         priority_score = 0.0
 
-        # Ensure 'ai_risk_score' exists and is numeric, default to 0.0 if missing/NaN
-        ai_risk = pd.to_numeric(features.get('ai_risk_score', 0.0), errors='coerce').fillna(0.0)
+        # CORRECTED: This logic now correctly handles a single scalar value.
+        # It gets the value, converts it to numeric if possible, and defaults to 0.0 if it's NaN.
+        ai_risk_raw = features.get('ai_risk_score', 0.0)
+        ai_risk = pd.to_numeric(ai_risk_raw, errors='coerce')
+        if pd.isna(ai_risk):
+            ai_risk = 0.0
+            
         priority_score += ai_risk * self.priority_weights['base_ai_risk_score_contribution_pct']
 
         if self._has_active_critical_vitals_alert(features):
@@ -129,19 +123,16 @@ class FollowUpPrioritizer:
         if self._has_significant_contextual_hazard(features):
             priority_score += self.priority_weights['contextual_hazard_points']
 
-        # Medication Adherence
         adherence_report = str(features.get('medication_adherence_self_report', 'Unknown')).strip().lower()
         if adherence_report == 'poor':
             priority_score += self.priority_weights['poor_adherence_points']
         
-        # Observed Fatigue (by CHW) - ensure value is treated as string
         fatigue_observed_str = str(features.get('signs_of_fatigue_observed_flag', '0')).strip().lower()
         if fatigue_observed_str in ['1', 'true', 'yes']:
              priority_score += self.priority_weights['observed_fatigue_points']
 
-        # Task Overdue Penalty (ensure days_task_overdue is int and non-negative)
         overdue_days_cleaned = max(0, int(days_task_overdue)) if pd.notna(days_task_overdue) else 0
-        overdue_days_capped = min(overdue_days_cleaned, 30) # Cap overdue impact
+        overdue_days_capped = min(overdue_days_cleaned, 30)
         priority_score += overdue_days_capped * self.priority_weights['task_overdue_factor_per_day']
         
         return float(np.clip(priority_score, 0, 100))
@@ -156,33 +147,25 @@ class FollowUpPrioritizer:
 
         df_processed = data_df.copy()
 
-        # Define all features used by helper methods or directly in calculate_priority_score, with their defaults.
-        # String flags should default to '0' or 'Unknown' as per helper logic.
         features_to_ensure_with_defaults: Dict[str, Any] = {
-            'min_spo2_pct': 100.0, 
-            'vital_signs_temperature_celsius': 37.0, 
-            'max_skin_temp_celsius': 37.0, 
-            'fall_detected_today': '0', # String '0' for flag checks
-            'referral_status': 'Unknown',
-            'condition': 'UnknownCondition', # Consistent default
-            'referral_reason': 'N/A',
-            'ambient_heat_index_c': 25.0, # Safe default
+            'min_spo2_pct': 100.0, 'vital_signs_temperature_celsius': 37.0, 
+            'max_skin_temp_celsius': 37.0, 'fall_detected_today': '0',
+            'referral_status': 'Unknown', 'condition': 'UnknownCondition', 
+            'referral_reason': 'N/A', 'ambient_heat_index_c': 25.0,
             'medication_adherence_self_report': 'Unknown',
-            'signs_of_fatigue_observed_flag': '0', # String '0'
-            'ai_risk_score': 0.0, # Default AI risk if missing
-            'days_task_overdue': 0 # Ensure this is present and numeric (int)
+            'signs_of_fatigue_observed_flag': '0', 'ai_risk_score': 0.0,
+            'days_task_overdue': 0
         }
 
         for feature_col, default_val in features_to_ensure_with_defaults.items():
             if feature_col not in df_processed.columns:
                 df_processed[feature_col] = default_val
-            else: # If column exists, fill NaNs with its benign default
+            else:
                 if isinstance(default_val, (float, int)) or default_val is np.nan:
                     df_processed[feature_col] = pd.to_numeric(df_processed[feature_col], errors='coerce').fillna(default_val)
-                else: # String type
+                else:
                     df_processed[feature_col] = df_processed[feature_col].fillna(str(default_val)).astype(str)
         
-        # Specifically ensure 'days_task_overdue' is integer after fillna
         df_processed['days_task_overdue'] = df_processed['days_task_overdue'].astype(int)
 
         try:
