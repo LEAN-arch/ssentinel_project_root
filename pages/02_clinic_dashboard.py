@@ -34,11 +34,9 @@ logger = logging.getLogger(__name__)
 
 # --- Configuration & Page Setup ---
 def _get_setting(attr_name: str, default_value: Any) -> Any:
-    """Safely retrieves a configuration setting or returns a default value."""
     return getattr(settings, attr_name, default_value)
 
 def setup_page_config():
-    """Sets the Streamlit page configuration."""
     st.set_page_config(
         page_title=f"Clinic Console - {_get_setting('APP_NAME', 'Sentinel')}",
         page_icon="🏥",
@@ -50,7 +48,6 @@ setup_page_config()
 # --- Data Loading & Caching ---
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 3600), show_spinner="Loading and enriching health records...")
 def load_and_prepare_health_data() -> pd.DataFrame:
-    """Loads raw health records, applies AI models, and prepares dates. This is cached for performance."""
     raw_df = load_health_records()
     if raw_df.empty: return pd.DataFrame()
     enriched_df, _ = apply_ai_models(raw_df)
@@ -62,71 +59,45 @@ def load_and_prepare_health_data() -> pd.DataFrame:
 
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 3600), show_spinner="Loading IoT environmental data...")
 def load_and_prepare_iot_data() -> pd.DataFrame:
-    """Loads and prepares IoT environmental data, cached for performance."""
     raw_df = load_iot_clinic_environment_data()
     if raw_df.empty or 'timestamp' not in raw_df.columns: return pd.DataFrame()
     if not pd.api.types.is_datetime64_any_dtype(raw_df['timestamp']):
         raw_df['timestamp'] = pd.to_datetime(raw_df['timestamp'], errors='coerce')
     return raw_df.dropna(subset=['timestamp'])
 
-# --- UI Components & Filters (Robust Implementation) ---
-def _validate_date_range():
-    """Callback function to validate the date range in session state."""
-    key = "clinic_date_range"
-    max_query_days = _get_setting('MAX_QUERY_DAYS_CLINIC', 90)
+# --- UI Components & Filters ---
+def manage_date_range_filter(data_min_date: date, data_max_date: date) -> Tuple[date, date]:
+    default_days = _get_setting('WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND', 30)
+    default_start = max(data_min_date, data_max_date - timedelta(days=default_days - 1))
     
-    if key in st.session_state:
-        start_date, end_date = st.session_state[key]
-        if start_date > end_date:
-            end_date = start_date
-        
-        if (end_date - start_date).days + 1 > max_query_days:
-            end_date = start_date + timedelta(days=max_query_days - 1)
-            # Ensure the adjusted end date doesn't go into the future
-            end_date = min(end_date, date.today())
-        
-        st.session_state[key] = (start_date, end_date)
+    if 'clinic_date_range' not in st.session_state:
+        st.session_state.clinic_date_range = (default_start, data_max_date)
 
-def initialize_date_filter(data_min_date: date, data_max_date: date):
-    """Initializes the session state and renders the date input widget."""
-    key = "clinic_date_range"
-    if key not in st.session_state:
-        default_days = _get_setting('WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND', 30)
-        default_start = max(data_min_date, data_max_date - timedelta(days=default_days - 1))
-        st.session_state[key] = (default_start, data_max_date)
-
-    st.sidebar.date_input(
+    selected_range = st.sidebar.date_input(
         "Select Date Range for Clinic Review:",
-        key=key,
-        min_value=data_min_date,
-        max_value=data_max_date,
-        on_change=_validate_date_range
+        value=st.session_state.clinic_date_range,
+        min_value=data_min_date, max_value=data_max_date
     )
+    start_date, end_date = (selected_range[0], selected_range[1]) if len(selected_range) == 2 else st.session_state.clinic_date_range
+    if start_date > end_date: end_date = start_date
+    st.session_state.clinic_date_range = (start_date, end_date)
+    return start_date, end_date
 
 # --- Main Application ---
 st.title("🏥 Clinic Operations & Management Console")
 st.markdown("**Service Performance, Patient Care Quality, Resource Management, and Facility Environment Monitoring**")
 st.divider()
 
-# 1. Load data and initialize state
-try:
-    full_health_df = load_and_prepare_health_data()
-    full_iot_df = load_and_prepare_iot_data()
-    iot_available_flag = not full_iot_df.empty
-except Exception as e:
-    logger.error(f"FATAL: Could not load initial data. {e}", exc_info=True)
-    st.error(f"A critical error occurred while loading base data: {e}. The dashboard cannot proceed.")
-    st.stop()
+full_health_df = load_and_prepare_health_data()
+full_iot_df = load_and_prepare_iot_data()
+iot_available_flag = not full_iot_df.empty
 
-# 2. Sidebar and Data-Aware Filters
 st.sidebar.image(str(Path(_get_setting('APP_LOGO_SMALL_PATH', ''))), width=230)
 st.sidebar.header("Console Filters")
 
 if not full_health_df.empty:
     min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
-    initialize_date_filter(min_date, max_date)
-    start_date, end_date = st.session_state.clinic_date_range
-    
+    start_date, end_date = manage_date_range_filter(min_date, max_date)
     health_df_period = full_health_df[(full_health_df['encounter_date'].dt.date >= start_date) & (full_health_df['encounter_date'].dt.date <= end_date)]
     iot_df_period = full_iot_df[(full_iot_df['timestamp'].dt.date >= start_date) & (full_iot_df['timestamp'].dt.date <= end_date)] if iot_available_flag else pd.DataFrame()
 else:
@@ -137,7 +108,7 @@ else:
 current_period_str = f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
 st.info(f"Displaying data for: **{current_period_str}**")
 
-# 3. KPI Snapshot Section
+# --- KPI Snapshot Section ---
 st.header("🚀 Clinic Performance & Environment Snapshot")
 try:
     if not health_df_period.empty:
@@ -145,17 +116,22 @@ try:
         main_kpis = structure_main_clinic_kpis(kpis, current_period_str)
         disease_kpis = structure_disease_specific_clinic_kpis(kpis, current_period_str)
         
+        # CORRECTED: Use a robust pattern for rendering KPIs in columns
         if main_kpis:
             st.markdown("##### **Overall Service Performance:**")
-            cols = st.columns(min(len(main_kpis), 4))
+            num_cols = min(len(main_kpis), 4)
+            cols = st.columns(num_cols)
             for i, kpi_data in enumerate(main_kpis):
-                with cols[i]: render_kpi_card(**kpi_data)
+                with cols[i % num_cols]:
+                    render_kpi_card(**kpi_data)
         
         if disease_kpis:
             st.markdown("##### **Key Disease & Supply Indicators:**")
-            cols = st.columns(min(len(disease_kpis), 4))
+            num_cols = min(len(disease_kpis), 4)
+            cols = st.columns(num_cols)
             for i, kpi_data in enumerate(disease_kpis):
-                with cols[i]: render_kpi_card(**kpi_data)
+                with cols[i % num_cols]:
+                    render_kpi_card(**kpi_data)
     else:
         st.info("ℹ️ No health data in the selected period for service KPIs.")
 
@@ -178,11 +154,10 @@ except Exception as e:
     st.error("⚠️ An error occurred while rendering the KPI snapshot.")
 st.divider()
 
-# 4. Deep Dive Tabs Section
+# --- Deep Dive Tabs Section ---
 st.header("🛠️ Operational Areas Deep Dive")
 tabs = st.tabs(["📈 Local Epi", "🔬 Testing", "💊 Supply Chain", "🧍 Patient Focus", "🌿 Environment"])
 
-# ... (Full, robust tab logic follows) ...
 with tabs[0]:
     if health_df_period.empty: st.info("ℹ️ No health data in this period for epidemiological analysis.")
     else:
