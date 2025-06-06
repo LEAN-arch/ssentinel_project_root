@@ -99,7 +99,6 @@ def get_population_analytics_datasets(log_ctx: str = "PopAnalyticsConsole/LoadDa
                 enriched_health_df = enriched_data
             else:
                 logger.warning(f"({log_ctx}) AI model application did not return a DataFrame. Using raw data for schema alignment.")
-                # Ensure enriched_health_df has at least the base columns even if AI models fail
                 enriched_health_df = raw_health_df.reindex(columns=base_health_cols_schema, fill_value=np.nan)
         except Exception as e_ai:
             logger.error(f"({log_ctx}) Error during AI model application: {e_ai}. Using raw data for schema alignment.", exc_info=True)
@@ -110,24 +109,21 @@ def get_population_analytics_datasets(log_ctx: str = "PopAnalyticsConsole/LoadDa
 
 
     # Load Zone Data
-    zone_data_full = load_zone_data(source_context=f"{log_ctx}/ZoneData") # Assuming this loader exists
-    zone_attributes_df = pd.DataFrame() # Default to empty
-    # Define expected SDOH columns for schema consistency
+    zone_data_full = load_zone_data(source_context=f"{log_ctx}/ZoneData") 
+    zone_attributes_df = pd.DataFrame() 
     sdoh_cols = ['zone_id', 'name', 'population', 'socio_economic_index', 
                  'avg_travel_time_clinic_min', 'predominant_hazard_type', 
                  'primary_livelihood', 'water_source_main', 'area_sqkm']
 
     if isinstance(zone_data_full, pd.DataFrame) and not zone_data_full.empty:
         logger.info(f"({log_ctx}) Full zone data loaded: {zone_data_full.shape[0]} rows. Extracting attributes.")
-        # Select only the desired SDOH columns that exist in the loaded data
         cols_to_keep = [col for col in sdoh_cols if col in zone_data_full.columns]
         
-        if 'zone_id' not in cols_to_keep and 'zone_id' in zone_data_full.columns: # Ensure zone_id is present if available
+        if 'zone_id' not in cols_to_keep and 'zone_id' in zone_data_full.columns: 
             cols_to_keep.append('zone_id')
         
         if cols_to_keep:
-            zone_attributes_df = zone_data_full[list(set(cols_to_keep))].copy() # Use set to avoid duplicate zone_id
-            # Ensure all expected SDOH columns exist, fill with NaN if not present in source
+            zone_attributes_df = zone_data_full[list(set(cols_to_keep))].copy() 
             for sdoh_col_expected in sdoh_cols:
                 if sdoh_col_expected not in zone_attributes_df.columns:
                     zone_attributes_df[sdoh_col_expected] = np.nan
@@ -144,8 +140,7 @@ def get_population_analytics_datasets(log_ctx: str = "PopAnalyticsConsole/LoadDa
     
     return enriched_health_df, zone_attributes_df
 
-# Attempt to load main datasets
-health_df_main, zone_attr_main = pd.DataFrame(), pd.DataFrame() # Initialize
+health_df_main, zone_attr_main = pd.DataFrame(), pd.DataFrame() 
 try:
     health_df_main, zone_attr_main = get_population_analytics_datasets()
 except Exception as e_main_load:
@@ -162,18 +157,16 @@ if health_df_main.empty:
         "🚨 Critical Data Failure: Primary health dataset is empty. Most features will be unavailable. "
         f"Ensure `{health_records_filename}` is in `{data_dir_path_str}` and is valid."
     )
-    # Consider st.stop() here if the dashboard is truly unusable without health_df_main
 
 # --- Sidebar Setup ---
-st.sidebar.markdown("---") # Visual separator
+st.sidebar.markdown("---") 
 
-# Logo Display (Simplified with fixed width)
 try:
     if hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'APP_LOGO_SMALL_PATH'):
         project_root = Path(settings.PROJECT_ROOT_DIR)
         logo_path_sidebar = project_root / settings.APP_LOGO_SMALL_PATH
         if logo_path_sidebar.is_file():
-            st.sidebar.image(str(logo_path_sidebar.resolve()), width=150) # Fixed width, adjust as needed
+            st.sidebar.image(str(logo_path_sidebar.resolve()), width=230) # LOGO WIDTH SET TO 230
         else:
             logger.warning(f"Sidebar logo for Population Dashboard not found at: {logo_path_sidebar.resolve()}")
             st.sidebar.caption("Logo not found.")
@@ -183,19 +176,16 @@ try:
 except Exception as e_logo:
     logger.error(f"Unexpected error displaying sidebar logo: {e_logo}", exc_info=True)
     st.sidebar.caption("Error loading logo.")
-st.sidebar.markdown("---") # Visual separator
+st.sidebar.markdown("---") 
 
 st.sidebar.header("🔎 Analytics Filters")
 
-# Date Range Filter
-# Determine overall min/max dates from the loaded health_df_main
-abs_min_fallback_date_pop = date.today() - timedelta(days=3*365) # Fallback
-abs_max_fallback_date_pop = date.today()    # Fallback
+abs_min_fallback_date_pop = date.today() - timedelta(days=3*365) 
+abs_max_fallback_date_pop = date.today()    
 
 min_data_date_pop, max_data_date_pop = abs_min_fallback_date_pop, abs_max_fallback_date_pop
 
 if isinstance(health_df_main, pd.DataFrame) and 'encounter_date' in health_df_main.columns:
-    # Ensure 'encounter_date' is datetime and timezone-naive for min/max calculation
     if not pd.api.types.is_datetime64_any_dtype(health_df_main['encounter_date']):
         health_df_main['encounter_date'] = pd.to_datetime(health_df_main['encounter_date'], errors='coerce')
     if health_df_main['encounter_date'].dt.tz is not None:
@@ -205,7 +195,7 @@ if isinstance(health_df_main, pd.DataFrame) and 'encounter_date' in health_df_ma
     if not valid_dates_pop.empty:
         min_from_data_pop = valid_dates_pop.min().date()
         max_from_data_pop = valid_dates_pop.max().date()
-        if min_from_data_pop <= max_from_data_pop: # Ensure logical range
+        if min_from_data_pop <= max_from_data_pop: 
             min_data_date_pop = min_from_data_pop
             max_data_date_pop = max_from_data_pop
         else: logger.warning("Min date from health data is after max date. Using fallback date range for Population Dashboard.")
@@ -213,11 +203,10 @@ if isinstance(health_df_main, pd.DataFrame) and 'encounter_date' in health_df_ma
 else: logger.info("Health data or 'encounter_date' column not available for Population Dashboard. Using fallback date range.")
 
 
-date_range_ss_key_pop = "pop_dashboard_date_range_v8" # Use a new key if state structure changes
+date_range_ss_key_pop = "pop_dashboard_date_range_v8" 
 if date_range_ss_key_pop not in st.session_state:
-    # Default to full available range or fallback if data is sparse
     st.session_state[date_range_ss_key_pop] = [min_data_date_pop, max_data_date_pop]
-else: # Validate persisted state against current data bounds
+else: 
     persisted_start_pop, persisted_end_pop = st.session_state[date_range_ss_key_pop]
     current_start_pop = min(max(persisted_start_pop, min_data_date_pop), max_data_date_pop)
     current_end_pop = min(max(persisted_end_pop, min_data_date_pop), max_data_date_pop)
@@ -231,55 +220,44 @@ selected_date_range_pop = st.sidebar.date_input(
     key=f"{date_range_ss_key_pop}_widget"
 )
 
-start_date_filter_pop, end_date_filter_pop = min_data_date_pop, max_data_date_pop # Initialize
+start_date_filter_pop, end_date_filter_pop = min_data_date_pop, max_data_date_pop 
 if isinstance(selected_date_range_pop, (list, tuple)) and len(selected_date_range_pop) == 2:
     start_date_filter_pop, end_date_filter_pop = selected_date_range_pop
     if start_date_filter_pop > end_date_filter_pop:
         st.sidebar.error("Start date cannot be after end date. Adjusting.")
         end_date_filter_pop = start_date_filter_pop 
     st.session_state[date_range_ss_key_pop] = [start_date_filter_pop, end_date_filter_pop]
-else: # Fallback if date_input returns single date or unexpected
+else: 
     start_date_filter_pop, end_date_filter_pop = st.session_state.get(date_range_ss_key_pop, [min_data_date_pop, max_data_date_pop])
-    # st.sidebar.warning("Date range selection error for Population Dashboard. Using previous/default.") # Optional warning
 
-
-# Condition Filter (from health_df_main)
 available_conditions_pop = ["All Conditions"]
 if isinstance(health_df_main, pd.DataFrame) and 'condition' in health_df_main.columns:
     unique_conditions_pop = health_df_main['condition'].dropna().astype(str).unique().tolist()
     if unique_conditions_pop: available_conditions_pop.extend(sorted(unique_conditions_pop))
 selected_condition_filter_pop = st.sidebar.selectbox("Filter by Condition:", options=available_conditions_pop, index=0, key="pop_cond_filter_v4")
 
-# Zone Filter (from zone_attr_main for names, fallback to health_df_main for IDs)
 available_zones_pop = ["All Zones/Regions"]
 zone_name_to_id_map_pop = {}
 if isinstance(zone_attr_main, pd.DataFrame) and 'name' in zone_attr_main.columns and 'zone_id' in zone_attr_main.columns:
     valid_zones_pop = zone_attr_main.dropna(subset=['name', 'zone_id'])
     if not valid_zones_pop.empty:
-        # Handle potential duplicate names by taking the first zone_id for a given name
         zone_name_to_id_map_pop = valid_zones_pop.groupby('name')['zone_id'].first().to_dict()
         available_zones_pop.extend(sorted(valid_zones_pop['name'].astype(str).unique().tolist()))
-elif isinstance(health_df_main, pd.DataFrame) and 'zone_id' in health_df_main.columns: # Fallback if no zone names
+elif isinstance(health_df_main, pd.DataFrame) and 'zone_id' in health_df_main.columns: 
     logger.info("Zone names not available from zone_attr_main, using zone_ids from health data for filter.")
     available_zones_pop.extend(sorted(health_df_main['zone_id'].dropna().astype(str).unique().tolist()))
 selected_zone_filter_display_pop = st.sidebar.selectbox("Filter by Zone/Region:", options=available_zones_pop, index=0, key="pop_zone_filter_v4")
 
-
-# --- Apply Filters to Data ---
-filtered_pop_analytics_df = pd.DataFrame() # Initialize as empty
+filtered_pop_analytics_df = pd.DataFrame() 
 if isinstance(health_df_main, pd.DataFrame) and not health_df_main.empty:
     temp_pop_df = health_df_main.copy()
-    
-    # Date Filter (ensure encounter_date is datetime again, as it might be reloaded from cache)
     if 'encounter_date' in temp_pop_df.columns:
         if not pd.api.types.is_datetime64_any_dtype(temp_pop_df['encounter_date']):
             temp_pop_df['encounter_date'] = pd.to_datetime(temp_pop_df['encounter_date'], errors='coerce')
         if temp_pop_df['encounter_date'].dt.tz is not None:
             temp_pop_df['encounter_date'] = temp_pop_df['encounter_date'].dt.tz_localize(None)
-
-        start_dt_pop = pd.to_datetime(start_date_filter_pop) # Convert date to datetime for comparison
+        start_dt_pop = pd.to_datetime(start_date_filter_pop) 
         end_dt_pop = pd.to_datetime(end_date_filter_pop)
-        
         temp_pop_df = temp_pop_df[
             (temp_pop_df['encounter_date'].notna()) &
             (temp_pop_df['encounter_date'] >= start_dt_pop) &
@@ -287,27 +265,20 @@ if isinstance(health_df_main, pd.DataFrame) and not health_df_main.empty:
         ]
     else: st.warning("⚠️ 'encounter_date' missing from health data. Date filtering not applied to Population Dashboard.")
 
-    # Condition Filter
     if selected_condition_filter_pop != "All Conditions" and 'condition' in temp_pop_df.columns:
         temp_pop_df = temp_pop_df[temp_pop_df['condition'] == selected_condition_filter_pop]
 
-    # Zone Filter
     if selected_zone_filter_display_pop != "All Zones/Regions":
-        if zone_name_to_id_map_pop and selected_zone_filter_display_pop in zone_name_to_id_map_pop: # Filtering by name via map
+        if zone_name_to_id_map_pop and selected_zone_filter_display_pop in zone_name_to_id_map_pop: 
             selected_zone_id_filter_pop = zone_name_to_id_map_pop[selected_zone_filter_display_pop]
-            # Ensure zone_id in temp_pop_df is comparable (e.g., string if map keys are string)
             if 'zone_id' in temp_pop_df.columns:
                  temp_pop_df = temp_pop_df[temp_pop_df['zone_id'].astype(str) == str(selected_zone_id_filter_pop)]
-        elif 'zone_id' in temp_pop_df.columns: # Fallback to filtering by ID if name wasn't in map or no map exists
+        elif 'zone_id' in temp_pop_df.columns: 
             temp_pop_df = temp_pop_df[temp_pop_df['zone_id'].astype(str) == str(selected_zone_filter_display_pop)]
-            
     filtered_pop_analytics_df = temp_pop_df
 else:
     logger.info("Initial health_df_main for Population Dashboard is empty. No data to filter.")
 
-
-# --- Main Page Content ---
-# Display filter context clearly
 filter_context_str_pop = (
     f"({start_date_filter_pop.strftime('%d %b %Y')} - {end_date_filter_pop.strftime('%d %b %Y')}, "
     f"Condition: {selected_condition_filter_pop}, Zone: {selected_zone_filter_display_pop})"
@@ -317,8 +288,7 @@ st.subheader(f"Population Health Snapshot {filter_context_str_pop}")
 if filtered_pop_analytics_df.empty:
     st.info("ℹ️ Insufficient data after filtering to display population summary KPIs or detailed views.")
 else:
-    # --- KPIs ---
-    kpi_cols_pop = st.columns(4) # Adjust number of columns as needed
+    kpi_cols_pop = st.columns(4) 
     with kpi_cols_pop[0]:
         total_encounters_pop = filtered_pop_analytics_df.shape[0]
         st.metric("Total Encounters", f"{total_encounters_pop:,}")
@@ -333,12 +303,10 @@ else:
         st.metric("Avg. AI Risk Score", f"{avg_risk_pop:.2f}" if pd.notna(avg_risk_pop) else "N/A")
     st.markdown("---")
 
-
-# --- Tabbed Interface ---
 tab_titles_pop = ["📈 Epi Overview", "🧑‍🤝‍🧑 Demographics & SDOH", "🔬 Clinical Insights", "⚙️ Systems & Equity"]
 tabs_pop = st.tabs(tab_titles_pop)
 
-with tabs_pop[0]: # Epi Overview
+with tabs_pop[0]: 
     st.header(f"Epidemiological Overview {filter_context_str_pop}")
     if filtered_pop_analytics_df.empty: st.info("No data for Epi Overview with current filters.")
     else:
@@ -348,12 +316,11 @@ with tabs_pop[0]: # Epi Overview
                 fig_cond_pop = px.bar(top_conditions_pop, y=top_conditions_pop.index, x=top_conditions_pop.values, 
                                  orientation='h', title="Top 10 Conditions by Encounters", 
                                  labels={'y':'Condition', 'x':'Number of Encounters'})
-                fig_cond_pop.update_layout(yaxis={'categoryorder':'total ascending'}) # Show highest bar at top
+                fig_cond_pop.update_layout(yaxis={'categoryorder':'total ascending'}) 
                 st.plotly_chart(fig_cond_pop, use_container_width=True)
             else: st.caption("No condition data to display.")
         
         if 'encounter_date' in filtered_pop_analytics_df.columns:
-            # Resample to weekly, ensure index is datetime
             enc_trend_pop_df = filtered_pop_analytics_df.set_index('encounter_date').resample('W-MON').size().reset_index(name='count')
             if not enc_trend_pop_df.empty:
                 fig_trend_pop = px.line(enc_trend_pop_df, x='encounter_date', y='count', 
@@ -362,13 +329,11 @@ with tabs_pop[0]: # Epi Overview
                 st.plotly_chart(fig_trend_pop, use_container_width=True)
             else: st.caption("No encounter trend data to display.")
 
-
-with tabs_pop[1]: # Demographics & SDOH
+with tabs_pop[1]: 
     st.header(f"Demographics & Socio-demographic Health (SDOH) {filter_context_str_pop}")
     if filtered_pop_analytics_df.empty and zone_attr_main.empty:
         st.info("No health or zone attribute data available for Demographics & SDOH analysis.")
     else:
-        # Age Distribution (from unique patients in filtered health data)
         if 'age' in filtered_pop_analytics_df.columns and 'patient_id' in filtered_pop_analytics_df.columns:
             unique_patient_ages_pop = filtered_pop_analytics_df.drop_duplicates(subset=['patient_id'])['age'].dropna()
             if not unique_patient_ages_pop.empty:
@@ -376,7 +341,6 @@ with tabs_pop[1]: # Demographics & SDOH
                 st.plotly_chart(fig_age_pop, use_container_width=True)
             else: st.caption("No age data for unique patients to display.")
 
-        # Gender Distribution (from unique patients)
         if 'gender' in filtered_pop_analytics_df.columns and 'patient_id' in filtered_pop_analytics_df.columns:
             unique_patient_genders_pop = filtered_pop_analytics_df.drop_duplicates(subset=['patient_id'])['gender'].value_counts()
             if not unique_patient_genders_pop.empty:
@@ -385,13 +349,12 @@ with tabs_pop[1]: # Demographics & SDOH
                 st.plotly_chart(fig_gender_pop, use_container_width=True)
             else: st.caption("No gender data for unique patients to display.")
         
-        # SDOH from zone_attr_main (if available and filtered or all zones)
         display_zone_attr_df = zone_attr_main.copy()
         if selected_zone_filter_display_pop != "All Zones/Regions" and not zone_attr_main.empty:
             if zone_name_to_id_map_pop and selected_zone_filter_display_pop in zone_name_to_id_map_pop:
                 selected_zone_id = zone_name_to_id_map_pop[selected_zone_filter_display_pop]
                 display_zone_attr_df = zone_attr_main[zone_attr_main['zone_id'].astype(str) == str(selected_zone_id)]
-            else: # If filtering by ID directly (e.g., if names weren't mapped)
+            else: 
                 display_zone_attr_df = zone_attr_main[zone_attr_main['zone_id'].astype(str) == str(selected_zone_filter_display_pop)]
         
         if not display_zone_attr_df.empty:
@@ -409,14 +372,17 @@ with tabs_pop[1]: # Demographics & SDOH
                     fig_sei_zone = px.bar(sei_by_zone_display, x='name', y='socio_economic_index', title="Socio-Economic Index by Zone (Lower is better)")
                     st.plotly_chart(fig_sei_zone, use_container_width=True)
             
-            # Display selected SDOH columns as a table if specific zone is selected
             if selected_zone_filter_display_pop != "All Zones/Regions" and not display_zone_attr_df.empty:
-                st.dataframe(display_zone_attr_df.set_index('name')[['population', 'socio_economic_index', 'avg_travel_time_clinic_min', 'predominant_hazard_type', 'primary_livelihood', 'water_source_main']].T, use_container_width=True)
-            elif display_zone_attr_df.shape[0] > 15: # If many zones, show a sample
-                st.dataframe(display_zone_attr_df[['name', 'population', 'socio_economic_index']].head(15), use_container_width=True)
+                display_cols_sdoh = [col for col in ['population', 'socio_economic_index', 'avg_travel_time_clinic_min', 
+                                                     'predominant_hazard_type', 'primary_livelihood', 'water_source_main'] if col in display_zone_attr_df.columns]
+                if 'name' in display_zone_attr_df.columns and display_cols_sdoh:
+                    st.dataframe(display_zone_attr_df.set_index('name')[display_cols_sdoh].T, use_container_width=True)
+            elif display_zone_attr_df.shape[0] > 15: 
+                display_cols_sdoh_sample = [col for col in ['name', 'population', 'socio_economic_index'] if col in display_zone_attr_df.columns]
+                if display_cols_sdoh_sample:
+                    st.dataframe(display_zone_attr_df[display_cols_sdoh_sample].head(15), use_container_width=True)
 
-
-with tabs_pop[2]: # Clinical Insights
+with tabs_pop[2]: 
     st.header(f"Clinical Insights {filter_context_str_pop}")
     if filtered_pop_analytics_df.empty: st.info("No data for Clinical Insights with current filters.")
     else:
@@ -433,24 +399,18 @@ with tabs_pop[2]: # Clinical Insights
                 fig_prio_pop = px.histogram(prio_scores_pop, title="AI Follow-up Priority Score Distribution (All encounters)")
                 st.plotly_chart(fig_prio_pop, use_container_width=True)
             else: st.caption("No AI follow-up priority score data to display.")
-        
-        # Further clinical insights could be added here, e.g., outcomes if available
 
-
-with tabs_pop[3]: # Systems & Equity
+with tabs_pop[3]: 
     st.header(f"Systems & Equity Insights {filter_context_str_pop}")
     if filtered_pop_analytics_df.empty and zone_attr_main.empty:
         st.info("No health or zone attribute data available for Systems & Equity analysis.")
     else:
-        # Encounter distribution by zone
         if 'zone_id' in filtered_pop_analytics_df.columns:
             encounters_by_zone_pop = filtered_pop_analytics_df['zone_id'].value_counts().nlargest(20)
             if not encounters_by_zone_pop.empty:
-                # Try to map zone_id to name for better display
                 if not zone_attr_main.empty and 'zone_id' in zone_attr_main and 'name' in zone_attr_main:
                     zone_id_name_map = zone_attr_main.drop_duplicates(subset=['zone_id']).set_index('zone_id')['name']
-                    encounters_by_zone_pop.index = encounters_by_zone_pop.index.map(lambda x: f"{zone_id_name_map.get(x, x)} ({x})")
-
+                    encounters_by_zone_pop.index = encounters_by_zone_pop.index.map(lambda x: f"{zone_id_name_map.get(x, str(x))} ({str(x)})") 
                 fig_enc_zone_pop = px.bar(encounters_by_zone_pop, y=encounters_by_zone_pop.index, x=encounters_by_zone_pop.values,
                                      orientation='h', title="Encounter Distribution by Zone (Top 20)",
                                      labels={'y':'Zone', 'x':'Number of Encounters'})
@@ -458,33 +418,27 @@ with tabs_pop[3]: # Systems & Equity
                 st.plotly_chart(fig_enc_zone_pop, use_container_width=True)
             else: st.caption("No encounter data by zone to display.")
 
-        # Access equity (e.g., avg travel time vs. utilization - requires merging health and zone data)
         if not filtered_pop_analytics_df.empty and not zone_attr_main.empty and \
            'zone_id' in filtered_pop_analytics_df and 'zone_id' in zone_attr_main and \
            'avg_travel_time_clinic_min' in zone_attr_main and 'population' in zone_attr_main:
-            
             try:
-                # Ensure zone_id types match for merging
                 df1 = filtered_pop_analytics_df[['zone_id', 'patient_id']].copy()
                 df1['zone_id'] = df1['zone_id'].astype(str)
                 df2 = zone_attr_main[['zone_id', 'name', 'avg_travel_time_clinic_min', 'population']].copy()
                 df2['zone_id'] = df2['zone_id'].astype(str)
-
                 merged_equity_df = pd.merge(df1, df2, on='zone_id', how='left')
                 
                 if not merged_equity_df.empty and 'avg_travel_time_clinic_min' in merged_equity_df:
-                    # Calculate utilization per capita (encounters / population)
                     zone_utilization = merged_equity_df.groupby('zone_id').agg(
                         name=('name', 'first'),
-                        encounters=('patient_id', 'size'), # Using size of encounters in the period
+                        encounters=('patient_id', 'size'), 
                         avg_travel_time=('avg_travel_time_clinic_min', 'mean'),
-                        population=('population', 'first') # Assuming population is consistent per zone_id
+                        population=('population', 'first') 
                     ).reset_index()
                     zone_utilization = zone_utilization.dropna(subset=['population', 'avg_travel_time', 'encounters'])
-                    zone_utilization = zone_utilization[zone_utilization['population'] > 0] # Avoid division by zero
+                    zone_utilization = zone_utilization[zone_utilization['population'] > 0] 
                     if not zone_utilization.empty:
                         zone_utilization['utilization_per_1000_pop'] = (zone_utilization['encounters'] / zone_utilization['population']) * 1000
-                        
                         fig_equity_pop = px.scatter(zone_utilization.dropna(subset=['utilization_per_1000_pop']), 
                                                x='avg_travel_time', y='utilization_per_1000_pop',
                                                size='population', hover_name='name',
@@ -497,8 +451,6 @@ with tabs_pop[3]: # Systems & Equity
                 logger.error(f"Error generating equity plot: {e_equity_plot}", exc_info=True)
                 st.caption("Could not generate service utilization vs. travel time plot.")
 
-
-# --- Footer ---
 st.divider()
 footer_text = settings.APP_FOOTER_TEXT if hasattr(settings, 'APP_FOOTER_TEXT') else "Sentinel Health Co-Pilot."
 st.caption(footer_text)
