@@ -4,20 +4,18 @@
 import pandas as pd
 import numpy as np
 import logging
-import re 
 from typing import Dict, Any, Optional, Union, Callable, List
 from datetime import date as date_type, datetime 
 
+# This setup remains but assumes the main app entrypoint correctly configures logging.
 try:
     from config import settings
-    from .helpers import convert_to_numeric # Ensure this helper is robust
+    from .helpers import convert_to_numeric
 except ImportError as e:
-    # CORRECTED: The following lines are now properly indented.
-    logging.basicConfig(level=logging.ERROR)
+    logging.basicConfig(level=logging.INFO) # Use INFO to see the warning
     logger_init = logging.getLogger(__name__) 
-    logger_init.error(f"Critical import error in aggregation.py: {e}. Ensure paths are correct.")
-    # Define FallbackSettings if settings are absolutely critical for this module to even load
-    class FallbackSettings: # Minimal fallback
+    logger_init.error(f"Critical import error in aggregation.py: {e}. Ensure paths are correct and project is installed correctly.")
+    class FallbackSettings:
         KEY_CONDITIONS_FOR_ACTION = ["Malaria", "TB", "Pneumonia"]
         KEY_TEST_TYPES_FOR_ANALYSIS = {"RDT-Malaria": {"critical": True, "target_tat_days": 1}}
         CRITICAL_TESTS = ["RDT-Malaria"]
@@ -29,11 +27,13 @@ except ImportError as e:
         CRITICAL_SUPPLY_DAYS_REMAINING = 7
         DISTRICT_ZONE_HIGH_RISK_AVG_SCORE = 60.0
     settings = FallbackSettings()
-    logger_init.warning("aggregation.py: Using fallback settings due to import error with 'config.settings'.")
+    logger_init.warning("aggregation.py: Using fallback settings due to import error with 'config.settings'. Some functionality may be limited.")
+
 
 logger = logging.getLogger(__name__)
 
 def _get_setting(attr_name: str, default_value: Any) -> Any:
+    """Safely get a setting attribute, falling back to a default value."""
     return getattr(settings, attr_name, default_value)
 
 def get_trend_data(
@@ -42,11 +42,29 @@ def get_trend_data(
     filter_col: Optional[str] = None, filter_val: Optional[Any] = None,
     source_context: str = "TrendCalculator"
 ) -> pd.Series:
+    """
+    Calculates a trend Series from a DataFrame by resampling and aggregating time-series data.
+    Can optionally filter the DataFrame before calculating the trend.
+    """
     if not isinstance(df, pd.DataFrame) or df.empty:
+        logger.debug(f"({source_context}) Input DataFrame is empty or invalid. Returning empty Series.")
         return pd.Series(dtype='float64')
+        
     df_trend = df.copy()
-    if date_col not in df_trend.columns or (value_col not in df_trend.columns and agg_func not in ['size']):
+
+    # --- Column Validation ---
+    required_cols = [date_col]
+    if agg_func not in ['size']: # 'size' does not require a value_col
+        required_cols.append(value_col)
+    if filter_col:
+        required_cols.append(filter_col)
+    
+    missing_cols = [col for col in required_cols if col not in df_trend.columns]
+    if missing_cols:
+        logger.warning(f"({source_context}) Missing required columns: {missing_cols}. Returning empty Series.")
         return pd.Series(dtype='float64')
+
+    # --- Data Cleaning & Preparation ---
     df_trend[date_col] = pd.to_datetime(df_trend[date_col], errors='coerce')
     df_trend.dropna(subset=[date_col], inplace=True)
     if df_trend.empty:
@@ -56,12 +74,34 @@ def get_trend_data(
     if isinstance(agg_func, str) and agg_func in numeric_agg_functions:
         df_trend[value_col] = convert_to_numeric(df_trend[value_col], default_value=np.nan)
         df_trend.dropna(subset=[value_col], inplace=True)
+    
     if df_trend.empty and agg_func not in ['size', 'count']:
         return pd.Series(dtype='float64')
+
+    # --- Filtering ---
+    # CORRECTED: The filtered DataFrame is now correctly used for the final aggregation.
+    df_to_aggregate = df_trend
+    if filter_col and filter_val is not None:
+        if df_trend[filter_col].dtype == 'object' and isinstance(filter_val, str):
+            # Case-insensitive matching for string filters
+            df_to_aggregate = df_trend[df_trend[filter_col].str.lower() == filter_val.lower()]
+        else:
+            df_to_aggregate = df_trend[df_trend[filter_col] == filter_val]
         
-    trend_series = df_trend.set_index(date_col).resample(period)[value_col].agg(agg_func)
-    if agg_func in ['count', 'nunique', 'size']:
-        trend_series = trend_series.fillna(0).astype(int)
+        if df_to_aggregate.empty:
+            logger.info(f"({source_context}) DataFrame is empty after applying filter: {filter_col} == {filter_val}. Returning empty Series.")
+            return pd.Series(dtype='float64')
+
+    # --- Aggregation ---
+    try:
+        trend_series = df_to_aggregate.set_index(date_col).resample(period)[value_col].agg(agg_func)
+        # Fill NA for counting functions as it implies zero occurrences in that period.
+        if agg_func in ['count', 'nunique', 'size']:
+            trend_series = trend_series.fillna(0).astype(int)
+    except Exception as e:
+        logger.error(f"({source_context}) Error during resampling/aggregation: {e}", exc_info=True)
+        return pd.Series(dtype='float64')
+        
     return trend_series
 
 def get_clinic_summary_kpis(
@@ -135,8 +175,8 @@ def get_clinic_summary_kpis(
     kpis["test_summary_details"] = test_details
 
     key_drugs = _get_setting('KEY_DRUG_SUBSTRINGS_SUPPLY', [])
-    if key_drugs:
-        drug_pattern = '|'.join(key_drugs)
+    if key_drugs and 'item' in df.columns:
+        drug_pattern = '|'.join([re.escape(drug) for drug in key_drugs])
         df_drugs = df[df['item'].str.contains(drug_pattern, case=False, na=False)].copy()
         if not df_drugs.empty and all(c in df_drugs for c in ['item', 'item_stock_agg_zone', 'consumption_rate_per_day', 'encounter_date']):
             df_drugs['days_of_supply'] = df_drugs['item_stock_agg_zone'] / df_drugs['consumption_rate_per_day'].replace(0, np.nan)
@@ -147,8 +187,19 @@ def get_clinic_summary_kpis(
     logger.info(f"({source_context}) Clinic KPIs calculated successfully.")
     return kpis
 
-# --- Other Placeholder Functions ---
-def get_overall_kpis(*args, **kwargs) -> Dict[str, Any]: return {}
-def get_chw_summary_kpis(*args, **kwargs) -> Dict[str, Any]: return {}
-def get_clinic_environmental_summary_kpis(*args, **kwargs) -> Dict[str, Any]: return {}
-def get_district_summary_kpis(*args, **kwargs) -> Dict[str, Any]: return {}
+# --- Placeholder Functions (can be expanded) ---
+def get_overall_kpis(health_df_period: Optional[pd.DataFrame], *args, **kwargs) -> Dict[str, Any]:
+    logger.debug("get_overall_kpis called (placeholder).")
+    return {"status": "placeholder", "record_count": len(health_df_period) if isinstance(health_df_period, pd.DataFrame) else 0}
+
+def get_chw_summary_kpis(health_df_period: Optional[pd.DataFrame], *args, **kwargs) -> Dict[str, Any]:
+    logger.debug("get_chw_summary_kpis called (placeholder).")
+    return {"status": "placeholder", "record_count": len(health_df_period) if isinstance(health_df_period, pd.DataFrame) else 0}
+
+def get_clinic_environmental_summary_kpis(iot_df_period: Optional[pd.DataFrame], *args, **kwargs) -> Dict[str, Any]:
+    logger.debug("get_clinic_environmental_summary_kpis called (placeholder).")
+    return {"status": "placeholder", "record_count": len(iot_df_period) if isinstance(iot_df_period, pd.DataFrame) else 0}
+
+def get_district_summary_kpis(health_df_period: Optional[pd.DataFrame], *args, **kwargs) -> Dict[str, Any]:
+    logger.debug("get_district_summary_kpis called (placeholder).")
+    return {"status": "placeholder", "record_count": len(health_df_period) if isinstance(health_df_period, pd.DataFrame) else 0}
