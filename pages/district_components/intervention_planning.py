@@ -42,7 +42,8 @@ def get_district_intervention_criteria_options(
     default_other_cond_burden_thresh = settings.DISTRICT_INTERVENTION_TB_BURDEN_HIGH_ABS 
 
     for cond_key in settings.KEY_CONDITIONS_FOR_ACTION:
-        col_name_cond = f"active_{re.sub(r'[^a-z0-9_]+', '_', cond_key.lower().replace('(severe)','').strip())}_cases"
+        # CORRECTED: Removed the .replace('(severe)','') to match the column name generation in enrichment.py
+        col_name_cond = f"active_{re.sub(r'[^a-z0-9_]+', '_', cond_key.lower().strip())}_cases"
         disp_cond_name = cond_key.replace("(Severe)", "").strip()
         # Example: Use a specific threshold for TB, default for others. This could be enhanced with a config dict.
         burden_thresh = settings.DISTRICT_INTERVENTION_TB_BURDEN_HIGH_ABS if "TB" in disp_cond_name.upper() else default_other_cond_burden_thresh
