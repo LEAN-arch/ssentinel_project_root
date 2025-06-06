@@ -5,92 +5,28 @@ import pandas as pd
 import numpy as np
 import logging
 from typing import Dict, Any, Optional, List, Union
-from datetime import date as date_type, datetime # Added datetime
+from datetime import date as date_type, datetime
 
 try:
     from config import settings
-    # Assuming get_trend_data is robust
-    from data_processing.aggregation import get_trend_data
-    from data_processing.helpers import convert_to_numeric # Ensure this is robust
+    # CORRECTED: Call the now-implemented central function for KPIs
+    from data_processing.aggregation import get_trend_data, get_clinic_environmental_summary_kpis
+    from data_processing.helpers import convert_to_numeric
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
-    logger = logging.getLogger(__name__) # Basic logger if import fails early
-    logger.error(f"Critical import error in env_details.py: {e}. Ensure paths and dependencies are correct.")
-    raise # These dependencies are critical for this module
+    logger_init = logging.getLogger(__name__)
+    logger_init.error(f"Critical import error in env_details.py: {e}. Ensure paths and dependencies are correct.")
+    raise
 
 logger = logging.getLogger(__name__)
 
-# Helper to safely get attributes from settings
 def _get_setting(attr_name: str, default_value: Any) -> Any:
+    """Safely get attributes from settings."""
     return getattr(settings, attr_name, default_value)
-
-def _calculate_period_environmental_kpis(
-    iot_df_period: pd.DataFrame, 
-    log_prefix: str
-) -> Dict[str, Any]:
-    """
-    CORRECTED: Local implementation to calculate summary KPIs for the environmental details.
-    This replaces the call to the placeholder function in aggregation.py.
-    """
-    kpis = {
-        "avg_co2_overall_ppm": np.nan, "rooms_co2_very_high_alert_latest_count": 0,
-        "rooms_co2_high_alert_latest_count": 0, "avg_pm25_overall_ugm3": np.nan,
-        "rooms_pm25_very_high_alert_latest_count": 0, "rooms_pm25_high_alert_latest_count": 0,
-        "avg_waiting_room_occupancy_overall_persons": np.nan,
-        "waiting_room_high_occupancy_alert_latest_flag": False,
-        "avg_noise_overall_dba": np.nan, "rooms_noise_high_alert_latest_count": 0,
-        "latest_readings_timestamp": None
-    }
-
-    if iot_df_period.empty:
-        return kpis
-
-    # Get latest reading for each sensor/room
-    latest_readings = iot_df_period.sort_values(by='timestamp').drop_duplicates(subset=['clinic_id', 'room_name'], keep='last')
-    
-    if latest_readings.empty:
-        return kpis
-
-    kpis['latest_readings_timestamp'] = latest_readings['timestamp'].max()
-
-    # Calculate overall averages from latest readings for a representative snapshot
-    if 'avg_co2_ppm' in latest_readings: kpis['avg_co2_overall_ppm'] = latest_readings['avg_co2_ppm'].mean()
-    if 'avg_pm25' in latest_readings: kpis['avg_pm25_overall_ugm3'] = latest_readings['avg_pm25'].mean()
-    if 'avg_noise_db' in latest_readings: kpis['avg_noise_overall_dba'] = latest_readings['avg_noise_db'].mean()
-
-    # CO2 Alerts
-    co2_very_high = _get_setting('ALERT_AMBIENT_CO2_VERY_HIGH_PPM', 2500)
-    co2_high = _get_setting('ALERT_AMBIENT_CO2_HIGH_PPM', 1500)
-    if 'avg_co2_ppm' in latest_readings:
-        kpis['rooms_co2_very_high_alert_latest_count'] = latest_readings[latest_readings['avg_co2_ppm'] > co2_very_high].shape[0]
-        kpis['rooms_co2_high_alert_latest_count'] = latest_readings[(latest_readings['avg_co2_ppm'] > co2_high) & (latest_readings['avg_co2_ppm'] <= co2_very_high)].shape[0]
-
-    # PM2.5 Alerts
-    pm25_very_high = _get_setting('ALERT_AMBIENT_PM25_VERY_HIGH_UGM3', 50)
-    pm25_high = _get_setting('ALERT_AMBIENT_PM25_HIGH_UGM3', 35)
-    if 'avg_pm25' in latest_readings:
-        kpis['rooms_pm25_very_high_alert_latest_count'] = latest_readings[latest_readings['avg_pm25'] > pm25_very_high].shape[0]
-        kpis['rooms_pm25_high_alert_latest_count'] = latest_readings[(latest_readings['avg_pm25'] > pm25_high) & (latest_readings['avg_pm25'] <= pm25_very_high)].shape[0]
-
-    # Noise Alerts
-    noise_high = _get_setting('ALERT_AMBIENT_NOISE_HIGH_DBA', 85)
-    if 'avg_noise_db' in latest_readings:
-        kpis['rooms_noise_high_alert_latest_count'] = latest_readings[latest_readings['avg_noise_db'] > noise_high].shape[0]
-        
-    # Occupancy Alerts
-    occupancy_max = _get_setting('TARGET_CLINIC_WAITING_ROOM_OCCUPANCY_MAX', 10)
-    waiting_rooms_latest = latest_readings[latest_readings['room_name'].str.contains('Waiting', case=False, na=False)]
-    if not waiting_rooms_latest.empty and 'waiting_room_occupancy' in waiting_rooms_latest:
-        kpis['avg_waiting_room_occupancy_overall_persons'] = waiting_rooms_latest['waiting_room_occupancy'].mean()
-        if (waiting_rooms_latest['waiting_room_occupancy'] > occupancy_max).any():
-            kpis['waiting_room_high_occupancy_alert_latest_flag'] = True
-            
-    return kpis
 
 
 def prepare_clinic_environmental_detail_data(
     filtered_iot_df_for_period: Optional[pd.DataFrame],
-    iot_data_source_is_generally_available: bool, # Flag indicating if IoT source file itself is present
     reporting_period_context_str: str # For logging and context in outputs
 ) -> Dict[str, Any]:
     """
@@ -100,7 +36,6 @@ def prepare_clinic_environmental_detail_data(
     module_log_prefix = "ClinicEnvDetailPrep"
     logger.info(f"({module_log_prefix}) Preparing clinic environment details for period: {reporting_period_context_str}")
 
-    # Initialize the output structure with default empty/NaN values
     env_details_output: Dict[str, Any] = {
         "reporting_period": reporting_period_context_str,
         "current_environmental_alerts_list": [],
@@ -111,33 +46,30 @@ def prepare_clinic_environmental_detail_data(
     }
 
     if not isinstance(filtered_iot_df_for_period, pd.DataFrame) or filtered_iot_df_for_period.empty:
-        note = (f"No clinic IoT data provided for the period '{reporting_period_context_str}'." 
-                if iot_data_source_is_generally_available 
-                else "IoT data source is generally unavailable. Environmental monitoring details cannot be prepared.")
+        note = f"No clinic IoT data provided for the period '{reporting_period_context_str}'."
         logger.warning(f"({module_log_prefix}) {note}")
         env_details_output["processing_notes"].append(note)
         return env_details_output
 
-    df_iot = filtered_iot_df_for_period.copy() # Work on a copy
+    df_iot = filtered_iot_df_for_period.copy()
 
-    # ---Timestamp Validation and Preparation---
     timestamp_col = 'timestamp'
     if timestamp_col not in df_iot.columns:
         critical_note = "Critical: 'timestamp' column missing from IoT data. Cannot process environmental details."
         logger.error(f"({module_log_prefix}) {critical_note}")
         env_details_output["processing_notes"].append(critical_note)
-        return env_details_output # Cannot proceed without timestamps
+        return env_details_output
         
     try:
         if not pd.api.types.is_datetime64_any_dtype(df_iot[timestamp_col]):
             df_iot[timestamp_col] = pd.to_datetime(df_iot[timestamp_col], errors='coerce')
-        if df_iot[timestamp_col].dt.tz is not None: # Ensure timezone-naive
+        if df_iot[timestamp_col].dt.tz is not None:
             df_iot[timestamp_col] = df_iot[timestamp_col].dt.tz_localize(None)
-        df_iot.dropna(subset=[timestamp_col], inplace=True) # Remove rows with invalid timestamps
+        df_iot.dropna(subset=[timestamp_col], inplace=True)
     except Exception as e_ts:
         logger.error(f"({module_log_prefix}) Error converting 'timestamp' to datetime: {e_ts}", exc_info=True)
         env_details_output["processing_notes"].append("Error processing timestamps in IoT data. Details may be incomplete.")
-        return env_details_output # Cannot reliably proceed
+        return env_details_output
     
     if df_iot.empty:
         empty_note = "No IoT records with valid timestamps found in the provided period data."
@@ -145,7 +77,6 @@ def prepare_clinic_environmental_detail_data(
         env_details_output["processing_notes"].append(empty_note)
         return env_details_output
 
-    # ---Numeric Column Preparation---
     expected_numeric_env_cols = [
         'avg_co2_ppm', 'max_co2_ppm', 'avg_pm25', 'voc_index', 'avg_temp_celsius', 
         'avg_humidity_rh', 'avg_noise_db', 'waiting_room_occupancy', 
@@ -155,15 +86,14 @@ def prepare_clinic_environmental_detail_data(
         if col_name in df_iot.columns:
             df_iot[col_name] = convert_to_numeric(df_iot[col_name], default_value=np.nan)
         else:
-            logger.debug(f"({module_log_prefix}) Numeric IoT column '{col_name}' not found. Will be treated as NaN.")
             df_iot[col_name] = np.nan
 
     # --- Current Environmental Alerts (Derived from latest summary KPIs for the period) ---
     try:
-        # CORRECTED: Call the local, implemented KPI calculation function.
-        env_summary_kpis = _calculate_period_environmental_kpis(
+        # CORRECTED: Call the now-implemented central function from aggregation.py.
+        env_summary_kpis = get_clinic_environmental_summary_kpis(
             iot_df_period=df_iot,
-            log_prefix=f"{module_log_prefix}/LatestAlertsKPIs"
+            source_context=f"{module_log_prefix}/LatestAlertsKPIs"
         )
         
         alerts_buffer_list: List[Dict[str, Any]] = []
@@ -190,7 +120,7 @@ def prepare_clinic_environmental_detail_data(
         if env_summary_kpis.get('waiting_room_high_occupancy_alert_latest_flag', False):
             alerts_buffer_list.append({"alert_type": "Waiting Area Overcrowding", "message": f"High Occupancy: Waiting area(s) currently > {occupancy_max_thresh} persons. Manage patient flow.", "level": "MODERATE_CONCERN", "icon_char": "👨‍👩‍👧‍👦"})
         
-        if not alerts_buffer_list: # If no specific issues found
+        if not alerts_buffer_list:
             alerts_buffer_list.append({"alert_type": "Environmental Status", "message": "No significant environmental alerts detected from latest readings in this period.", "level": "ACCEPTABLE", "icon_char":"✅"})
         
         env_details_output["current_environmental_alerts_list"] = alerts_buffer_list
@@ -198,56 +128,42 @@ def prepare_clinic_environmental_detail_data(
         logger.error(f"({module_log_prefix}) Error generating current environmental alerts: {e_env_alerts}", exc_info=True)
         env_details_output["processing_notes"].append("Could not generate current environmental alert list.")
 
-
-    # --- Hourly CO2 Trend (Clinic-wide average) ---
+    # --- Hourly CO2 Trend ---
     co2_col = 'avg_co2_ppm'
     if co2_col in df_iot.columns and df_iot[co2_col].notna().any():
         try:
             co2_trend_series = get_trend_data(df=df_iot, value_col=co2_col, date_col=timestamp_col, period='H', agg_func='mean', source_context=f"{module_log_prefix}/CO2Trend")
             if isinstance(co2_trend_series, pd.Series) and not co2_trend_series.empty:
                 env_details_output["hourly_avg_co2_trend"] = co2_trend_series.rename("avg_co2_ppm_hourly")
-            else: env_details_output["processing_notes"].append("Hourly CO2 trend calculation resulted in empty series.")
-        except Exception as e_co2_trend:
-            logger.error(f"({module_log_prefix}) Error calculating CO2 trend: {e_co2_trend}", exc_info=True)
+        except Exception as e:
+            logger.error(f"({module_log_prefix}) Error calculating CO2 trend: {e}", exc_info=True)
             env_details_output["processing_notes"].append("Failed to calculate hourly CO2 trend.")
-    else: env_details_output["processing_notes"].append(f"CO2 data ('{co2_col}') missing or all NaN. Cannot generate trend.")
 
     # --- Hourly Waiting Room Occupancy Trend ---
     occupancy_col = 'waiting_room_occupancy'
     room_name_col = 'room_name'
     if occupancy_col in df_iot.columns and room_name_col in df_iot.columns and df_iot[occupancy_col].notna().any():
-        df_iot[room_name_col] = df_iot[room_name_col].astype(str)
-        df_waiting_iot_data = df_iot[df_iot[room_name_col].str.contains('Waiting', case=False, na=False) & df_iot[occupancy_col].notna()]
-        
+        df_waiting_iot_data = df_iot[df_iot[room_name_col].astype(str).str.contains('Waiting', case=False, na=False) & df_iot[occupancy_col].notna()]
         if not df_waiting_iot_data.empty:
             try:
                 occupancy_trend_series = get_trend_data(df=df_waiting_iot_data, value_col=occupancy_col, date_col=timestamp_col, period='H', agg_func='mean', source_context=f"{module_log_prefix}/WaitingOccupancyTrend")
                 if isinstance(occupancy_trend_series, pd.Series) and not occupancy_trend_series.empty:
                     env_details_output["hourly_avg_occupancy_trend"] = occupancy_trend_series.rename("avg_waiting_occupancy_hourly")
-                else: env_details_output["processing_notes"].append("Hourly waiting room occupancy trend resulted in empty series.")
-            except Exception as e_occ_trend:
-                logger.error(f"({module_log_prefix}) Error calculating occupancy trend: {e_occ_trend}", exc_info=True)
+            except Exception as e:
+                logger.error(f"({module_log_prefix}) Error calculating occupancy trend: {e}", exc_info=True)
                 env_details_output["processing_notes"].append("Failed to calculate hourly waiting room occupancy trend.")
-        else: env_details_output["processing_notes"].append("No valid 'waiting_room_occupancy' data found in rooms identified as 'Waiting' areas.")
-    else: env_details_output["processing_notes"].append(f"'{occupancy_col}' or '{room_name_col}' data missing or all NaN. Cannot generate occupancy trend.")
-
+        
     # --- Latest Sensor Readings by Room ---
     latest_reading_key_cols = ['clinic_id', room_name_col, timestamp_col]
     if all(col in df_iot.columns for col in latest_reading_key_cols):
         cols_for_latest_display = latest_reading_key_cols + [col for col in expected_numeric_env_cols if col in df_iot.columns]
-        
         try:
-            latest_readings_df = df_iot[cols_for_latest_display].sort_values(timestamp_col, ascending=True, na_position='first').drop_duplicates(subset=['clinic_id', room_name_col], keep='last')
+            latest_readings_df = df_iot[cols_for_latest_display].sort_values(timestamp_col).drop_duplicates(subset=['clinic_id', room_name_col], keep='last')
             if not latest_readings_df.empty:
                 env_details_output["latest_room_sensor_readings_df"] = latest_readings_df.reset_index(drop=True)
-            else:
-                env_details_output["processing_notes"].append("No distinct room sensor readings found to determine latest values for the period.")
-        except Exception as e_latest_readings:
-            logger.error(f"({module_log_prefix}) Error processing latest room sensor readings: {e_latest_readings}", exc_info=True)
+        except Exception as e:
+            logger.error(f"({module_log_prefix}) Error processing latest room sensor readings: {e}", exc_info=True)
             env_details_output["processing_notes"].append("Failed to process latest room sensor readings.")
-    else:
-        missing_key_cols_latest = [col for col in latest_reading_key_cols if col not in df_iot.columns]
-        env_details_output["processing_notes"].append(f"Essential columns for latest room readings missing: {missing_key_cols_latest}. Table cannot be generated.")
         
-    logger.info(f"({module_log_prefix}) Clinic environment details preparation finished. Number of notes: {len(env_details_output['processing_notes'])}")
+    logger.info(f"({module_log_prefix}) Clinic environment details preparation finished. Notes: {len(env_details_output['processing_notes'])}")
     return env_details_output
