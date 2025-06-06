@@ -40,15 +40,23 @@ def _prepare_alert_dataframe(
     for col_name, config in alert_cols_config.items():
         default_value = config["default"]
         target_type_str = config["type"]
+        is_mutable_default = isinstance(default_value, (list, dict))
 
         if col_name not in df_prepared.columns:
-            # logger.debug(f"({log_prefix}) Column '{col_name}' not found. Adding with default: {default_value}")
-            if target_type_str == "datetime" and default_value is pd.NaT:
-                 df_prepared[col_name] = pd.NaT # Explicitly use pd.NaT for datetime defaults
-            elif isinstance(default_value, (list, dict)): # Handle mutable defaults correctly
-                 df_prepared[col_name] = [default_value.copy() if isinstance(default_value, (list, dict)) else default_value for _ in range(len(df_prepared))]
+            # logger.debug(f"({log_prefix}) Column '{col_name}' not found. Adding with default.")
+            if is_mutable_default:
+                # CORRECTED: Use apply with a lambda to create a unique copy for each row
+                df_prepared[col_name] = pd.Series([default_value.copy() for _ in range(len(df_prepared))], index=df_prepared.index)
+            elif target_type_str == "datetime" and default_value is pd.NaT:
+                 df_prepared[col_name] = pd.NaT
             else:
                  df_prepared[col_name] = default_value
+        elif is_mutable_default:
+            # CORRECTED: If column exists, fill NaNs by applying the lambda function
+            fill_mask = df_prepared[col_name].isnull()
+            if fill_mask.any():
+                df_prepared.loc[fill_mask, col_name] = df_prepared.loc[fill_mask, col_name].apply(lambda x: default_value.copy())
+
         
         # Replace common string NAs with np.nan before type conversion for numeric/datetime
         if target_type_str in [float, int, "datetime"] and pd.api.types.is_object_dtype(df_prepared[col_name].dtype):
@@ -67,16 +75,14 @@ def _prepare_alert_dataframe(
                 df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value)
             elif target_type_str == int:
                 df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value, target_type=int)
-            elif target_type_str == str:
+            elif target_type_str == str and not is_mutable_default: # Don't process mutables as strings here
                 df_prepared[col_name] = df_prepared[col_name].astype(str).fillna(str(default_value))
-                # For strings that were already strings, still replace common NA strings if they weren't caught by the object_dtype check
                 if NA_REGEX_PATTERN:
                      df_prepared[col_name] = df_prepared[col_name].replace(NA_REGEX_PATTERN, str(default_value), regex=True)
                 df_prepared[col_name] = df_prepared[col_name].str.strip()
 
         except Exception as e_type_conv:
             logger.error(f"({log_prefix}) Error converting column '{col_name}' to type '{target_type_str}': {e_type_conv}. Using default values for this column.", exc_info=True)
-            # Fallback to default for the entire column on conversion error
             if target_type_str == "datetime" and default_value is pd.NaT: df_prepared[col_name] = pd.NaT
             else: df_prepared[col_name] = default_value
             
