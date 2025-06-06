@@ -76,7 +76,7 @@ def _prepare_epi_dataframe(
             else: df_prepared[col_name] = default_value
             
     if 'patient_id' in df_prepared.columns:
-        df_prepared['patient_id'] = df_prepared['patient_id'].replace('', default_patient_id_prefix).fillna(default_patient_id_prefix)
+        df_prepared['patient_id'] = df_prepared['patient_id'].replace('', default_patient_id_prefix).fillna(default_pid_prefix)
     return df_prepared
 
 
@@ -286,11 +286,12 @@ def calculate_clinic_epidemiological_data(
                                 _get_setting('AGE_THRESHOLD_HIGH', 60), 
                                 _get_setting('AGE_THRESHOLD_VERY_HIGH', 75), 
                                 np.inf]
-                    age_labels = [f'0-{age_bins[1]-1}', 
-                                  f'{age_bins[1]}-{age_bins[2]-1}', 
-                                  f'{age_bins[2]}-{age_bins[3]-1}', 
-                                  f'{age_bins[3]}-{age_bins[4]-1}', 
-                                  f'{age_bins[4]}+']
+                    # CORRECTED: Ensure labels use integers for clean presentation.
+                    age_labels = [f'0-{int(age_bins[1])-1}', 
+                                  f'{int(age_bins[1])}-{int(age_bins[2])-1}', 
+                                  f'{int(age_bins[2])}-{int(age_bins[3])-1}', 
+                                  f'{int(age_bins[3])}-{int(age_bins[4])-1}', 
+                                  f'{int(age_bins[4])}+']
                     
                     age_data_for_cut = convert_to_numeric(df_unique_patients_for_demographics['age'], np.nan).dropna()
                     if not age_data_for_cut.empty:
