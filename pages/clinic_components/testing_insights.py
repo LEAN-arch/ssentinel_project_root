@@ -76,7 +76,7 @@ def _prepare_testing_dataframe(
             else: df_prepared[col_name] = default_value
             
     if 'patient_id' in df_prepared.columns:
-        df_prepared['patient_id'] = df_prepared['patient_id'].replace('', default_patient_id_prefix).fillna(default_patient_id_prefix)
+        df_prepared[col_name] = df_prepared[col_name].replace('', default_patient_id_prefix).fillna(default_pid_prefix)
     return df_prepared
 
 
@@ -124,7 +124,6 @@ def prepare_clinic_lab_testing_insights_data(
         note = "Clinic overall KPI summary or 'test_summary_details' is missing or has an invalid format. Aggregated test group metrics will be unavailable. Test trends will be calculated from raw data if possible."
         logger.warning(f"({module_log_prefix}) {note}")
         insights_output["processing_notes"].append(note)
-        # Initialize to prevent errors, but data will be missing for summary table
         clinic_overall_kpis_summary = {"test_summary_details": {}} 
             
     # --- Data Preparation ---
@@ -160,9 +159,10 @@ def prepare_clinic_lab_testing_insights_data(
         critical_tests_summary_list: List[Dict[str, Any]] = []
         if test_summary_details_from_kpis and isinstance(key_test_configs_setting, dict):
             for internal_test_name, test_props_config in key_test_configs_setting.items():
-                if isinstance(test_props_config, dict) and test_props_config.get("critical", False): # Check if test is marked critical
+                if isinstance(test_props_config, dict) and test_props_config.get("critical", False):
                     display_name = test_props_config.get("display_name", internal_test_name)
-                    stats = test_summary_details_from_kpis.get(display_name, {}) # Get stats by display_name
+                    # CORRECTED: Use the stable internal_test_name for data lookup.
+                    stats = test_summary_details_from_kpis.get(internal_test_name, {})
                     critical_tests_summary_list.append({
                         "Test Group (Critical)": display_name, 
                         "Positivity (%)": stats.get("positive_rate_perc", np.nan),
@@ -188,9 +188,9 @@ def prepare_clinic_lab_testing_insights_data(
                 break
         
         if focused_test_internal_name and focused_test_config:
-            # Populate KPIs from pre-aggregated summary if available
-            if focus_test_group_display_name in test_summary_details_from_kpis:
-                focused_stats = test_summary_details_from_kpis[focus_test_group_display_name]
+            # CORRECTED: Use the stable focused_test_internal_name for data lookup.
+            if focused_test_internal_name in test_summary_details_from_kpis:
+                focused_stats = test_summary_details_from_kpis[focused_test_internal_name]
                 insights_output["focused_test_group_kpis_dict"] = {
                     "Positivity Rate (%)": focused_stats.get("positive_rate_perc", np.nan), 
                     "Avg. TAT (Days)": focused_stats.get("avg_tat_days", np.nan),
@@ -202,27 +202,23 @@ def prepare_clinic_lab_testing_insights_data(
             else:
                 insights_output["processing_notes"].append(f"No pre-aggregated stats for selected focused test group: '{focus_test_group_display_name}'. Trends calculated from raw data if possible.")
 
-            # Calculate Trends for the focused test group from df_tests_src
-            # 'types_in_group' allows a display name to map to multiple raw test_type values
             test_types_in_focused_group = focused_test_config.get("types_in_group", [focused_test_internal_name])
-            if isinstance(test_types_in_focused_group, str): # Ensure it's a list
+            if isinstance(test_types_in_focused_group, str):
                 test_types_in_focused_group = [test_types_in_focused_group]
 
             df_focused_group_data = df_tests_src[df_tests_src['test_type'].isin(test_types_in_focused_group)].copy()
 
             if not df_focused_group_data.empty:
-                # TAT Trend
                 if 'test_turnaround_days' in df_focused_group_data.columns:
                     df_focus_tat_calc = df_focused_group_data[
                         df_focused_group_data['test_turnaround_days'].notna() &
-                        ~df_focused_group_data.get('test_result', pd.Series(dtype=str)).astype(str).str.lower().isin(["pending", "unknownresult_insights", "rejected", "indeterminate"]) # Conclusive for TAT
+                        ~df_focused_group_data.get('test_result', pd.Series(dtype=str)).astype(str).str.lower().isin(["pending", "unknownresult_insights", "rejected", "indeterminate"])
                     ].copy()
                     if not df_focus_tat_calc.empty:
                         tat_trend_series = get_trend_data(df=df_focus_tat_calc, value_col='test_turnaround_days', date_col='encounter_date', period='D', agg_func='mean', source_context=f"{module_log_prefix}/TATTrend/{focus_test_group_display_name}")
                         if isinstance(tat_trend_series, pd.Series) and not tat_trend_series.empty: 
                             insights_output["focused_test_group_tat_trend_series"] = tat_trend_series
                 
-                # Volume Trend (Conclusive vs. Pending)
                 conclusive_mask_volume = ~df_focused_group_data.get('test_result', pd.Series(dtype=str)).astype(str).str.lower().isin(["pending", "unknownresult_insights", "rejected", "indeterminate"])
                 pending_mask_volume = df_focused_group_data.get('test_result', pd.Series(dtype=str)).astype(str).str.lower() == 'pending'
                 
@@ -232,19 +228,16 @@ def prepare_clinic_lab_testing_insights_data(
                 volume_trends_to_concat = [s for s in [conclusive_volume_trend, pending_volume_trend] if isinstance(s, pd.Series) and not s.empty]
                 if volume_trends_to_concat:
                     df_volume_trends_final = pd.concat(volume_trends_to_concat, axis=1).fillna(0).reset_index()
-                    # Ensure 'encounter_date' from index is named 'date' or whatever the plot expects
                     date_col_name_from_index = df_volume_trends_final.columns[0] 
                     insights_output["focused_test_group_volume_trend_df"] = df_volume_trends_final.rename(columns={date_col_name_from_index: 'date'})
             else:
                  insights_output["processing_notes"].append(f"No raw data found for test types in group '{focus_test_group_display_name}' for trend calculation.")
         else: insights_output["processing_notes"].append(f"Configuration key for focused test group '{focus_test_group_display_name}' not found in settings.KEY_TEST_TYPES_FOR_ANALYSIS.")
-    else: # Focus group name not specified or not found in KPI summary (and not "All Critical")
+    else: 
         insights_output["processing_notes"].append(f"No specific data or configuration found for focused test group: '{focus_test_group_display_name}'.")
 
 
     # --- Overdue Pending Tests ---
-    # Determine the most relevant date column for calculating "pending since"
-    # Prioritize sample_collection_date, then sample_registered_lab_date, then encounter_date
     date_col_for_overdue_calc = 'encounter_date' # Fallback
     if 'sample_collection_date' in df_tests_src.columns and df_tests_src['sample_collection_date'].notna().any():
         date_col_for_overdue_calc = 'sample_collection_date'
@@ -257,27 +250,26 @@ def prepare_clinic_lab_testing_insights_data(
     ].copy()
 
     if not df_pending_tests_raw.empty:
-        # Ensure the date column is datetime
         df_pending_tests_raw[date_col_for_overdue_calc] = pd.to_datetime(df_pending_tests_raw[date_col_for_overdue_calc], errors='coerce')
-        df_pending_tests_raw.dropna(subset=[date_col_for_overdue_calc], inplace=True) # Remove if date became NaT
+        df_pending_tests_raw.dropna(subset=[date_col_for_overdue_calc], inplace=True)
 
         if not df_pending_tests_raw.empty:
-            current_processing_date = pd.Timestamp('now').normalize() # Today's date for "days pending" calculation
+            current_processing_date = pd.Timestamp('now').normalize()
             df_pending_tests_raw['days_pending'] = (current_processing_date - df_pending_tests_raw[date_col_for_overdue_calc]).dt.days
             
             def get_overdue_threshold_days(test_type_str: str) -> int:
-                test_config = key_test_configs_setting.get(test_type_str, {}) # Check internal name first
-                if not test_config: # Try finding by display name if internal name not found
+                test_config = key_test_configs_setting.get(test_type_str, {})
+                if not test_config:
                     test_config = next((cfg for cfg in key_test_configs_setting.values() if isinstance(cfg,dict) and cfg.get("display_name") == test_type_str),{})
 
                 target_tat = test_config.get('target_tat_days', _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2))
-                buffer_days = _get_setting('OVERDUE_TEST_BUFFER_DAYS', 2) # e.g., 2 days buffer
+                buffer_days = _get_setting('OVERDUE_TEST_BUFFER_DAYS', 2)
                 overdue_fallback = _get_setting('OVERDUE_PENDING_TEST_DAYS_GENERAL_FALLBACK', 7)
                 
-                threshold = overdue_fallback # Default if target_tat is not sensible
+                threshold = overdue_fallback 
                 if pd.notna(target_tat) and float(target_tat) > 0:
                     threshold = int(float(target_tat) + buffer_days)
-                return max(1, threshold) # Ensure at least 1 day threshold
+                return max(1, threshold) 
             
             df_pending_tests_raw['overdue_threshold_days'] = df_pending_tests_raw['test_type'].apply(get_overdue_threshold_days)
             
@@ -285,7 +277,6 @@ def prepare_clinic_lab_testing_insights_data(
             
             if not df_actually_overdue.empty:
                 df_overdue_display_prep = df_actually_overdue.rename(columns={date_col_for_overdue_calc: "Sample Collection/Registered Date"})
-                # Ensure all default_overdue_cols are present, adding NaNs if not
                 for col in default_overdue_cols:
                     if col not in df_overdue_display_prep.columns: df_overdue_display_prep[col] = np.nan
                 insights_output["overdue_pending_tests_list_df"] = df_overdue_display_prep[default_overdue_cols].sort_values('days_pending', ascending=False).reset_index(drop=True)
@@ -298,12 +289,11 @@ def prepare_clinic_lab_testing_insights_data(
     if 'sample_status' in df_tests_src.columns and 'rejection_reason' in df_tests_src.columns:
         df_rejected_samples = df_tests_src[df_tests_src.get('sample_status', pd.Series(dtype=str)).astype(str).str.lower() == 'rejected'].copy()
         if not df_rejected_samples.empty:
-            # Clean rejection reasons: strip, handle NAs, group common unknowns
             df_rejected_samples['rejection_reason_clean'] = df_rejected_samples['rejection_reason'].astype(str).str.strip()
             df_rejected_samples.loc[df_rejected_samples['rejection_reason_clean'].isin(list(COMMON_NA_STRINGS_INSIGHTS) + ["UnknownReason_Insights", ""]), 'rejection_reason_clean'] = 'Unknown/Not Specified'
             
             rejection_summary = df_rejected_samples['rejection_reason_clean'].value_counts().reset_index()
-            rejection_summary.columns = ['Rejection Reason', 'Count'] # Match default_rejection_cols
+            rejection_summary.columns = ['Rejection Reason', 'Count']
             total_rejections = rejection_summary['Count'].sum()
             if total_rejections > 0:
                 rejection_summary['Percentage (%)'] = ((rejection_summary['Count'] / total_rejections) * 100).round(1)
@@ -311,12 +301,11 @@ def prepare_clinic_lab_testing_insights_data(
                 rejection_summary['Percentage (%)'] = 0.0
             insights_output["sample_rejection_reasons_summary_df"] = rejection_summary
 
-            # Prepare example rejected samples
             cols_for_rejected_examples_display = []
-            for col in default_rejected_examples_cols: # Ensure only existing columns are selected
+            for col in default_rejected_examples_cols: 
                 if col in df_rejected_samples.columns:
                     cols_for_rejected_examples_display.append(col)
-                elif col == 'rejection_reason_clean' and 'rejection_reason' in df_rejected_samples.columns : # Use original if clean not directly there (should be)
+                elif col == 'rejection_reason_clean' and 'rejection_reason' in df_rejected_samples.columns :
                     cols_for_rejected_examples_display.append('rejection_reason')
 
 
