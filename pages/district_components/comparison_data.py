@@ -36,8 +36,8 @@ def get_district_comparison_metrics_config(
     }
     
     for cond_key_name in settings.KEY_CONDITIONS_FOR_ACTION:
-        # Consistent column name generation (lowercase, underscores, no special chars like parentheses)
-        col_name_cond = f"active_{re.sub(r'[^a-z0-9_]+', '_', cond_key_name.lower().replace('(severe)','').strip())}_cases"
+        # CORRECTED: Removed the .replace('(severe)','') to match the column name generation in enrichment.py
+        col_name_cond = f"active_{re.sub(r'[^a-z0-9_]+', '_', cond_key_name.lower().strip())}_cases"
         display_label_cond = cond_key_name.replace("(Severe)", "").strip()
         all_potential_metrics[f"Active {display_label_cond} Cases (Zone)"] = {
             "col": col_name_cond, "format_str": "{:.0f}", "colorscale_hint": "Reds"
