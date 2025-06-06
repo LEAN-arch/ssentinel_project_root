@@ -13,8 +13,8 @@ try:
     from .helpers import convert_to_numeric 
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
-    logger = logging.getLogger(__name__)
-    logger.error(f"Critical import error in enrichment.py: {e}. Ensure paths are correct.")
+    logger_init = logging.getLogger(__name__)
+    logger_init.error(f"Critical import error in enrichment.py: {e}. Ensure paths are correct.")
     raise
 
 logger = logging.getLogger(__name__)
@@ -71,21 +71,27 @@ def _robust_merge_agg_for_enrichment(
     right_df_prepared.rename(columns={actual_value_col_to_merge: temp_merged_value_col}, inplace=True)
 
     original_index = left_df_enriched.index
+    # Ensure join keys are consistent string types
     left_df_enriched[on_col] = left_df_enriched[on_col].astype(str).str.strip()
     right_df_prepared[on_col] = right_df_prepared[on_col].astype(str).str.strip()
     
-    merged_df = pd.merge(left_df_enriched.reset_index(drop=True), right_df_prepared, on=on_col, how='left')
+    # Using merge with a temporary column name to avoid conflicts
+    merged_df = pd.merge(left_df_enriched, right_df_prepared, on=on_col, how='left')
     
+    # Update the target column with new values, then drop the temporary column
     if temp_merged_value_col in merged_df.columns:
+        # Update only where the new value is not NaN
         update_mask = merged_df[temp_merged_value_col].notna()
         merged_df.loc[update_mask, target_col_name] = merged_df.loc[update_mask, temp_merged_value_col]
         merged_df.drop(columns=[temp_merged_value_col], inplace=True, errors='ignore')
     
+    # Final cleanup of the target column
     if is_target_numeric:
         merged_df[target_col_name] = convert_to_numeric(merged_df[target_col_name], default_value=default_fill_value)
     else:
         merged_df[target_col_name] = merged_df[target_col_name].fillna(default_fill_value)
     
+    # Restore original index if dimensions match
     if len(merged_df) == len(original_index):
         merged_df.index = original_index
 
@@ -164,41 +170,48 @@ def enrich_zone_geodata_with_health_aggregates(
             enc_counts_zone = health_df_agg_src.groupby('zone_id')[enc_id_col].nunique().reset_index(name='enc_count')
             enriched_df = _robust_merge_agg_for_enrichment(enriched_df, enc_counts_zone, 'total_patient_encounters', value_col_in_right_df='enc_count', default_fill_value=0)
 
-        total_key_infections_by_zone = pd.Series(0, index=enriched_df['zone_id'].unique(), dtype=float)
-        total_key_infections_by_zone.index.name = 'zone_id' # FIX 1: Name the index before reset.
-        
+        # CORRECTED: The logic for aggregating total key infections is now robust and correct.
         if 'condition' in health_df_agg_src.columns and 'patient_id' in health_df_agg_src.columns and key_conditions_list_setting:
+            all_cond_dfs = []
             for cond_key_iter in key_conditions_list_setting:
                 safe_col_name = f"active_{re.sub(r'[^a-z0-9_]+', '_', cond_key_iter.lower().strip())}_cases"
                 try:
-                    cond_mask_agg = health_df_agg_src['condition'].astype(str).str.contains(re.escape(cond_key_iter), case=False, na=False, regex=True)
+                    cond_mask_agg = health_df_agg_src['condition'].astype(str).str.contains(re.escape(cond_key_iter), case=False, na=False)
                     if cond_mask_agg.any():
                         active_cases_df = health_df_agg_src[cond_mask_agg].groupby('zone_id')['patient_id'].nunique().reset_index(name='case_count')
                         enriched_df = _robust_merge_agg_for_enrichment(enriched_df, active_cases_df, safe_col_name, value_col_in_right_df='case_count', default_fill_value=0)
                         
-                        current_cond_sum_per_zone = enriched_df.set_index('zone_id')[safe_col_name]
-                        total_key_infections_by_zone = total_key_infections_by_zone.add(current_cond_sum_per_zone, fill_value=0)
+                        # Collect the counts for total aggregation later
+                        if safe_col_name in enriched_df.columns:
+                            all_cond_dfs.append(enriched_df[['zone_id', safe_col_name]].set_index('zone_id'))
+
                 except Exception as e_cond_agg:
                      logger.warning(f"({source_context}) Error aggregating condition '{cond_key_iter}': {e_cond_agg}")
             
-            enriched_df = pd.merge(enriched_df, total_key_infections_by_zone.rename('total_active_key_infections_temp').reset_index(), on='zone_id', how='left')
-            
-            # FIX 2: Ensure the second argument to combine_first is a Series, not a scalar.
-            fallback_series = pd.Series(0, index=enriched_df.index)
-            existing_values = enriched_df.get('total_active_key_infections', fallback_series)
-            
-            enriched_df['total_active_key_infections'] = enriched_df['total_active_key_infections_temp'].fillna(0).combine_first(existing_values)
-            enriched_df.drop(columns=['total_active_key_infections_temp'], inplace=True, errors='ignore')
+            # Sum up all individual active case columns to get the total
+            if all_cond_dfs:
+                total_infections_s = pd.concat(all_cond_dfs, axis=1).sum(axis=1)
+                total_infections_df = total_infections_s.reset_index(name='total_infections')
+                total_infections_df.rename(columns={'index': 'zone_id'}, inplace=True)
+                
+                # Use the robust merge helper to add this total to the main DataFrame
+                enriched_df = _robust_merge_agg_for_enrichment(
+                    enriched_df, total_infections_df, 'total_active_key_infections',
+                    value_col_in_right_df='total_infections', default_fill_value=0
+                )
 
-    # ... (Rest of function, including other merges and derived metrics calculations) ...
+    # --- Derived Metric Calculations ---
     if 'population' in enriched_df.columns and 'total_active_key_infections' in enriched_df.columns:
         pop_numeric = convert_to_numeric(enriched_df['population'], default_value=0.0)
         total_infections_numeric = convert_to_numeric(enriched_df['total_active_key_infections'], default_value=0.0)
+        
+        # Calculate prevalence, avoiding division by zero
         enriched_df['prevalence_per_1000'] = np.where(
             pop_numeric > 0, (total_infections_numeric / pop_numeric) * 1000, 0.0
         )
         enriched_df['prevalence_per_1000'] = enriched_df['prevalence_per_1000'].fillna(0.0)
 
+    # --- Final Column Cleanup ---
     for col in all_expected_cols:
         if col not in enriched_df.columns:
             if "count" in col or "total" in col or "active" in col or "perc" in col:
