@@ -80,6 +80,7 @@ fi
 log_info "'venv' module found."
 
 # --- System Dependency Guidance ---
+# CORRECTED: Use the correct variable name ${PACKAGES_FILE}
 if [ -f "$PACKAGES_FILE" ]; then
     log_info "----------------------------------------------------------------------"
     log_info "System-level libraries may be required for some Python packages."
