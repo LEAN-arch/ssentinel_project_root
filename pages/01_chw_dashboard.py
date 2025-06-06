@@ -274,6 +274,7 @@ selected_trend_range = st.sidebar.date_input(
     min_value=abs_min_data_date, max_value=abs_max_data_date, key=f"{trend_range_ss_key}_widget"
 )
 
+# CORRECTED: This block now has correct indentation for the `else` clause.
 if isinstance(selected_trend_range, (list, tuple)) and len(selected_trend_range) == 2:
     start_ui, end_ui = selected_trend_range
     trend_start_date_filter = min(max(start_ui, abs_min_data_date), abs_max_data_date)
@@ -282,7 +283,7 @@ if isinstance(selected_trend_range, (list, tuple)) and len(selected_trend_range)
         trend_end_date_filter = trend_start_date_filter
     st.session_state[trend_range_ss_key] = [trend_start_date_filter, trend_end_date_filter]
 else:
-    trend_start_date_filter, trend_end_date_filter = st.session_state[trend_range_ss_key] 
+    trend_start_date_filter, trend_end_date_filter = st.session_state[trend_range_ss_key]
 
 # --- Load Data ---
 daily_activity_df, trend_activity_df, daily_kpis_precalculated = pd.DataFrame(), pd.DataFrame(), {}
@@ -303,13 +304,12 @@ if active_zone_filter: filter_context_parts.append(f"Zone: **{active_zone_filter
 st.info(f"Displaying data for: {', '.join(filter_context_parts)}")
 
 # --- Section 1: Daily Performance Snapshot ---
-# CORRECTED: This entire block is refactored for clarity and to remove dead code.
 st.header("📊 Daily Performance Snapshot")
 if not data_load_successful:
     st.markdown("ℹ️ _Data loading failed. Cannot display daily performance snapshot._")
 elif daily_activity_df.empty:
     st.markdown("ℹ️ _No activity data for selected date/filters for daily performance snapshot._")
-else:  # Data is loaded and not empty, proceed with calculations.
+else:
     daily_summary_metrics = {}
     try:
         daily_summary_metrics = calculate_chw_daily_summary_metrics(
@@ -351,7 +351,7 @@ if not data_load_successful:
     st.markdown("ℹ️ _Data loading failed. Cannot display alerts or tasks._")
 elif daily_activity_df.empty:
     st.markdown("ℹ️ _No activity data to generate patient alerts or tasks for today._")
-else: # Data is available
+else:
     try:
         chw_alerts = generate_chw_alerts(
             daily_activity_df, selected_daily_date, active_zone_filter or "All Zones", max_alerts_to_return=15 
@@ -396,10 +396,11 @@ if chw_alerts:
                 st.markdown(f"**Context:** {alert.get('context_info', 'N/A')}")
                 st.markdown(f"**Suggested Action Code:** `{alert.get('suggested_action_code', 'MONITOR')}`")
 
+    # CORRECTED: This block now has the correct indentation.
     if info_alerts and not critical_alerts and not warning_alerts:
         st.info("**INFORMATIONAL ALERTS:**")
         for alert in info_alerts:
-                with st.expander(f"ℹ️ INFO: Pt. {alert.get('patient_id', 'N/A')} - {alert.get('primary_reason', 'Information')}"):
+            with st.expander(f"ℹ️ INFO: Pt. {alert.get('patient_id', 'N/A')} - {alert.get('primary_reason', 'Information')}"):
                 st.markdown(f"**Details:** {alert.get('brief_details', 'N/A')}")
                 st.markdown(f"**Context:** {alert.get('context_info', 'N/A')}")
 elif data_load_successful and not daily_activity_df.empty:
@@ -447,15 +448,13 @@ elif data_load_successful and not daily_activity_df.empty:
     st.info("ℹ️ No high-priority tasks identified based on current data.")
 st.divider()
 
-
 # --- Section 3: Local Epi Signals Watch ---
-# CORRECTED: This entire block is refactored for clarity and robustness.
 st.header("🔬 Local Epi Signals Watch (Today)")
 if not data_load_successful:
     st.markdown("ℹ️ _Data loading failed. Cannot display local epi signals._")
 elif daily_activity_df.empty:
     st.markdown("ℹ️ _No activity data for local epi signals for selected date/filters._")
-else: # Data is available
+else:
     epi_signals = {}
     try:
         epi_signals = extract_chw_epi_signals(
@@ -500,7 +499,7 @@ if not data_load_successful:
     st.markdown("ℹ️ _Data loading failed earlier. Cannot display activity trends._")
 elif trend_activity_df.empty:
     st.markdown("ℹ️ _No historical data available for the selected trend period and/or filters to calculate trends._")
-else: # Trend data is available
+else:
     activity_trends_data = {}
     try:
         activity_trends_data = calculate_chw_activity_trends_data(
