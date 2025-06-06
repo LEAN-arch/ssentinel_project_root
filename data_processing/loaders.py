@@ -97,12 +97,12 @@ def load_health_records(file_path_str: Optional[str] = None, source_context: str
             return pd.DataFrame()
             
     actual_file_path = Path(path_to_load_str)
-    if not actual_file_path.is_absolute(): # If by chance it's not absolute, try resolving from DATA_DIR
-        logger.warning(f"({source_context}) Health records path '{path_to_load_str}' is not absolute. Attempting to resolve from DATA_DIR.")
-        if hasattr(settings, 'DATA_DIR'):
-            actual_file_path = (Path(settings.DATA_DIR) / actual_file_path).resolve()
+    if not actual_file_path.is_absolute(): # If by chance it's not absolute, try resolving from DATA_SOURCES_DIR
+        logger.warning(f"({source_context}) Health records path '{path_to_load_str}' is not absolute. Attempting to resolve from DATA_SOURCES_DIR.")
+        if hasattr(settings, 'DATA_SOURCES_DIR'):
+            actual_file_path = (Path(settings.DATA_SOURCES_DIR) / actual_file_path).resolve()
         else:
-            logger.error(f"({source_context}) DATA_DIR not in settings, cannot resolve relative health records path. Path used: {actual_file_path}")
+            logger.error(f"({source_context}) DATA_SOURCES_DIR not in settings, cannot resolve relative health records path. Path used: {actual_file_path}")
             return pd.DataFrame()
 
 
@@ -164,10 +164,10 @@ def load_iot_clinic_environment_data(file_path_str: Optional[str] = None, source
 
     actual_file_path = Path(path_to_load_str)
     if not actual_file_path.is_absolute():
-        if hasattr(settings, 'DATA_DIR'):
-            actual_file_path = (Path(settings.DATA_DIR) / actual_file_path).resolve()
+        if hasattr(settings, 'DATA_SOURCES_DIR'):
+            actual_file_path = (Path(settings.DATA_SOURCES_DIR) / actual_file_path).resolve()
         else:
-            logger.error(f"({source_context}) DATA_DIR not in settings, cannot resolve relative IoT path. Path used: {actual_file_path}")
+            logger.error(f"({source_context}) DATA_SOURCES_DIR not in settings, cannot resolve relative IoT path. Path used: {actual_file_path}")
             return pd.DataFrame()
             
     logger.info(f"({source_context}) Preparing to load IoT data from: {actual_file_path}")
@@ -214,13 +214,13 @@ def load_zone_data(
 
     actual_attributes_path = Path(attr_path_str)
     if not actual_attributes_path.is_absolute():
-        if hasattr(settings, 'DATA_DIR'): actual_attributes_path = (Path(settings.DATA_DIR) / actual_attributes_path).resolve()
-        else: logger.error(f"({source_context}) Cannot resolve relative attributes path '{attr_path_str}'. DATA_DIR missing."); return pd.DataFrame()
+        if hasattr(settings, 'DATA_SOURCES_DIR'): actual_attributes_path = (Path(settings.DATA_SOURCES_DIR) / actual_attributes_path).resolve()
+        else: logger.error(f"({source_context}) Cannot resolve relative attributes path '{attr_path_str}'. DATA_SOURCES_DIR missing."); return pd.DataFrame()
 
     actual_geometries_path = Path(geom_path_str)
     if not actual_geometries_path.is_absolute():
-        if hasattr(settings, 'DATA_DIR'): actual_geometries_path = (Path(settings.DATA_DIR) / actual_geometries_path).resolve()
-        else: logger.error(f"({source_context}) Cannot resolve relative geometries path '{geom_path_str}'. DATA_DIR missing."); return pd.DataFrame()
+        if hasattr(settings, 'DATA_SOURCES_DIR'): actual_geometries_path = (Path(settings.DATA_SOURCES_DIR) / actual_geometries_path).resolve()
+        else: logger.error(f"({source_context}) Cannot resolve relative geometries path '{geom_path_str}'. DATA_SOURCES_DIR missing."); return pd.DataFrame()
 
     logger.info(f"({source_context}) Loading zone data: Attributes='{actual_attributes_path}', Geometries='{actual_geometries_path}'")
 
@@ -367,12 +367,11 @@ def load_json_config_file(
 
     actual_file_path = Path(path_to_load_str)
     if not actual_file_path.is_absolute():
-        if hasattr(settings, 'CONFIG_DIR'): # Try resolving from a CONFIG_DIR if it exists in settings
-            actual_file_path = (Path(settings.CONFIG_DIR) / actual_file_path).resolve()
-        elif hasattr(settings, 'PROJECT_ROOT_DIR'): # Fallback to PROJECT_ROOT_DIR
+        # Removed reference to non-existent 'CONFIG_DIR'
+        if hasattr(settings, 'PROJECT_ROOT_DIR'): # Fallback to PROJECT_ROOT_DIR
             actual_file_path = (Path(settings.PROJECT_ROOT_DIR) / actual_file_path).resolve()
         else:
-            logger.warning(f"({source_context}) Cannot resolve relative JSON path '{actual_file_path}' as CONFIG_DIR/PROJECT_ROOT_DIR are not in settings. Trying current dir.")
+            logger.warning(f"({source_context}) Cannot resolve relative JSON path '{actual_file_path}' as PROJECT_ROOT_DIR is not in settings. Trying current dir.")
             actual_file_path = actual_file_path.resolve() # Resolve from CWD as last resort
 
 
