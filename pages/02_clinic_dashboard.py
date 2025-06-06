@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import logging
 from datetime import date, timedelta
-from typing import Optional, Dict, Any, Tuple, List
+from typing import Optional, Dict, Any, Tuple, List, Union
 from pathlib import Path
 
 # --- Sentinel System Imports (Absolute Imports from Project Root) ---
@@ -47,13 +47,14 @@ def setup_page_config():
 
 setup_page_config()
 
-# --- Data Loading & Caching ---
+# --- Data Loading & Caching (Optimized) ---
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 3600), show_spinner="Loading and enriching health records...")
 def load_and_prepare_health_data() -> pd.DataFrame:
     """Loads raw health records, applies AI models, and prepares dates. This is cached for performance."""
     log_ctx = "ClinicDash/LoadHealth"
     raw_df = load_health_records(source_context=log_ctx)
     if raw_df.empty: return pd.DataFrame()
+    
     enriched_df, _ = apply_ai_models(raw_df, source_context=log_ctx)
     if not isinstance(enriched_df, pd.DataFrame) or 'encounter_date' not in enriched_df.columns:
         logger.warning(f"({log_ctx}) AI model application failed or returned invalid data. Using raw data.")
@@ -90,11 +91,7 @@ def manage_date_range_filter(data_min_date: date, data_max_date: date) -> Tuple[
         min_value=data_min_date, max_value=data_max_date
     )
     start_date, end_date = (selected_range[0], selected_range[1]) if len(selected_range) == 2 else st.session_state.clinic_date_range
-    
-    if start_date > end_date:
-        end_date = start_date
-        st.sidebar.warning("Start date cannot be after end date.")
-
+    if start_date > end_date: end_date = start_date
     st.session_state.clinic_date_range = (start_date, end_date)
     return start_date, end_date
 
@@ -103,7 +100,6 @@ st.title("🏥 Clinic Operations & Management Console")
 st.markdown("**Service Performance, Patient Care Quality, Resource Management, and Facility Environment Monitoring**")
 st.divider()
 
-# 1. Load data and initialize state
 try:
     full_health_df = load_and_prepare_health_data()
     full_iot_df = load_and_prepare_iot_data()
@@ -112,25 +108,23 @@ except Exception as e:
     st.error(f"A critical error occurred while loading base data: {e}. The dashboard cannot proceed.")
     st.stop()
 
-# 2. Sidebar and Data-Aware Filters
 st.sidebar.image(str(Path(_get_setting('APP_LOGO_SMALL_PATH', ''))), width=230)
 st.sidebar.header("Console Filters")
-
 if not full_health_df.empty:
     min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
     start_date, end_date = manage_date_range_filter(min_date, max_date)
+    health_df_period = full_health_df[(full_health_df['encounter_date'].dt.date >= start_date) & (full_health_df['encounter_date'].dt.date <= end_date)]
+    iot_df_period = full_iot_df[(full_iot_df['timestamp'].dt.date >= start_date) & (full_iot_df['timestamp'].dt.date <= end_date)] if not full_iot_df.empty else pd.DataFrame()
 else:
-    st.sidebar.warning("Health data is empty. Cannot set date filters.")
+    st.sidebar.warning("Health data is empty or unavailable.")
     start_date, end_date = date.today() - timedelta(days=29), date.today()
+    health_df_period = pd.DataFrame()
+    iot_df_period = pd.DataFrame()
 
 current_period_str = f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
 st.info(f"Displaying data for: **{current_period_str}**")
 
-# 3. Filter data for the selected period
-health_df_period = full_health_df[(full_health_df['encounter_date'].dt.date >= start_date) & (full_health_df['encounter_date'].dt.date <= end_date)]
-iot_df_period = full_iot_df[(full_iot_df['timestamp'].dt.date >= start_date) & (full_iot_df['timestamp'].dt.date <= end_date)]
-
-# 4. KPI Snapshot Section
+# --- KPI Snapshot Section ---
 st.header("🚀 Clinic Performance & Environment Snapshot")
 try:
     if not health_df_period.empty:
@@ -141,14 +135,14 @@ try:
         if main_kpis:
             st.markdown("##### **Overall Service Performance:**")
             cols = st.columns(min(len(main_kpis), 4))
-            for i, kpi in enumerate(main_kpis):
-                with cols[i]: render_kpi_card(**kpi)
+            for i, kpi_data in enumerate(main_kpis):
+                with cols[i]: render_kpi_card(**kpi_data)
         
         if disease_kpis:
             st.markdown("##### **Key Disease & Supply Indicators:**")
             cols = st.columns(min(len(disease_kpis), 4))
-            for i, kpi in enumerate(disease_kpis):
-                with cols[i]: render_kpi_card(**kpi)
+            for i, kpi_data in enumerate(disease_kpis):
+                with cols[i]: render_kpi_card(**kpi_data)
     else:
         st.info("ℹ️ No health data in the selected period for service KPIs.")
 
@@ -157,20 +151,20 @@ try:
         env_kpis = get_clinic_environmental_summary_kpis(iot_df_period)
         cols = st.columns(4)
         co2, pm25, occup, noise = env_kpis.get('avg_co2_overall_ppm'), env_kpis.get('avg_pm25_overall_ugm3'), env_kpis.get('avg_waiting_room_occupancy_overall_persons'), env_kpis.get('rooms_noise_high_alert_latest_count', 0)
-        with cols[0]: render_kpi_card(title="Avg. CO2", value_str=f"{co2:.0f}" if pd.notna(co2) else "N/A", units="ppm", icon="💨", status_level="MODERATE_CONCERN" if pd.notna(co2) and co2 > 1000 else "ACCEPTABLE")
-        with cols[1]: render_kpi_card(title="Avg. PM2.5", value_str=f"{pm25:.1f}" if pd.notna(pm25) else "N/A", units="µg/m³", icon="🌫️", status_level="MODERATE_CONCERN" if pd.notna(pm25) and pm25 > 12 else "ACCEPTABLE")
-        with cols[2]: render_kpi_card(title="Avg. Waiting Occupancy", value_str=f"{occup:.1f}" if pd.notna(occup) else "N/A", units="persons", icon="👨‍👩‍👧‍👦", status_level="MODERATE_CONCERN" if pd.notna(occup) and occup > 10 else "ACCEPTABLE")
-        with cols[3]: render_kpi_card(title="High Noise Alerts", value_str=str(noise), units="areas", icon="🔊", status_level="HIGH_CONCERN" if noise > 0 else "ACCEPTABLE")
+        with cols[0]: render_kpi_card(title="Avg. CO2", value_str=f"{co2:.0f}" if pd.notna(co2) else "N/A", units="ppm", icon="💨")
+        with cols[1]: render_kpi_card(title="Avg. PM2.5", value_str=f"{pm25:.1f}" if pd.notna(pm25) else "N/A", units="µg/m³", icon="🌫️")
+        with cols[2]: render_kpi_card(title="Avg. Waiting Occupancy", value_str=f"{occup:.1f}" if pd.notna(occup) else "N/A", units="persons", icon="👨‍👩‍👧‍👦")
+        with cols[3]: render_kpi_card(title="High Noise Alerts", value_str=str(noise), units="areas", icon="🔊")
     elif not full_iot_df.empty:
         st.info("ℹ️ No environmental data in the selected period for environment snapshot.")
     else:
-        st.info("🔌 IoT environmental data source is unavailable.")
+        st.info("🔌 IoT environmental data source is unavailable for this installation.")
 except Exception as e:
     logger.error(f"Error rendering KPI snapshot section: {e}", exc_info=True)
     st.error("⚠️ An error occurred while rendering the KPI snapshot.")
 st.divider()
 
-# 5. Deep Dive Tabs
+# --- Deep Dive Tabs Section ---
 st.header("🛠️ Operational Areas Deep Dive")
 tabs = st.tabs(["📈 Local Epi", "🔬 Testing", "💊 Supply Chain", "🧍 Patient Focus", "🌿 Environment"])
 
@@ -180,7 +174,7 @@ with tabs[0]:
         try:
             epi_data = calculate_clinic_epidemiological_data(health_df_period, current_period_str)
             st.plotly_chart(plot_bar_chart(epi_data.get("symptom_trends_weekly_top_n_df"), 'week_start_date', 'count', "Weekly Symptom Frequency", 'symptom', 'group'), use_container_width=True)
-        except Exception as e: st.error(f"⚠️ Could not generate epi insights: {e}")
+        except Exception as e: st.error(f"⚠️ Could not generate epidemiological insights: {e}")
 
 with tabs[1]:
     if health_df_period.empty: st.info("ℹ️ No health data in this period for testing insights.")
@@ -194,7 +188,7 @@ with tabs[1]:
         except Exception as e: st.error(f"⚠️ Could not generate testing insights: {e}")
 
 with tabs[2]:
-    if full_health_df.empty: st.info("ℹ️ No historical health data available for supply forecasting.")
+    if full_health_df.empty: st.info("ℹ️ No historical data available for supply forecasting.")
     else:
         try:
             use_ai = st.checkbox("Use Advanced AI Forecast", key="supply_ai_toggle")
@@ -214,7 +208,7 @@ with tabs[3]:
         except Exception as e: st.error(f"⚠️ Could not generate patient focus insights: {e}")
 
 with tabs[4]:
-    if not iot_available_flag: st.warning("🔌 IoT data source is unavailable.")
+    if not iot_available_flag: st.warning("🔌 IoT data source is unavailable for this installation.")
     elif iot_df_period.empty: st.info("ℹ️ No environmental data was recorded in this period.")
     else:
         try:
