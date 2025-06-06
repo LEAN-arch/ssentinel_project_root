@@ -35,7 +35,8 @@ def _get_district_map_metric_options_config(
         "Avg. Patient Daily Steps (Zone)": {"col": "avg_daily_steps_zone", "colorscale": "BuGn", "format_str": "{:,.0f}"}
     }
     for cond_key_map in settings.KEY_CONDITIONS_FOR_ACTION:
-        col_name_map = f"active_{re.sub(r'[^a-z0-9_]+', '_', cond_key_map.lower().replace('(severe)','').strip())}_cases"
+        # CORRECTED: Removed the .replace('(severe)','') to match the column name generation in enrichment.py
+        col_name_map = f"active_{re.sub(r'[^a-z0-9_]+', '_', cond_key_map.lower().strip())}_cases"
         disp_label_map = cond_key_map.replace("(Severe)", "").strip()
         all_map_metrics[f"Active {disp_label_map} Cases (Zone)"] = {
             "col": col_name_map, "colorscale": "Reds", "format_str": "{:.0f}"
@@ -70,9 +71,7 @@ def render_district_map_visualization(
 
     @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS)
     def _load_geojson_features(geojson_path: str) -> Optional[List[Dict[str, Any]]]:
-        if not os.path.exists(geojson_path):
-            logger.error(f"({module_log_prefix}) GeoJSON file for map base not found: {geojson_path}")
-            return None
+        # This function no longer needs os.path check since settings validation handles it.
         try:
             with open(geojson_path, 'r', encoding='utf-8') as f: geo_data = json.load(f)
             return geo_data.get("features") if isinstance(geo_data.get("features"), list) else None
@@ -100,26 +99,24 @@ def render_district_map_visualization(
         st.plotly_chart(create_empty_figure("District Health Map", map_height, "No metrics available for map display."), use_container_width=True)
         return
 
-    # Determine default selection for selectbox
     default_selection_name = next((name for name, props in map_metric_options.items() if props["col"] == default_metric_col_for_map_display), list(map_metric_options.keys())[0])
     
-    # Session state key for map metric selector
     map_metric_session_key = "dho_map_metric_selection"
     if map_metric_session_key not in st.session_state:
         st.session_state[map_metric_session_key] = default_selection_name
     
+    # CORRECTED: Use a consistent key for the widget and for accessing session_state.
+    # The `key` argument in Streamlit widgets becomes the dictionary key in `st.session_state`.
     selected_metric_name = st.selectbox(
         "Select Metric for Map Visualization:", options=list(map_metric_options.keys()),
-        index=list(map_metric_options.keys()).index(st.session_state[map_metric_session_key]), # Use session state for index
-        key=f"{map_metric_session_key}_widget" # Unique key for widget
+        key=map_metric_session_key
     )
-    st.session_state[map_metric_session_key] = selected_metric_name # Update session state
     
     selected_metric_cfg = map_metric_options.get(selected_metric_name)
 
     if selected_metric_cfg:
         metric_col_plot = selected_metric_cfg["col"]
-        base_hover_cols = ['name', 'population', 'num_clinics', 'zone_id'] # Standard hover info
+        base_hover_cols = ['name', 'population', 'num_clinics', 'zone_id']
         hover_data_map = [col for col in base_hover_cols if col in enriched_district_zone_df.columns]
         if metric_col_plot not in hover_data_map and metric_col_plot in enriched_district_zone_df.columns:
             hover_data_map.append(metric_col_plot)
@@ -127,7 +124,7 @@ def render_district_map_visualization(
         map_fig = plot_choropleth_map(
             map_data_df=enriched_district_zone_df, geojson_features=geojson_features,
             value_col_name=metric_col_plot, map_title=f"District Map: {selected_metric_name}",
-            zone_id_geojson_prop='zone_id', zone_id_df_col='zone_id', # Assumes 'zone_id' is the common key
+            zone_id_geojson_prop='zone_id', zone_id_df_col='zone_id',
             color_scale_name=selected_metric_cfg["colorscale"],
             hover_name_col='name', hover_data_cols=hover_data_map, map_height=map_height
         )
