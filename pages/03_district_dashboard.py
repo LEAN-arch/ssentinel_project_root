@@ -120,24 +120,19 @@ def get_dho_command_center_processed_datasets() -> Tuple[Optional[pd.DataFrame],
         enriched_zone_df_for_dho = base_zone_df_dho if not base_zone_df_dho.empty else pd.DataFrame()
 
     district_summary_kpis_map = get_district_summary_kpis(enriched_zone_df_for_dho, f"{log_ctx}/CalcDistrictKPIs")
-    
-    # DEBUG FIX: Removed generation of intervention_criteria_opts from the cached function.
-    
+        
     df_shape_log = enriched_zone_df_for_dho.shape if isinstance(enriched_zone_df_for_dho, pd.DataFrame) else 'N/A'
     logger.info(f"({log_ctx}) DHO data preparation complete. Enriched Zone DF shape: {df_shape_log}")
     return enriched_zone_df_for_dho, ai_enriched_health_df_dho, raw_iot_df_dho, district_summary_kpis_map
 
 # --- Load and Prepare Data for the Dashboard ---
-# DEBUG FIX: Initialize variables to match the new return signature of the cached function.
 enriched_zone_df_display, historical_health_df_for_trends, historical_iot_df_for_trends, district_kpis_summary_data = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
-intervention_criteria_options_data = {} # Will be populated after data loading.
+intervention_criteria_options_data = {} 
 
 try:
-    # DEBUG FIX: Unpack fewer variables, as the cached function returns one less item.
     (enriched_zone_df_display, historical_health_df_for_trends, historical_iot_df_for_trends,
      district_kpis_summary_data) = get_dho_command_center_processed_datasets()
      
-    # DEBUG FIX: Generate the (potentially non-serializable) intervention options *after* loading data from the cache.
     intervention_criteria_options_data = get_district_intervention_criteria_options(
         district_zone_df_sample_check=enriched_zone_df_display.head(2) if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_display.empty else None
     )
@@ -222,26 +217,28 @@ with tab_trends:
 
     if df_health_trends_dho.empty and df_iot_trends_dho.empty: st.info(f"No health or IoT data for trend period: {trend_period_str_dho}")
     else:
-        district_trends_data = calculate_district_wide_trends(df_health_trends_dho, df_iot_trends_dho, selected_start_date_trends, selected_end_date_trends, trend_period_str_dho)
-        disease_inc_trends = district_trends_data.get("disease_incidence_trends", {})
-        if disease_inc_trends:
-            st.markdown("###### Key Disease Incidence (Weekly New/Active Cases - Unique Patients):")
-            max_charts_row = 2; disease_keys = list(disease_inc_trends.keys())
-            for i_dis_row in range(0, len(disease_keys), max_charts_row):
-                cols_dis_trend = st.columns(max_charts_row)
-                for j_dis_idx, key_dis_plot in enumerate(disease_keys[i_dis_row : i_dis_row + max_charts_row]):
-                    series_dis_data = disease_inc_trends[key_dis_plot]
-                    if isinstance(series_dis_data, pd.Series) and not series_dis_data.empty:
-                        with cols_dis_trend[j_dis_idx % max_charts_row]: st.plotly_chart(plot_annotated_line_chart(series_dis_data, f"{key_dis_plot} New/Active Cases (Weekly)", y_values_are_counts=True, y_axis_label="# Unique Patients"), use_container_width=True)
-        
-        other_trends_cfg = {"Avg. Patient AI Risk Score Trend": (district_trends_data.get("avg_patient_ai_risk_trend"), "AI Risk Score"),
-                            "Avg. Patient Daily Steps Trend": (district_trends_data.get("avg_patient_daily_steps_trend"), "Steps/Day"),
-                            "Avg. Clinic CO2 Levels Trend (District)": (district_trends_data.get("avg_clinic_co2_trend"), "CO2 (ppm)")}
-        for title_trend, (series_data, y_label) in other_trends_cfg.items():
-            if isinstance(series_data, pd.Series) and not series_data.empty:
-                y_is_count = "Steps" in y_label or "#" in y_label
-                st.plotly_chart(plot_annotated_line_chart(series_data, title_trend, y_label, y_values_are_counts=y_is_count), use_container_width=True)
-        for note_trend in district_trends_data.get("data_availability_notes", []): st.caption(f"Note (Trends Tab): {note_trend}")
+        # DEBUG FIX: Wrap all plotting logic in a container to ensure layout isolation and prevent rendering artifacts.
+        with st.container():
+            district_trends_data = calculate_district_wide_trends(df_health_trends_dho, df_iot_trends_dho, selected_start_date_trends, selected_end_date_trends, trend_period_str_dho)
+            disease_inc_trends = district_trends_data.get("disease_incidence_trends", {})
+            if disease_inc_trends:
+                st.markdown("###### Key Disease Incidence (Weekly New/Active Cases - Unique Patients):")
+                max_charts_row = 2; disease_keys = list(disease_inc_trends.keys())
+                for i_dis_row in range(0, len(disease_keys), max_charts_row):
+                    cols_dis_trend = st.columns(max_charts_row)
+                    for j_dis_idx, key_dis_plot in enumerate(disease_keys[i_dis_row : i_dis_row + max_charts_row]):
+                        series_dis_data = disease_inc_trends[key_dis_plot]
+                        if isinstance(series_dis_data, pd.Series) and not series_dis_data.empty:
+                            with cols_dis_trend[j_dis_idx % max_charts_row]: st.plotly_chart(plot_annotated_line_chart(series_dis_data, f"{key_dis_plot} New/Active Cases (Weekly)", y_values_are_counts=True, y_axis_label="# Unique Patients"), use_container_width=True)
+            
+            other_trends_cfg = {"Avg. Patient AI Risk Score Trend": (district_trends_data.get("avg_patient_ai_risk_trend"), "AI Risk Score"),
+                                "Avg. Patient Daily Steps Trend": (district_trends_data.get("avg_patient_daily_steps_trend"), "Steps/Day"),
+                                "Avg. Clinic CO2 Levels Trend (District)": (district_trends_data.get("avg_clinic_co2_trend"), "CO2 (ppm)")}
+            for title_trend, (series_data, y_label) in other_trends_cfg.items():
+                if isinstance(series_data, pd.Series) and not series_data.empty:
+                    y_is_count = "Steps" in y_label or "#" in y_label
+                    st.plotly_chart(plot_annotated_line_chart(series_data, title_trend, y_label, y_values_are_counts=y_is_count), use_container_width=True)
+            for note_trend in district_trends_data.get("data_availability_notes", []): st.caption(f"Note (Trends Tab): {note_trend}")
 
 with tab_compare:
     st.subheader("Comparative Zonal Analysis")
