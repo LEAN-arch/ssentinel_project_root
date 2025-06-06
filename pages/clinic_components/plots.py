@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 def _get_setting(attr: str, default: Any) -> Any:
     return getattr(settings, attr, default)
 
-def create_empty_figure(title: str, height: Optional[int] = None, message: str = "No data to display.") -> go.Figure:
+def create_empty_figure(title: str, height: Optional[int] = None, message: str = "No data available to display.") -> go.Figure:
     """Creates a blank Plotly figure with a message."""
     final_height = height or _get_setting('WEB_PLOT_DEFAULT_HEIGHT', 400)
     fig = go.Figure()
@@ -93,10 +93,13 @@ def plot_bar_chart(
         
     fig = px.bar(df_input, x=x_col, y=y_col, color=color_col, barmode=barmode, text_auto=True)
     
-    text_template = '%{text:,d}' if y_values_are_counts else '%{text:,.1f}'
-    hover_template = f'<b>%{{x}}</b><br>Count: %{{y:,d}}<extra></extra>' if y_values_are_counts else f'<b>%{{x}}</b><br>Value: %{{y:,.1f}}<extra></extra>'
-    
-    fig.update_traces(texttemplate=text_template, hovertemplate=hover_template)
+    # CORRECTED: Use the flag to apply integer-specific formatting for counts.
+    if y_values_are_counts:
+        fig.update_traces(texttemplate='%{text:,.0f}', hovertemplate=f'<b>%{{x}}</b><br>Count: %{{y:,d}}<extra></extra>')
+        fig.update_yaxes(tickformat='d')
+    else:
+        fig.update_traces(texttemplate='%{text:,.1f}', hovertemplate=f'<b>%{{x}}</b><br>Value: %{{y:,.1f}}<extra></extra>')
+
     fig.update_layout(
         title_text=f'<b>{html.escape(title)}</b>',
         xaxis_title=x_col.replace('_', ' ').title(),
@@ -105,7 +108,4 @@ def plot_bar_chart(
         height=_get_setting('WEB_PLOT_DEFAULT_HEIGHT', 450)
     )
     
-    if y_values_are_counts:
-        fig.update_yaxes(tickformat='d')
-
     return fig
