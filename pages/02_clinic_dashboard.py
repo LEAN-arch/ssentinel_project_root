@@ -34,9 +34,11 @@ logger = logging.getLogger(__name__)
 
 # --- Configuration & Page Setup ---
 def _get_setting(attr_name: str, default_value: Any) -> Any:
+    """Safely retrieves a configuration setting or returns a default value."""
     return getattr(settings, attr_name, default_value)
 
 def setup_page_config():
+    """Sets the Streamlit page configuration."""
     st.set_page_config(
         page_title=f"Clinic Console - {_get_setting('APP_NAME', 'Sentinel')}",
         page_icon="🏥",
@@ -45,9 +47,10 @@ def setup_page_config():
 
 setup_page_config()
 
-# --- Data Loading & Caching (Optimized) ---
+# --- Data Loading & Caching ---
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 3600), show_spinner="Loading and enriching health records...")
 def load_and_prepare_health_data() -> pd.DataFrame:
+    """Loads raw health records, applies AI models, and prepares dates. This is cached for performance."""
     raw_df = load_health_records()
     if raw_df.empty: return pd.DataFrame()
     enriched_df, _ = apply_ai_models(raw_df)
@@ -59,6 +62,7 @@ def load_and_prepare_health_data() -> pd.DataFrame:
 
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 3600), show_spinner="Loading IoT environmental data...")
 def load_and_prepare_iot_data() -> pd.DataFrame:
+    """Loads and prepares IoT environmental data, cached for performance."""
     raw_df = load_iot_clinic_environment_data()
     if raw_df.empty or 'timestamp' not in raw_df.columns: return pd.DataFrame()
     if not pd.api.types.is_datetime64_any_dtype(raw_df['timestamp']):
@@ -67,6 +71,7 @@ def load_and_prepare_iot_data() -> pd.DataFrame:
 
 # --- UI Components & Filters ---
 def manage_date_range_filter(data_min_date: date, data_max_date: date) -> Tuple[date, date]:
+    """Manages the Streamlit date range filter widget with data-aware defaults."""
     default_days = _get_setting('WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND', 30)
     default_start = max(data_min_date, data_max_date - timedelta(days=default_days - 1))
     
@@ -108,7 +113,6 @@ except Exception as e:
 
 st.sidebar.image(str(Path(_get_setting('APP_LOGO_SMALL_PATH', ''))), width=230)
 st.sidebar.header("Console Filters")
-
 if not full_health_df.empty:
     min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
     start_date, end_date = manage_date_range_filter(min_date, max_date)
@@ -168,7 +172,7 @@ st.header("🛠️ Operational Areas Deep Dive")
 tabs = st.tabs(["📈 Local Epi", "🔬 Testing", "💊 Supply Chain", "🧍 Patient Focus", "🌿 Environment"])
 
 with tabs[0]:
-    if health_df_period.empty: st.info("ℹ️ No health data available for epidemiological analysis.")
+    if health_df_period.empty: st.info("ℹ️ No health data in this period for epidemiological analysis.")
     else:
         try:
             epi_data = calculate_clinic_epidemiological_data(health_df_period, current_period_str)
@@ -176,7 +180,7 @@ with tabs[0]:
         except Exception as e: st.error(f"⚠️ Could not generate epi insights: {e}")
 
 with tabs[1]:
-    if health_df_period.empty: st.info("ℹ️ No health data available for testing insights.")
+    if health_df_period.empty: st.info("ℹ️ No health data in this period for testing insights.")
     else:
         try:
             kpis = get_clinic_summary_kpis(health_df_period)
@@ -197,7 +201,7 @@ with tabs[2]:
         except Exception as e: st.error(f"⚠️ Could not generate supply chain insights: {e}")
 
 with tabs[3]:
-    if health_df_period.empty: st.info("ℹ️ No health data available for patient focus analysis.")
+    if health_df_period.empty: st.info("ℹ️ No health data in this period for patient focus analysis.")
     else:
         try:
             focus_data = prepare_clinic_patient_focus_overview_data(health_df_period, current_period_str)
