@@ -21,6 +21,7 @@ except ImportError as e:
     settings = FallbackSettings()
     logger_init.warning("kpi_structuring.py: Using fallback settings due to import error.")
 
+
 logger = logging.getLogger(__name__)
 
 def _get_setting(attr_name: str, default_value: Any) -> Any:
@@ -67,10 +68,6 @@ def _create_kpi_dict(
     """
     value = data_dict.get(config["data_key"])
     
-    # Don't render a card if the source data is completely missing
-    if value is None:
-        return None
-
     status_config = config.get("status_logic", {})
     target = float(_get_setting(status_config.get("target_setting", ""), status_config.get("default_target", 0)))
     
@@ -81,8 +78,9 @@ def _create_kpi_dict(
         thresholds = status_config.get("thresholds", {})
         
         if mode == 'lower_is_better':
+            # CORRECTED: Use the correct threshold key 'moderate_factor' for this calculation.
             if numeric_value <= target: status_level = "GOOD_PERFORMANCE"
-            elif numeric_value <= target + thresholds.get("moderate_concern", 1.0): status_level = "MODERATE_CONCERN"
+            elif numeric_value <= target * thresholds.get("moderate_factor", 1.25): status_level = "MODERATE_CONCERN"
             else: status_level = "HIGH_CONCERN"
         elif mode == 'higher_is_better':
             if numeric_value >= target: status_level = "GOOD_PERFORMANCE"
@@ -90,14 +88,18 @@ def _create_kpi_dict(
             else: status_level = "HIGH_CONCERN"
         elif mode == 'zero_is_good':
             if numeric_value == 0: status_level = "GOOD_PERFORMANCE"
-            elif numeric_value <= thresholds.get("moderate_concern", 2): status_level = "MODERATE_CONCERN"
+            elif numeric_value <= thresholds.get("moderate_concern_limit", 2): status_level = "MODERATE_CONCERN"
             else: status_level = "HIGH_CONCERN"
     
+    # Do not render a card if the source data is completely missing
+    if value is None and status_level == "NO_DATA":
+        return None
+
     return {
         "title": config["title"],
         "value_str": _format_kpi_value(value, **config.get("formatting", {})),
-        "units": config["units"],
-        "icon": config["icon"],
+        "units": config.get("units", ""),
+        "icon": config.get("icon", "ℹ️"),
         "status_level": status_level,
         "help_text": config.get("help_text_template", "").format(target=target)
     }
@@ -110,9 +112,9 @@ MAIN_KPI_CONFIG = [
         "formatting": {"precision": 1},
         "status_logic": {
             "mode": "lower_is_better", "target_setting": "TARGET_TEST_TURNAROUND_DAYS", "default_target": 2.0,
-            "thresholds": {"moderate_concern": 1.0}
+            "thresholds": {"moderate_factor": 1.5}
         },
-        "help_text_template": "Average Turnaround Time for conclusive tests. Target: ≤{target} days."
+        "help_text_template": "Average Turnaround Time for conclusive tests. Target: ≤{target:.1f} days."
     },
     {
         "data_key": "perc_critical_tests_tat_met",
@@ -127,12 +129,12 @@ MAIN_KPI_CONFIG = [
     {
         "data_key": "total_pending_critical_tests_patients",
         "title": "Pending Critical Tests", "units": "patients", "icon": "⏳",
-        "formatting": {"is_count": True},
+        "formatting": {"is_count": True, "default_str": "0"},
         "status_logic": {
             "mode": "zero_is_good", "default_target": 0,
-            "thresholds": {"moderate_concern": 3}
+            "thresholds": {"moderate_concern_limit": 3}
         },
-        "help_text_template": "Patients with critical tests pending. Target: {target}."
+        "help_text_template": "Patients with critical tests pending. Target: {target:.0f}."
     },
     {
         "data_key": "sample_rejection_rate_perc",
@@ -140,7 +142,7 @@ MAIN_KPI_CONFIG = [
         "formatting": {"is_percentage": True},
         "status_logic": {
             "mode": "lower_is_better", "target_setting": "TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY", "default_target": 5.0,
-            "thresholds": {"moderate_concern": 2.0}
+            "thresholds": {"moderate_factor": 1.5}
         },
         "help_text_template": "Overall rate of lab samples rejected. Target: <{target:.1f}%."
     }
@@ -172,15 +174,17 @@ def structure_disease_specific_clinic_kpis(
             if not (isinstance(config, dict) and config.get("critical")): continue
             
             stats = test_details.get(internal_name, {})
+            display_name = config.get("display_name", internal_name)
+            
             kpi_config = {
                 "data_key": "positive_rate_perc",
-                "title": f"{config.get('disease_label_short', 'Test')} Positivity", "units": "%", "icon": config.get("icon", "🔬"),
+                "title": f"{display_name} Positivity", "units": "%", "icon": config.get("icon", "🔬"),
                 "formatting": {"is_percentage": True},
                 "status_logic": {
                     "mode": "lower_is_better", "default_target": config.get("target_max_positivity_pct", 15.0),
-                    "thresholds": {"moderate_concern": 5.0}
+                    "thresholds": {"moderate_factor": 1.5}
                 },
-                "help_text_template": f"Positivity for {config.get('display_name', internal_name)}. Target: <{{target:.1f}}%."
+                "help_text_template": f"Positivity for {display_name}. Target: <{{target:.1f}}%."
             }
             kpi_dict = _create_kpi_dict(stats, kpi_config)
             if kpi_dict:
@@ -191,9 +195,9 @@ def structure_disease_specific_clinic_kpis(
         "title": "Key Drug Stockouts", "units": "items", "icon": "💊",
         "formatting": {"is_count": True, "default_str": "0"},
         "status_logic": {
-            "mode": "zero_is_good", "default_target": 0, "thresholds": {"moderate_concern": 2}
+            "mode": "zero_is_good", "default_target": 0, "thresholds": {"moderate_concern_limit": 2}
         },
-        "help_text_template": f"Key drugs with < {_get_setting('CRITICAL_SUPPLY_DAYS_REMAINING', 7)} days of stock. Target: {{target}}."
+        "help_text_template": f"Key drugs with < {_get_setting('CRITICAL_SUPPLY_DAYS_REMAINING', 7)} days of stock. Target: {{target:.0f}}."
     }
     stockout_kpi = _create_kpi_dict(kpi_data, stockout_config)
     if stockout_kpi:
