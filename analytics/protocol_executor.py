@@ -3,16 +3,34 @@
 
 import logging
 import json
-import re # For robust placeholder replacement in messages
+import re
 from typing import Dict, Any, Optional, List
 
 from config import settings
-from data_processing.loaders import load_escalation_protocols # This import is problematic if loaders.py uses st.cache_data
 
 logger = logging.getLogger(__name__)
 
 _LOADED_ESCALATION_PROTOCOLS: Optional[Dict[str, Any]] = None
 _PROTOCOLS_LOADED_SUCCESSFULLY: bool = False
+
+
+def _load_protocols_from_file(file_path: str) -> Optional[Dict[str, Any]]:
+    """
+    Safely loads and parses a JSON file from the given path.
+    This is a framework-agnostic loader.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error(f"Escalation protocols file not found at path: {file_path}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding JSON from escalation protocols file at {file_path}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"An unexpected error occurred while loading {file_path}: {e}", exc_info=True)
+        return None
 
 
 def _get_loaded_protocols() -> Dict[str, Any]:
@@ -22,17 +40,12 @@ def _get_loaded_protocols() -> Dict[str, Any]:
     """
     global _LOADED_ESCALATION_PROTOCOLS, _PROTOCOLS_LOADED_SUCCESSFULLY
     
-    if _LOADED_ESCALATION_PROTOCOLS is None and not _PROTOCOLS_LOADED_SUCCESSFULLY: # Only attempt load if not already tried or failed
+    # Only attempt load if not already tried or if previous attempt failed
+    if _LOADED_ESCALATION_PROTOCOLS is None and not _PROTOCOLS_LOADED_SUCCESSFULLY:
         logger.info("First-time access or protocols not loaded; loading escalation_protocols.json.")
         try:
-            # Critical: `load_escalation_protocols` from `loaders.py` uses `st.cache_data`.
-            # This analytics module should ideally not depend on Streamlit specific caching.
-            # For now, assuming it works or a non-Streamlit version of load_escalation_protocols is available.
-            # If this becomes a problem, `load_escalation_protocols` needs to be refactored
-            # to not use Streamlit caching, or protocols loaded differently here.
-            # For this fix, assuming `robust_json_load` can be used directly if `loaders` is an issue.
-            # loaded_data = robust_json_load(settings.ESCALATION_PROTOCOLS_JSON_PATH) # Alternative direct load
-            loaded_data = load_escalation_protocols(settings.ESCALATION_PROTOCOLS_JSON_PATH) # Current structure
+            # CORRECTED: Replaced dependency on Streamlit-cached loader with a local, robust file loader.
+            loaded_data = _load_protocols_from_file(settings.ESCALATION_PROTOCOLS_JSON_PATH)
 
             if loaded_data and isinstance(loaded_data.get("protocols"), list):
                 _LOADED_ESCALATION_PROTOCOLS = loaded_data
