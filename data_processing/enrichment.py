@@ -4,7 +4,8 @@
 import pandas as pd
 import numpy as np
 import logging
-import re 
+import re
+import os  # <--- ADDED THIS IMPORT
 from typing import Optional, Dict, Any, List, Union
 
 try:
