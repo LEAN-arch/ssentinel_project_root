@@ -1,4 +1,4 @@
-# sentinel_project_root/pages/district_dashboard.py
+# sentinel_project_root/pages/03_district_dashboard.py
 # District Health Strategic Command Center for Sentinel Health Co-Pilot.
 
 import streamlit as st
@@ -51,6 +51,31 @@ except ImportError as e_dist_dash_abs: # Unique exception variable name
 
 # --- Page Specific Logger ---
 logger = logging.getLogger(__name__)
+
+def _get_setting(attr_name: str, default_value: Any) -> Any:
+    return getattr(settings, attr_name, default_value)
+
+# --- Page Config ---
+try:
+    page_icon_value = "🗺️"
+    app_logo_small_path_str = _get_setting('APP_LOGO_SMALL_PATH', None)
+    if app_logo_small_path_str:
+        favicon_path = Path(app_logo_small_path_str)
+        if favicon_path.is_file():
+            page_icon_value = str(favicon_path)
+        else:
+            logger.warning(f"Favicon for District Dashboard not found at path from setting APP_LOGO_SMALL_PATH: {favicon_path}")
+    
+    page_layout_value = _get_setting('APP_LAYOUT', "wide")
+    
+    st.set_page_config(
+        page_title=f"District Command - {_get_setting('APP_NAME', 'Sentinel App')}",
+        page_icon=page_icon_value, layout=page_layout_value
+    )
+except Exception as e_page_config:
+    logger.error(f"Error applying page configuration for District Dashboard: {e_page_config}", exc_info=True)
+    st.set_page_config(page_title="District Command", page_icon="🗺️", layout="wide")
+
 
 # --- Page Title and Introduction ---
 st.title(f"🗺️ {settings.APP_NAME} - District Health Strategic Command Center")
