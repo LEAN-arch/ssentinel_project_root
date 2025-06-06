@@ -5,11 +5,10 @@ import os
 import logging
 from datetime import datetime
 from pathlib import Path
-# import sys # Avoid sys import here to prevent any accidental path manipulation from settings itself
 
 # --- Base Project Directory ---
 PROJECT_ROOT_DIR = Path(__file__).resolve().parent.parent
-# print(f"DEBUG settings.py: PROJECT_ROOT_DIR resolved to: {PROJECT_ROOT_DIR}", file=sys.stderr) # Keep for debug if needed
+# settings_logger.debug(f"PROJECT_ROOT_DIR resolved to: {PROJECT_ROOT_DIR}") # Use logger for debug output
 
 settings_logger = logging.getLogger(__name__)
 
@@ -181,10 +180,10 @@ LEGACY_DISEASE_COLORS_WEB = {
 
 # Ensure log level from env var is valid before using it for logging within settings.py if needed
 if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-    print(f"WARNING (settings.py): Invalid LOG_LEVEL '{LOG_LEVEL}' from env. Defaulting to INFO for settings_logger.", file=sys.stderr)
-    # LOG_LEVEL = "INFO" # This would change the global LOG_LEVEL, which might not be desired if app.py already handled it.
-    # Instead, if settings_logger needs specific config:
-    # settings_logger.setLevel(logging.INFO)
-    pass # Assume app.py's basicConfig sets the root logger level correctly.
+    # CORRECTED: Use logger instead of print to stderr, avoids forbidden sys import
+    settings_logger.warning(f"Invalid LOG_LEVEL '{LOG_LEVEL}' from env. The root logger will default to INFO if app.py handles this.")
+    # The application entrypoint (app.py) is responsible for setting the root logger config.
+    # This warning is just for visibility during startup.
+    pass
 
 settings_logger.info(f"Sentinel settings module loaded. APP_NAME: {APP_NAME} v{APP_VERSION}. PROJECT_ROOT_DIR defined in settings: {PROJECT_ROOT_DIR}")
