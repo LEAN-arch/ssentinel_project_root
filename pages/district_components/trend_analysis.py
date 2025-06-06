@@ -53,8 +53,8 @@ def calculate_district_wide_trends(
             disease_trends: Dict[str, pd.Series] = {}
             for cond_name_cfg in settings.KEY_CONDITIONS_FOR_ACTION:
                 disp_name_cond = cond_name_cfg.replace("(Severe)", "").strip()
-                # More precise regex matching: \b for word boundaries
-                cond_pattern_re = r"\b" + re.escape(cond_name_cfg) + r"\b"
+                # CORRECTED: Removed the `\b` word boundaries to allow for matching conditions with special characters.
+                cond_pattern_re = re.escape(cond_name_cfg)
                 cond_mask_re = df_health['condition'].astype(str).str.contains(cond_pattern_re, case=False, na=False, regex=True)
                 df_cond_trend = df_health[cond_mask_re]
                 if not df_cond_trend.empty:
