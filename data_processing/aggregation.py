@@ -4,6 +4,7 @@
 import pandas as pd
 import numpy as np
 import logging
+import re 
 from typing import Dict, Any, Optional, Union, Callable, List
 from datetime import date as date_type, datetime 
 
@@ -79,7 +80,6 @@ def get_trend_data(
         return pd.Series(dtype='float64')
 
     # --- Filtering ---
-    # CORRECTED: The filtered DataFrame is now correctly used for the final aggregation.
     df_to_aggregate = df_trend
     if filter_col and filter_val is not None:
         if df_trend[filter_col].dtype == 'object' and isinstance(filter_val, str):
