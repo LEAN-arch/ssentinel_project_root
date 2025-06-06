@@ -20,8 +20,7 @@ except ImportError as e:
 logger = logging.getLogger(__name__)
 
 COMMON_NA_STRINGS_TASK = frozenset(['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown', '-'])
-VALID_NA_FOR_REGEX_TASK = [s for s in COMMON_NA_STRINGS_TASK if s] 
-NA_REGEX_TASK_PATTERN = r'^(?:' + '|'.join(re.escape(s) for s in VALID_NA_FOR_REGEX_TASK) + r')$' if VALID_NA_FOR_REGEX_TASK else None
+NA_REGEX_TASK_PATTERN = r'^\s*$' + (r'|^(?:' + '|'.join(re.escape(s) for s in COMMON_NA_STRINGS_TASK if s) + r')$' if any(COMMON_NA_STRINGS_TASK) else '')
 
 # Pre-compile regex patterns used in rules
 TB_CONDITION_PATTERN = re.compile(r"\btb\b|tuberculosis", re.IGNORECASE)
@@ -36,10 +35,10 @@ def _prepare_task_dataframe(
     log_prefix: str,
     default_chw_id: str,
     default_zone_id: str,
-    default_patient_id_prefix: str # CORRECTED: Added argument to function signature
+    default_patient_id_prefix: str
 ) -> pd.DataFrame:
     df_prepared = df.copy()
-    logger.debug(f"({log_prefix}) Preparing task dataframe. Initial shape: {df_prepared.shape}, Columns: {df_prepared.columns.tolist()}")
+    logger.debug(f"({log_prefix}) Preparing task dataframe. Initial shape: {df_prepared.shape}")
 
     for col_name, config in cols_config.items():
         default_value = config.get("default")
@@ -50,7 +49,6 @@ def _prepare_task_dataframe(
             elif col_name == 'zone_id': default_value = default_zone_id
             elif col_name == 'patient_id': default_value = default_patient_id_prefix
             
-            logger.debug(f"({log_prefix}) Column '{col_name}' missing. Adding with default: '{default_value}' of type {type(default_value)}")
             if target_type_str == "datetime" and default_value is pd.NaT:
                  df_prepared[col_name] = pd.NaT 
             elif isinstance(default_value, (list, dict)): 
@@ -59,28 +57,23 @@ def _prepare_task_dataframe(
                  df_prepared[col_name] = default_value 
         
         current_col_dtype = df_prepared[col_name].dtype
-        # Replace common string NAs with np.nan before type conversion for numeric/datetime
         if target_type_str in [float, int, "datetime"] and pd.api.types.is_object_dtype(current_col_dtype):
             if NA_REGEX_TASK_PATTERN:
                 try:
-                    df_prepared[col_name] = df_prepared[col_name].replace(NA_REGEX_TASK_PATTERN, np.nan, regex=True)
+                    df_prepared[col_name].replace(NA_REGEX_TASK_PATTERN, np.nan, regex=True, inplace=True)
                 except Exception as e_regex:
                      logger.warning(f"({log_prefix}) Regex NA replacement failed for column '{col_name}': {e_regex}. Proceeding.")
         
-        # Type conversion
         try:
             if target_type_str == "datetime":
                 df_prepared[col_name] = pd.to_datetime(df_prepared[col_name], errors='coerce')
             elif target_type_str == float:
                 df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value, target_type=float)
             elif target_type_str == int:
-                 int_default = default_value if isinstance(default_value, int) else (0 if default_value is np.nan else default_value)
+                 int_default = default_value if isinstance(default_value, int) else (0 if pd.isna(default_value) else int(default_value))
                  df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=int_default, target_type=int)
             elif target_type_str == str:
-                df_prepared[col_name] = df_prepared[col_name].fillna(str(default_value)).astype(str)
-                if NA_REGEX_TASK_PATTERN:
-                    df_prepared[col_name] = df_prepared[col_name].replace(NA_REGEX_TASK_PATTERN, str(default_value), regex=True)
-                df_prepared[col_name] = df_prepared[col_name].str.strip()
+                df_prepared[col_name] = df_prepared[col_name].fillna(str(default_value)).astype(str).str.strip()
         except Exception as e_conv:
             logger.error(f"({log_prefix}) Error converting column '{col_name}' to {target_type_str}: {e_conv}. Column filled with default.", exc_info=True)
             if target_type_str == "datetime" and default_value is pd.NaT: df_prepared[col_name] = pd.NaT
@@ -88,9 +81,11 @@ def _prepare_task_dataframe(
             
     if 'patient_id' in df_prepared.columns:
         # CORRECTED: Use the passed-in argument instead of the undefined variable
-        df_prepared['patient_id'] = df_prepared['patient_id'].replace('', default_patient_id_prefix).fillna(default_patient_id_prefix).astype(str)
-    
-    logger.debug(f"({log_prefix}) Task dataframe preparation complete. Shape: {df_prepared.shape}. Dtypes:\n{df_prepared.dtypes}")
+        df_prepared['patient_id'].replace('', default_patient_id_prefix, inplace=True)
+        df_prepared['patient_id'].fillna(default_patient_id_prefix, inplace=True)
+        df_prepared['patient_id'] = df_prepared['patient_id'].astype(str)
+
+    logger.debug(f"({log_prefix}) Task dataframe preparation complete. Shape: {df_prepared.shape}")
     return df_prepared
 
 
@@ -143,7 +138,7 @@ def generate_chw_tasks(
     }
     df_task_src = _prepare_task_dataframe(
         source_patient_data_df, task_gen_cols_cfg, module_log_prefix, 
-        safe_chw_id_context, safe_zone_context_str, default_pid_prefix_tasks # CORRECTED: Pass the argument
+        safe_chw_id_context, safe_zone_context_str, default_pid_prefix_tasks
     )
 
     if 'encounter_date' in df_task_src.columns and df_task_src['encounter_date'].notna().any():
@@ -160,12 +155,8 @@ def generate_chw_tasks(
     generated_tasks_list: List[Dict[str, Any]] = []
     processed_patient_task_types_set: Set[Tuple[str, str]] = set() 
 
-    temp_col_to_use = None
-    if 'vital_signs_temperature_celsius' in df_sorted_for_rules.columns and df_sorted_for_rules['vital_signs_temperature_celsius'].notna().any():
-        temp_col_to_use = 'vital_signs_temperature_celsius'
-    elif 'max_skin_temp_celsius' in df_sorted_for_rules.columns and df_sorted_for_rules['max_skin_temp_celsius'].notna().any():
-        temp_col_to_use = 'max_skin_temp_celsius'
-        logger.debug(f"({module_log_prefix}) Using 'max_skin_temp_celsius' for temperature checks.")
+    temp_col_to_use = next((tc for tc in ['vital_signs_temperature_celsius', 'max_skin_temp_celsius'] 
+                            if tc in df_sorted_for_rules.columns and df_sorted_for_rules[tc].notna().any()), None)
 
     spo2_critical_thresh = float(_get_setting('ALERT_SPO2_CRITICAL_LOW_PCT', 90.0))
     temp_high_fever_thresh = float(_get_setting('ALERT_BODY_TEMP_HIGH_FEVER_C', 39.5))
@@ -173,7 +164,6 @@ def generate_chw_tasks(
     prio_mod_thresh = float(_get_setting('FATIGUE_INDEX_MODERATE_THRESHOLD', 60))
     
     key_conditions_for_action_list = _get_setting('KEY_CONDITIONS_FOR_ACTION', [])
-
 
     for _, row_data in df_sorted_for_rules.iterrows():
         patient_id_str = str(row_data.get('patient_id', default_pid_prefix_tasks))
@@ -212,11 +202,7 @@ def generate_chw_tasks(
         referral_status_str = str(row_data.get('referral_status', '')).lower().strip()
         if not triggered_task_details and referral_status_str == 'pending':
             condition_str_for_ref = str(row_data.get('condition', '')).lower()
-            referral_reason_str_for_ref = str(row_data.get('referral_reason', '')).lower()
-            is_key_cond_ref = any(re.escape(kc.lower()) in condition_str_for_ref for kc in key_conditions_for_action_list if kc)
-            is_urgent_ref = "urgent" in referral_reason_str_for_ref
-
-            if is_key_cond_ref or is_urgent_ref:
+            if any(kc.lower() in condition_str_for_ref for kc in key_conditions_for_action_list if kc):
                 task_type = "TASK_VISIT_REFERRAL_TRACK"
                 if (patient_id_str, task_type) not in processed_patient_task_types_set:
                     triggered_task_details = {"type": task_type, "desc": f"Follow-up: Critical Referral for {row_data.get('condition', 'N/A')}", "prio": 88.0}
@@ -232,10 +218,9 @@ def generate_chw_tasks(
             if (patient_id_str, task_type) not in processed_patient_task_types_set:
                 triggered_task_details = {"type": task_type, "desc": "Support Medication Adherence (Reported Poor)", "prio": max(base_prio_val, 75.0)}
         
-        tb_contact_traced_val_int = int(row_data.get('tb_contact_traced', 1))
         if not triggered_task_details and \
            TB_CONDITION_PATTERN.search(str(row_data.get('condition', ''))) and \
-           tb_contact_traced_val_int == 0: 
+           int(row_data.get('tb_contact_traced', 1)) == 0: 
             task_type = "TASK_TB_CONTACT_TRACE"
             if (patient_id_str, task_type) not in processed_patient_task_types_set:
                 triggered_task_details = {"type": task_type, "desc": "Initiate/Continue TB Contact Tracing", "prio": max(base_prio_val, 80.0)}
@@ -254,16 +239,14 @@ def generate_chw_tasks(
             if temp_col_to_use and pd.notna(current_temp_val): context_parts.append(f"Last Temp: {current_temp_val:.1f}°C")
             if pd.notna(ai_risk_val): context_parts.append(f"AI Risk: {ai_risk_val:.0f}")
             key_ctx = " | ".join(context_parts) if context_parts else "General Assessment"
-
-            task_type_short_suffix = triggered_task_details['type'].split('_')[-1][:4] if '_' in triggered_task_details['type'] else triggered_task_details['type'][:4]
             
             generated_tasks_list.append({
-                "task_id": f"TSK_{patient_id_str}_{task_gen_target_date_iso.replace('-', '')}_{task_type_short_suffix.upper()}_{len(generated_tasks_list)+1:03d}",
+                "task_id": f"TSK_{patient_id_str}_{task_gen_target_date_iso.replace('-', '')}_{len(generated_tasks_list)+1:03d}",
                 "patient_id": patient_id_str, 
                 "assigned_chw_id": str(row_data.get('chw_id', safe_chw_id_context)),
                 "zone_id": str(row_data.get('zone_id', safe_zone_context_str)), 
                 "task_type_code": triggered_task_details["type"],
-                "task_description": f"{triggered_task_details['desc']} for Pt. {patient_id_str}",
+                "task_description": triggered_task_details['desc'],
                 "priority_score": round(min(float(triggered_task_details["prio"]), 100.0), 1),
                 "due_date": current_task_due_date.isoformat(), 
                 "status": "PENDING",
