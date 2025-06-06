@@ -72,7 +72,7 @@ def _prepare_testing_dataframe(
             else: df_prepared[col_name] = default_value
             
     if 'patient_id' in df_prepared.columns:
-        # CORRECTED: Use the correct variable `default_patient_id_prefix` that is passed as an argument.
+        # CORRECTED: Use the correct column 'patient_id' and the correct variable `default_patient_id_prefix`.
         df_prepared['patient_id'] = df_prepared['patient_id'].replace('', default_patient_id_prefix).fillna(default_patient_id_prefix)
     return df_prepared
 
@@ -88,7 +88,7 @@ def prepare_clinic_lab_testing_insights_data(
     overdue tests, and rejection reasons.
     """
     module_log_prefix = "ClinicTestInsightsPrep"
-    logger.info(f"({module_log_prefix}) Preparing testing insights. Focus: '{focus_test_group_display_name}', Period: {reporting_period_context_str}")
+    logger.info(f"({module_log_prefix}) Preparing insights. Focus: '{focus_test_group_display_name}', Period: {reporting_period_context_str}")
 
     default_crit_summary_cols = ["Test Group (Critical)", "Positivity (%)", "Avg. TAT (Days)", "% Met TAT Target", "Pending (Patients)", "Rejected (Patients)", "Total Conclusive Tests"]
     default_overdue_cols = ['patient_id', 'test_type', 'Sample Collection/Registered Date', 'days_pending', 'overdue_threshold_days', 'condition']
@@ -165,10 +165,13 @@ def prepare_clinic_lab_testing_insights_data(
         df_pending_tests_raw.dropna(subset=[date_col_for_overdue_calc], inplace=True)
 
         if not df_pending_tests_raw.empty:
-            current_processing_date = pd.Timestamp('now').normalize()
+            current_processing_date = pd.Timestamp('now').normalize() # This is tz-naive
+            
+            # CORRECTED: Ensure the date column is also tz-naive before subtraction to prevent TypeError.
             date_series = df_pending_tests_raw[date_col_for_overdue_calc]
-            if date_series.dt.tz is not None:
+            if pd.api.types.is_datetime64_any_dtype(date_series) and date_series.dt.tz is not None:
                 date_series = date_series.dt.tz_localize(None)
+
             df_pending_tests_raw['days_pending'] = (current_processing_date - date_series).dt.days
             
             def get_overdue_threshold_days(test_type_str: str) -> int:
@@ -184,5 +187,11 @@ def prepare_clinic_lab_testing_insights_data(
             if not df_actually_overdue.empty:
                 df_overdue_display = df_actually_overdue.rename(columns={date_col_for_overdue_calc: "Sample Collection/Registered Date"})
                 insights_output["overdue_pending_tests_list_df"] = df_overdue_display.reindex(columns=default_overdue_cols).sort_values('days_pending', ascending=False).reset_index(drop=True)
+            else:
+                insights_output["processing_notes"].append("No tests currently pending longer than their target TAT + buffer days.")
+        else:
+            insights_output["processing_notes"].append("No valid pending tests with dates for overdue calculation after cleaning dates.")
+    else:
+        insights_output["processing_notes"].append("No tests with 'Pending' status found for overdue evaluation.")
     
     return insights_output
