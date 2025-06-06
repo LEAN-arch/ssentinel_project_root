@@ -4,7 +4,7 @@
 import pandas as pd
 import numpy as np
 import logging
-import re  # Added this import
+import re
 from typing import Optional, Tuple, Dict, Any
 
 from config import settings
@@ -92,14 +92,24 @@ def apply_ai_models(
         # Convert to numeric, ensuring NaNs from conversion are filled with the default
         df_enriched[col_name] = convert_to_numeric(df_enriched[col_name], default_value=default_val)
 
+    # CORRECTED: Replaced inefficient and buggy string cleaning loop with a robust, single-regex approach.
+    # Build a single regex for all NA strings for efficiency and correctness.
+    na_strings_for_regex = [s for s in common_na_strings_orchestrator if s]
+    # This regex matches empty/whitespace strings OR any of the other specified NA strings.
+    na_regex = r'^\s*$' + (r'|^(?:' + '|'.join(re.escape(s) for s in na_strings_for_regex) + r')$' if na_strings_for_regex else '')
+
     for col_name, default_val in string_cols_defaults_orchestrator.items():
         if col_name not in df_enriched.columns:
             df_enriched[col_name] = default_val
-        df_enriched[col_name] = df_enriched[col_name].astype(str).fillna(default_val)
-        # Robust replacement of common NA strings
-        for na_s_orch in common_na_strings_orchestrator:
-            if na_s_orch: # Avoid replacing empty string with default if default is not empty string
-                 df_enriched[col_name] = df_enriched[col_name].str.replace(f"^{re.escape(na_s_orch)}$", default_val, case=False, regex=True)
+        
+        # First, fill any actual np.nan/pd.NA values with the intended default.
+        df_enriched[col_name] = df_enriched[col_name].fillna(default_val)
+        
+        # Now, ensure the column is string type and replace all textual NA representations
+        # (including empty strings) using the single regex for efficiency and correctness.
+        df_enriched[col_name] = df_enriched[col_name].astype(str).str.replace(
+            na_regex, str(default_val), case=False, regex=True
+        )
         df_enriched[col_name] = df_enriched[col_name].str.strip()
 
 
