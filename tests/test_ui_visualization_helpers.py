@@ -10,6 +10,7 @@ from unittest.mock import patch, MagicMock # Added MagicMock for st.container
 import html
 import json
 import os # For MAPBOX_TOKEN_SET_FLAG access from plots module
+import hashlib # Added for hash test
 
 from visualization.plots import (
     set_sentinel_plotly_theme, create_empty_figure, plot_choropleth_map,
