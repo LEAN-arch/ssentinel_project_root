@@ -203,7 +203,8 @@ def structure_disease_specific_clinic_kpis(
         icon = test_config.get("icon", default_disease_kpi_props["icon"])
         target_max_positivity = float(test_config.get("target_max_positivity_pct", default_disease_kpi_props["target_max_positivity_pct"]))
 
-        stats_for_this_test = test_summary_details_data.get(test_display_name, {}) # Get stats using display_name as key
+        # CORRECTED: Use the internal_test_name as the key for data lookup, not the display_name.
+        stats_for_this_test = test_summary_details_data.get(internal_test_name, {})
         positivity_rate = stats_for_this_test.get("positive_rate_perc") # Expects this key from aggregation
         
         status_val = "NO_DATA"
