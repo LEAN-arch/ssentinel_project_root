@@ -148,58 +148,47 @@ if ss_key_date_pop not in st.session_state or \
     st.session_state[ss_key_date_pop] = [min_data_date_pop, max_data_date_pop]
 
 selected_date_range_pop_val = st.sidebar.date_input("Select Date Range:", value=st.session_state[ss_key_date_pop], min_value=min_data_date_pop, max_value=max_data_date_pop, key=f"{ss_key_date_pop}_widget")
-# Initialize filter dates from session state (which has been validated or defaulted)
 start_filter_pop, end_filter_pop = st.session_state[ss_key_date_pop]
-# If date_input returns a new valid range, update them
 if isinstance(selected_date_range_pop_val, (list, tuple)) and len(selected_date_range_pop_val) == 2:
-    start_ui, end_ui = selected_date_range_pop_val
-    # Clamp to actual data min/max before assigning
-    start_filter_pop = min(max(start_ui, min_data_date_pop), max_data_date_pop)
-    end_filter_pop = min(max(end_ui, min_data_date_pop), max_data_date_pop)
+    start_ui_pop, end_ui_pop = selected_date_range_pop_val 
+    start_filter_pop = min(max(start_ui_pop, min_data_date_pop), max_data_date_pop)
+    end_filter_pop = min(max(end_ui_pop, min_data_date_pop), max_data_date_pop)
     if start_filter_pop > end_filter_pop: end_filter_pop = start_filter_pop 
-    st.session_state[ss_key_date_pop] = [start_filter_pop, end_filter_pop] # Persist validated selection
+    st.session_state[ss_key_date_pop] = [start_filter_pop, end_filter_pop]
 
 cond_options_list = ["All Conditions"]
 if isinstance(health_df_main, pd.DataFrame) and 'condition' in health_df_main.columns:
     unique_c = health_df_main['condition'].dropna().astype(str).unique()
     if len(unique_c) > 0 : cond_options_list.extend(sorted(list(unique_c)))
-selected_condition_filter_pop_val = st.sidebar.selectbox("Filter by Condition:", options=cond_options_list, index=0, key="pop_cond_v6_final") # Use unique key
+selected_condition_filter_pop_val = st.sidebar.selectbox("Filter by Condition:", options=cond_options_list, index=0, key="pop_cond_v6_final") 
 
 zone_options_list = ["All Zones/Regions"]
-zone_name_id_map = {} # Use a consistent name
+zone_name_id_map = {} 
 if isinstance(zone_attr_main, pd.DataFrame) and 'name' in zone_attr_main.columns and 'zone_id' in zone_attr_main.columns:
     valid_zones = zone_attr_main.dropna(subset=['name', 'zone_id'])
     if not valid_zones.empty: zone_name_id_map = valid_zones.groupby('name')['zone_id'].first().to_dict(); zone_options_list.extend(sorted(list(zone_name_id_map.keys())))
-elif isinstance(health_df_main, pd.DataFrame) and 'zone_id' in health_df_main.columns: # Check health_df_main as fallback
+elif isinstance(health_df_main, pd.DataFrame) and 'zone_id' in health_df_main.columns: 
     zone_options_list.extend(sorted(list(health_df_main['zone_id'].dropna().astype(str).unique())))
-selected_zone_display_filter_pop_val = st.sidebar.selectbox("Filter by Zone/Region:", options=zone_options_list, index=0, key="pop_zone_v6_final") # Use unique key
+selected_zone_display_filter_pop_val = st.sidebar.selectbox("Filter by Zone/Region:", options=zone_options_list, index=0, key="pop_zone_v6_final") 
 
-# --- Apply Filters to Data ---
 df_filtered_final = pd.DataFrame()
 if not data_load_error_flag and isinstance(health_df_main, pd.DataFrame) and not health_df_main.empty:
     df_processing = health_df_main.copy()
-    if 'encounter_date' in df_processing: 
+    if 'encounter_date' in df_processing.columns: 
         start_dt_norm_filter = pd.to_datetime(start_filter_pop).normalize()
         end_dt_norm_filter = pd.to_datetime(end_filter_pop).normalize()
         df_processing = df_processing[(df_processing['encounter_date'].notna()) & (df_processing['encounter_date'].dt.normalize() >= start_dt_norm_filter) & (df_processing['encounter_date'].dt.normalize() <= end_dt_norm_filter)]
-    
-    if selected_condition_filter_pop_val != "All Conditions" and 'condition' in df_processing.columns: # Check column exists
+    if selected_condition_filter_pop_val != "All Conditions" and 'condition' in df_processing.columns: 
         df_processing = df_processing[df_processing['condition'] == selected_condition_filter_pop_val]
-    
     if selected_zone_display_filter_pop_val != "All Zones/Regions":
-        if zone_name_id_map and selected_zone_display_filter_pop_val in zone_name_id_map: # Use zone_name_id_map
+        if zone_name_id_map and selected_zone_display_filter_pop_val in zone_name_id_map:
             zone_id_to_filter = zone_name_id_map[selected_zone_display_filter_pop_val]
-            if 'zone_id' in df_processing.columns: # Check column exists
+            if 'zone_id' in df_processing.columns: 
                 df_processing = df_processing[df_processing['zone_id'].astype(str) == str(zone_id_to_filter)]
-        elif 'zone_id' in df_processing.columns: # Check column exists for direct filter
+        elif 'zone_id' in df_processing.columns: 
             df_processing = df_processing[df_processing['zone_id'].astype(str) == str(selected_zone_display_filter_pop_val)]
     df_filtered_final = df_processing
-else:
-    if not data_load_error_flag: 
-        logger.info("Population Dashboard: Main health data is empty after initial load. No data to filter.")
 
-# --- Main Page Content ---
-# DEFINE filter_context_display_str USING THE CORRECT, FINALIZED FILTER VARIABLES
 filter_context_display_str = (
     f"({start_filter_pop.strftime('%d %b %Y')} - {end_filter_pop.strftime('%d %b %Y')}, "
     f"Cond: {selected_condition_filter_pop_val}, Zone: {selected_zone_display_filter_pop_val})"
@@ -230,13 +219,14 @@ with tabs_rendered[0]:
         if 'condition' in df_filtered_final.columns:
             top_conds_data_epi = df_filtered_final['condition'].value_counts().nlargest(10)
             if not top_conds_data_epi.empty:
-                fig_top_conds = px.bar(top_conds_data_epi, y=top_conds_data_epi.index, x=top_conds_data_epi.values, orientation='h', title="Top 10 Conditions by Encounters", labels={'y':'Condition', 'x':'Number of Encounters'})
-                fig_top_conds.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_tickformat='d', xaxis_rangemode='tozero') 
-                if not top_conds_data_epi.empty: # Check again before accessing max()
+                fig_cond = px.bar(top_conds_data_epi, y=top_conds_data_epi.index, x=top_conds_data_epi.values, orientation='h', title="Top 10 Conditions by Encounters", labels={'y':'Condition', 'x':'Number of Encounters'})
+                fig_cond.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_tickformat='d', xaxis_rangemode='tozero') 
+                if not top_conds_data_epi.empty: 
                     max_val = top_conds_data_epi.max()
-                    if pd.notna(max_val) and max_val < 30 and max_val > 0 : fig_top_conds.update_xaxes(dtick=1)
-                    elif pd.notna(max_val) and max_val == 0 : fig_top_conds.update_xaxes(dtick=1, range=[0,1])
-                st.plotly_chart(fig_top_conds, use_container_width=True)
+                    if pd.notna(max_val): 
+                        if max_val < 30 and max_val > 0 : fig_cond.update_xaxes(dtick=1) 
+                        elif max_val == 0 : fig_cond.update_xaxes(dtick=1, range=[0,1]) 
+                st.plotly_chart(fig_cond, use_container_width=True)
             else: st.caption("No condition data for top conditions chart.")
         else: st.caption("'condition' column missing for top conditions chart.")
         
