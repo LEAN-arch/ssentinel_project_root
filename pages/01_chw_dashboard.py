@@ -14,7 +14,7 @@ try:
     from config import settings
     from data_processing.loaders import load_health_records
     from data_processing.helpers import hash_dataframe_safe
-    from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator
+    from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator # Ensure these are correctly defined
     from visualization.plots import plot_annotated_line_chart, create_empty_figure 
 
     from pages.chw_components.summary_metrics import calculate_chw_daily_summary_metrics
@@ -185,6 +185,7 @@ def load_data_for_filters() -> pd.DataFrame:
             logger.warning(f"Error processing encounter_date in filter data: {e_filter_date}. May affect date pickers.")
     return df_filters
 
+# --- Sidebar ---
 st.sidebar.markdown("---") 
 try:
     project_root_dir_val = _get_setting('PROJECT_ROOT_DIR', '.')
@@ -278,6 +279,7 @@ if isinstance(selected_trend_range, (list, tuple)) and len(selected_trend_range)
         trend_end_date_filter = trend_start_date_filter
     st.session_state[trend_range_ss_key] = [trend_start_date_filter, trend_end_date_filter]
 
+# --- Load Data ---
 daily_activity_df, trend_activity_df, daily_kpis_precalculated = pd.DataFrame(), pd.DataFrame(), {}
 data_load_successful = False
 try:
@@ -298,6 +300,7 @@ st.info(f"Displaying data for: {', '.join(filter_context_parts)}")
 if not data_load_successful: 
     st.warning("Main data loading failed. Some dashboard sections will be empty or show errors.")
 
+# --- Section 1: Daily Performance Snapshot ---
 st.header("📊 Daily Performance Snapshot")
 daily_summary_metrics_calculated = False
 if data_load_successful and not daily_activity_df.empty: 
@@ -340,84 +343,134 @@ else:
     st.markdown("ℹ️ _No activity data for selected date/filters for daily performance snapshot._")
 st.divider()
 
+
+# --- Section 2: Key Alerts & Tasks (Enhanced Visualization) ---
 st.header("🚦 Key Alerts & Tasks")
+
+chw_alerts = []
 alerts_generated_successfully = False
+chw_tasks = []
 tasks_generated_successfully = False
 
 if data_load_successful and not daily_activity_df.empty:
-    chw_alerts = []
     try:
         chw_alerts = generate_chw_alerts(
             daily_activity_df, 
             selected_daily_date, 
             active_zone_filter or "All Zones", 
-            max_alerts_to_return=10 # CORRECTED from max_alerts
+            max_alerts_to_return=15 # Corrected: was max_alerts
         )
         alerts_generated_successfully = True
     except Exception as e_alerts:
         logger.error(f"CHW Dashboard: Error generating patient alerts: {e_alerts}", exc_info=True)
         st.warning("⚠️ Could not generate patient alerts for display.")
 
-    if alerts_generated_successfully:
-        if chw_alerts:
-            st.subheader("Priority Patient Alerts (Today):")
-            critical_alerts_found = any(alert.get("alert_level") == "CRITICAL" for alert in chw_alerts)
-            for alert in chw_alerts:
-                if alert.get("alert_level") == "CRITICAL":
-                    render_traffic_light_indicator(
-                        message=f"Pt. {alert.get('patient_id', 'N/A')}: {alert.get('primary_reason', 'Critical Alert')}",
-                        status_level="HIGH_RISK", 
-                        details_text=(f"Details: {alert.get('brief_details','N/A')} | Context: {alert.get('context_info','N/A')} | Action: {alert.get('suggested_action_code','REVIEW')}")
-                    )
-            if not critical_alerts_found: st.info("ℹ️ No CRITICAL patient alerts identified for this selection today.")
-            
-            warning_alerts = [alert for alert in chw_alerts if alert.get("alert_level") == "WARNING"]
-            if warning_alerts:
-                st.markdown("###### Warning Level Alerts:")
-                for alert in warning_alerts:
-                    render_traffic_light_indicator(
-                        message=f"Pt. {alert.get('patient_id', 'N/A')}: {alert.get('primary_reason', 'Warning')}",
-                        status_level="MODERATE_CONCERN", 
-                        details_text=f"Details: {alert.get('brief_details','N/A')} | Context: {alert.get('context_info','N/A')}"
-                    )
-            elif not critical_alerts_found: st.info("ℹ️ Only informational alerts (if any) were generated.")
-        else: 
-             st.success("✅ No significant patient alerts needing immediate attention generated for today's selection.")
-    
-    chw_tasks = []
     try:
         chw_tasks = generate_chw_tasks(
             daily_activity_df, 
             selected_daily_date, 
             active_chw_filter, 
             active_zone_filter or "All Zones", 
-            max_tasks_to_return_for_summary=10 # CORRECTED from max_tasks
+            max_tasks_to_return_for_summary=20 # Corrected: was max_tasks
         )
         tasks_generated_successfully = True
     except Exception as e_tasks:
         logger.error(f"CHW Dashboard: Error generating CHW tasks: {e_tasks}", exc_info=True)
         st.warning("⚠️ Could not generate tasks list for display.")
-
-    if tasks_generated_successfully:
-        if chw_tasks:
-            st.subheader("Top Priority Tasks (Today/Next Day):")
-            tasks_df = pd.DataFrame(chw_tasks)
-            task_display_cols_ordered = ['patient_id', 'task_description', 'priority_score', 'due_date', 'status', 'key_patient_context', 'assigned_chw_id']
-            actual_task_cols = [col for col in task_display_cols_ordered if col in tasks_df.columns]
-            if not tasks_df.empty and actual_task_cols:
-                st.dataframe(
-                    tasks_df[actual_task_cols], use_container_width=True, height=min(420, len(tasks_df) * 38 + 58), 
-                    hide_index=True, column_config={"priority_score": st.column_config.NumberColumn(format="%.1f"), "due_date": st.column_config.DateColumn(format="YYYY-MM-DD")}
-                )
-            elif not tasks_df.empty: st.warning("⚠️ Task data available but cannot display correctly due to column configuration issues.")
-        else: 
-            st.info("ℹ️ No high-priority tasks identified based on current data.")
 elif not data_load_successful:
     st.markdown("ℹ️ _Data loading failed. Cannot display alerts or tasks._")
-else: 
+else: # daily_activity_df is empty
     st.markdown("ℹ️ _No activity data to generate patient alerts or tasks for today._")
+
+# Enhanced Alert Display
+if alerts_generated_successfully:
+    if chw_alerts:
+        st.subheader("🚨 Priority Patient Alerts (Today)")
+        critical_alerts = [a for a in chw_alerts if a.get("alert_level") == "CRITICAL"]
+        warning_alerts = [a for a in chw_alerts if a.get("alert_level") == "WARNING"]
+        info_alerts = [a for a in chw_alerts if a.get("alert_level") == "INFO"]
+
+        col1_alert_sum, col2_alert_sum, col3_alert_sum = st.columns(3)
+        with col1_alert_sum: st.metric("Critical Alerts", len(critical_alerts))
+        with col2_alert_sum: st.metric("Warning Alerts", len(warning_alerts))
+        with col3_alert_sum: st.metric("Info Alerts", len(info_alerts))
+        st.markdown("---")
+
+        if critical_alerts:
+            st.error("**CRITICAL ALERTS - IMMEDIATE ATTENTION REQUIRED:**")
+            for alert in critical_alerts:
+                with st.expander(f"🔴 CRITICAL: Pt. {alert.get('patient_id', 'N/A')} - {alert.get('primary_reason', 'Alert')}", expanded=True):
+                    st.markdown(f"**Details:** {alert.get('brief_details', 'N/A')}")
+                    st.markdown(f"**Context:** {alert.get('context_info', 'N/A')}")
+                    st.markdown(f"**Suggested Action Code:** `{alert.get('suggested_action_code', 'REVIEW')}`")
+        
+        if warning_alerts:
+            st.warning("**WARNING ALERTS - ATTENTION ADVISED:**")
+            for alert in warning_alerts:
+                with st.expander(f"🟠 WARNING: Pt. {alert.get('patient_id', 'N/A')} - {alert.get('primary_reason', 'Warning')}"):
+                    st.markdown(f"**Details:** {alert.get('brief_details', 'N/A')}")
+                    st.markdown(f"**Context:** {alert.get('context_info', 'N/A')}")
+                    st.markdown(f"**Suggested Action Code:** `{alert.get('suggested_action_code', 'MONITOR')}`")
+
+        if info_alerts and not critical_alerts and not warning_alerts:
+            st.info("**INFORMATIONAL ALERTS:**")
+            for alert in info_alerts:
+                 with st.expander(f"ℹ️ INFO: Pt. {alert.get('patient_id', 'N/A')} - {alert.get('primary_reason', 'Information')}"):
+                    st.markdown(f"**Details:** {alert.get('brief_details', 'N/A')}")
+                    st.markdown(f"**Context:** {alert.get('context_info', 'N/A')}")
+        
+        if not chw_alerts: # Should only happen if component returns empty list but no error
+            st.success("✅ No specific alerts generated based on current criteria.")
+    elif data_load_successful and not daily_activity_df.empty :
+        st.success("✅ No significant patient alerts needing immediate attention generated for today's selection.")
+
+st.markdown("---") 
+
+# Enhanced Task Display
+if tasks_generated_successfully:
+    if chw_tasks:
+        st.subheader("📋 Top Priority Tasks (Today/Next Day)")
+        tasks_df = pd.DataFrame(chw_tasks)
+        if 'priority_score' in tasks_df.columns and 'due_date' in tasks_df.columns: # Ensure columns for sorting exist
+            tasks_df.sort_values(by=['priority_score', 'due_date'], ascending=[False, True], inplace=True)
+        
+        high_prio_tasks_count = 0
+        if 'priority_score' in tasks_df.columns:
+            prio_threshold_high = _get_setting('TASK_PRIORITY_HIGH_THRESHOLD', 70) 
+            high_prio_tasks_count = len(tasks_df[tasks_df['priority_score'] >= prio_threshold_high])
+        st.metric("High Priority Tasks", high_prio_tasks_count, help=f"Tasks with priority score ≥ {_get_setting('TASK_PRIORITY_HIGH_THRESHOLD', 70)}")
+        st.markdown("---")
+
+        for index, task in tasks_df.iterrows():
+            task_title = f"{task.get('task_description', 'N/A')} for Pt. {task.get('patient_id', 'N/A')}"
+            priority_score = task.get('priority_score', 0.0) # Default to float
+            due_date_str = task.get('due_date', 'N/A')
+            status = str(task.get('status', 'PENDING')).upper() # Ensure upper for consistent matching
+
+            col1_task, col2_task = st.columns([3, 1])
+            with col1_task:
+                prio_icon = '🔴' if priority_score >= 85 else ('🟠' if priority_score >=60 else '🟢')
+                expander_title_task = f"{prio_icon} {task_title}"
+                with st.expander(expander_title_task, expanded=(priority_score >= 85)):
+                    st.markdown(f"**Assigned CHW:** {task.get('assigned_chw_id', 'N/A')}")
+                    st.markdown(f"**Zone:** {task.get('zone_id', 'N/A')}")
+                    st.markdown(f"**Patient Context:** {task.get('key_patient_context', 'N/A')}")
+                    st.markdown(f"**Source Data Date:** {task.get('alert_source_info', 'N/A')}")
+            with col2_task:
+                st.markdown(f"**Priority:** `{priority_score:.1f}`")
+                st.markdown(f"**Due:** `{due_date_str}`")
+                if status == "PENDING": st.info(f"**Status:** {status}")
+                elif status == "IN_PROGRESS": st.warning(f"**Status:** {status}")
+                elif status == "COMPLETED": st.success(f"**Status:** {status}")
+                else: st.markdown(f"**Status:** {status}")
+            st.markdown("""<hr style="margin-top:0.5rem; margin-bottom:0.5rem;" />""", unsafe_allow_html=True) # Thinner hr
+    elif data_load_successful and not daily_activity_df.empty:
+        st.info("ℹ️ No high-priority tasks identified based on current data.")
+
 st.divider()
 
+
+# --- Section 3: Local Epi Signals Watch ---
 st.header("🔬 Local Epi Signals Watch (Today)")
 epi_signals_calculated_successfully = False
 if data_load_successful and not daily_activity_df.empty:
@@ -429,7 +482,6 @@ if data_load_successful and not daily_activity_df.empty:
             chw_daily_encounter_df=daily_activity_df, 
             pre_calculated_chw_kpis=daily_kpis_precalculated, 
             max_symptom_clusters_to_report=3 
-            # min_cluster_size removed from call as it's handled internally in optimized version
         )
         epi_signals_calculated_successfully = True
     except Exception as e_epi:
@@ -462,6 +514,7 @@ if data_load_successful and not daily_activity_df.empty:
         st.markdown("ℹ️ _No activity data for local epi signals for selected date/filters._")
 st.divider()
 
+# --- Section 4: CHW Team Activity Trends ---
 st.header("📈 CHW Team Activity Trends")
 trend_period_str = f"{trend_start_date_filter.strftime('%d %b %Y')} - {trend_end_date_filter.strftime('%d %b %Y')}"
 trend_filter_str = f" for CHW **{active_chw_filter}**" if active_chw_filter else ""
@@ -478,7 +531,7 @@ if data_load_successful and not trend_activity_df.empty:
             trend_start_date_filter, 
             trend_end_date_filter, 
             active_zone_filter, 
-            time_period_aggregation='D' # CORRECTED from freq_alias
+            time_period_aggregation='D' # Corrected from freq_alias
         )
         activity_trends_calculated_successfully = True
     except Exception as e_trends:
