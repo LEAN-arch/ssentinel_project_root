@@ -72,7 +72,6 @@ def _prepare_testing_dataframe(
             else: df_prepared[col_name] = default_value
             
     if 'patient_id' in df_prepared.columns:
-        # CORRECTED: Use the correct column 'patient_id' and the correct variable `default_patient_id_prefix`.
         df_prepared['patient_id'] = df_prepared['patient_id'].replace('', default_patient_id_prefix).fillna(default_patient_id_prefix)
     return df_prepared
 
@@ -165,6 +164,62 @@ def prepare_clinic_lab_testing_insights_data(
         df_pending_tests_raw.dropna(subset=[date_col_for_overdue_calc], inplace=True)
 
         if not df_pending_tests_raw.empty:
+            current_processing_date = pd.Timestamp('now').normalize()
+            date_series = df_pending_tests_raw[date_col_for_overdue_calc]
+            if date_series.dt.tz is not None:
+                date_series = date_series.dt.tz_localize(None)
+            df_pending_tests_raw['days_pending'] = (current_processing_date - date_series).dt.days
+            
+            def get_overdue_threshold_days(test_type_str: str) -> int:
+                test_config = key_test_configs_setting.get(test_type_str, {})
+                target_tat = test_config.get('target_tat_days', _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2))
+                buffer_days = _get_setting('OVERDUE_TEST_BUFFER_DAYS', 2)
+                
+                # CORRECTED: Robustly handle numeric conversion for single values to prevent AttributeError.
+                numeric_tat = pd.to_numeric(target_tat, errors='coerce')
+                if pd.isna(numeric_tat):
+                    numeric_tat = _get_setting('OVERDUE_PENDING_TEST_DAYS_GENERAL_FALLBACK', 7)
+                
+                return max(1, int(numeric_tat) + buffer_days)
+            
+            df_pending_tests_raw['overdue_threshold_days'] = df_pending_tests_raw['test_type'].apply(get_overdue_threshold_days)
+            
+            df_actually_overdue = df_pending_tests_raw[df_pending_tests_raw['days_pending'] > df_pending_tests_raw['overdue_threshold_days']]
+            
+            if not df_actually_overdue.empty:
+                df_overdue_display = df_actually_overdue.rename(columns={date_col_for_overdue_calc: "Sample Collection/Registered Date"})
+                insights_output["overdue_pending_tests_list_df"] = df_overdue_display.reindex(columns=default_overdue_cols).sort_values('days_pending', ascending=False).reset_index(drop=True)
+    
+    return insights_output
+```config, dict) and test_props_config.get("critical", False):
+                    display_name = test_props_config.get("display_name", internal_test_name)
+                    stats = test_summary_details_from_kpis.get(internal_test_name, {})
+                    critical_tests_summary_list.append({
+                        "Test Group (Critical)": display_name, 
+                        "Positivity (%)": stats.get("positive_rate_perc", np.nan),
+                        "Avg. TAT (Days)": stats.get("avg_tat_days", np.nan), 
+                        "% Met TAT Target": stats.get("perc_met_tat_target", np.nan),
+                        "Pending (Patients)": stats.get("pending_count_patients", 0), 
+                        "Rejected (Patients)": stats.get("rejected_count_patients", 0),
+                        "Total Conclusive Tests": stats.get("total_conclusive_tests", 0)
+                    })
+            if critical_tests_summary_list:
+                insights_output["all_critical_tests_summary_table_df"] = pd.DataFrame(critical_tests_summary_list)
+    
+    date_col_for_overdue_calc = 'sample_collection_date'
+    if date_col_for_overdue_calc not in df_tests_src.columns or df_tests_src[date_col_for_overdue_calc].isnull().all():
+        date_col_for_overdue_calc = 'encounter_date'
+    
+    df_pending_tests_raw = df_tests_src[
+        (df_tests_src.get('test_result', pd.Series(dtype=str)).astype(str).str.lower() == 'pending') & 
+        (df_tests_src[date_col_for_overdue_calc].notna())
+    ].copy()
+
+    if not df_pending_tests_raw.empty:
+        df_pending_tests_raw[date_col_for_overdue_calc] = pd.to_datetime(df_pending_tests_raw[date_col_for_overdue_calc], errors='coerce')
+        df_pending_tests_raw.dropna(subset=[date_col_for_overdue_calc], inplace=True)
+
+        if not df_pending_tests_raw.empty:
             current_processing_date = pd.Timestamp('now').normalize() # This is tz-naive
             
             # CORRECTED: Ensure the date column is also tz-naive before subtraction to prevent TypeError.
@@ -178,7 +233,13 @@ def prepare_clinic_lab_testing_insights_data(
                 test_config = key_test_configs_setting.get(test_type_str, {})
                 target_tat = test_config.get('target_tat_days', _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2))
                 buffer_days = _get_setting('OVERDUE_TEST_BUFFER_DAYS', 2)
-                return max(1, int(pd.to_numeric(target_tat, errors='coerce').fillna(7)) + buffer_days)
+                
+                # CORRECTED: Robustly handle numeric conversion for single values.
+                numeric_tat = pd.to_numeric(target_tat, errors='coerce')
+                if pd.isna(numeric_tat):
+                    numeric_tat = _get_setting('OVERDUE_PENDING_TEST_DAYS_GENERAL_FALLBACK', 7)
+                
+                return max(1, int(numeric_tat) + buffer_days)
             
             df_pending_tests_raw['overdue_threshold_days'] = df_pending_tests_raw['test_type'].apply(get_overdue_threshold_days)
             
