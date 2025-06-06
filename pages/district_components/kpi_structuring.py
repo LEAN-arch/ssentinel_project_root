@@ -4,6 +4,7 @@
 import pandas as pd
 import numpy as np
 import logging
+import re
 from typing import Dict, Any, List, Optional
 
 from config import settings
@@ -91,7 +92,10 @@ def structure_district_summary_kpis(
 
     # Dynamically add KPIs for total active cases of each key condition
     for cond_name_kpi_struct in settings.KEY_CONDITIONS_FOR_ACTION:
-        kpi_key_dyn_struct = f"district_total_active_{cond_name_kpi_struct.lower().replace(' ', '_').replace('-', '_').replace('(severe)','')}_cases"
+        # CORRECTED: The key generation logic now matches aggregation.py, which uses re.sub for sanitization.
+        sanitized_cond_name = re.sub(r'[^a-z0-9_]+', '_', cond_name_kpi_struct.lower().strip())
+        kpi_key_dyn_struct = f"district_total_active_{sanitized_cond_name}_cases"
+        
         cond_display_name = cond_name_kpi_struct.replace("(Severe)", "").strip()
         val_str = _get_val(kpi_key_dyn_struct, default=0, precision=0, is_count=True)
         # Basic status for case counts (can be refined with population context)
