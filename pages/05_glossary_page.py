@@ -1,4 +1,4 @@
-# sentinel_project_root/pages/glossary_page.py
+# sentinel_project_root/pages/05_glossary_page.py
 # Glossary of Terms for the "Sentinel Health Co-Pilot" System.
 
 import streamlit as st
@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 # --- Page Configuration (Call this early) ---
 try:
     page_icon_value = "📜" 
-    if hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'APP_FAVICON_PATH'):
-        favicon_path = Path(settings.PROJECT_ROOT_DIR) / settings.APP_FAVICON_PATH
+    # CORRECTED: Use APP_LOGO_SMALL_PATH, which is defined in settings.py, instead of the non-existent APP_FAVICON_PATH.
+    if hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'APP_LOGO_SMALL_PATH'):
+        favicon_path = Path(settings.PROJECT_ROOT_DIR) / settings.APP_LOGO_SMALL_PATH
         if favicon_path.is_file():
             page_icon_value = str(favicon_path)
         else:
