@@ -4,6 +4,7 @@
 import pandas as pd
 import numpy as np
 import logging
+import re  # Added this import
 from typing import Optional, Tuple, Dict, Any
 
 from config import settings
