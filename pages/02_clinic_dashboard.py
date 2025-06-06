@@ -34,9 +34,11 @@ logger = logging.getLogger(__name__)
 
 # --- Configuration & Page Setup ---
 def _get_setting(attr_name: str, default_value: Any) -> Any:
+    """Safely retrieves a configuration setting or returns a default value."""
     return getattr(settings, attr_name, default_value)
 
 def setup_page_config():
+    """Sets the Streamlit page configuration."""
     st.set_page_config(
         page_title=f"Clinic Console - {_get_setting('APP_NAME', 'Sentinel')}",
         page_icon="🏥",
@@ -48,6 +50,7 @@ setup_page_config()
 # --- Data Loading & Caching ---
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 3600), show_spinner="Loading and enriching health records...")
 def load_and_prepare_health_data() -> pd.DataFrame:
+    """Loads raw health records, applies AI models, and prepares dates. This is cached for performance."""
     raw_df = load_health_records()
     if raw_df.empty: return pd.DataFrame()
     enriched_df, _ = apply_ai_models(raw_df)
@@ -59,6 +62,7 @@ def load_and_prepare_health_data() -> pd.DataFrame:
 
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 3600), show_spinner="Loading IoT environmental data...")
 def load_and_prepare_iot_data() -> pd.DataFrame:
+    """Loads and prepares IoT environmental data, cached for performance."""
     raw_df = load_iot_clinic_environment_data()
     if raw_df.empty or 'timestamp' not in raw_df.columns: return pd.DataFrame()
     if not pd.api.types.is_datetime64_any_dtype(raw_df['timestamp']):
@@ -67,6 +71,7 @@ def load_and_prepare_iot_data() -> pd.DataFrame:
 
 # --- UI Components & Filters ---
 def manage_date_range_filter(data_min_date: date, data_max_date: date) -> Tuple[date, date]:
+    """Manages the Streamlit date range filter widget with data-aware defaults."""
     default_days = _get_setting('WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND', 30)
     default_start = max(data_min_date, data_max_date - timedelta(days=default_days - 1))
     
@@ -88,8 +93,16 @@ st.title("🏥 Clinic Operations & Management Console")
 st.markdown("**Service Performance, Patient Care Quality, Resource Management, and Facility Environment Monitoring**")
 st.divider()
 
-full_health_df = load_and_prepare_health_data()
-full_iot_df = load_and_prepare_iot_data()
+full_health_df = pd.DataFrame()
+full_iot_df = pd.DataFrame()
+try:
+    full_health_df = load_and_prepare_health_data()
+    full_iot_df = load_and_prepare_iot_data()
+except Exception as e:
+    logger.error(f"FATAL: Could not load initial data. {e}", exc_info=True)
+    st.error(f"A critical error occurred while loading base data: {e}. The dashboard cannot proceed.")
+    st.stop()
+
 iot_available_flag = not full_iot_df.empty
 
 st.sidebar.image(str(Path(_get_setting('APP_LOGO_SMALL_PATH', ''))), width=230)
@@ -116,7 +129,7 @@ try:
         main_kpis = structure_main_clinic_kpis(kpis, current_period_str)
         disease_kpis = structure_disease_specific_clinic_kpis(kpis, current_period_str)
         
-        # CORRECTED: Use a robust pattern for rendering KPIs in columns
+        # CORRECTED: Use a robust pattern for rendering KPIs in columns that prevents IndexError.
         if main_kpis:
             st.markdown("##### **Overall Service Performance:**")
             num_cols = min(len(main_kpis), 4)
