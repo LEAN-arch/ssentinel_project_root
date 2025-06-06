@@ -9,8 +9,8 @@ from datetime import date as date_type, datetime # Added datetime
 
 try:
     from config import settings
-    # Assuming get_trend_data and get_clinic_environmental_summary_kpis are robust
-    from data_processing.aggregation import get_trend_data, get_clinic_environmental_summary_kpis
+    # Assuming get_trend_data is robust
+    from data_processing.aggregation import get_trend_data
     from data_processing.helpers import convert_to_numeric # Ensure this is robust
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
@@ -23,6 +23,69 @@ logger = logging.getLogger(__name__)
 # Helper to safely get attributes from settings
 def _get_setting(attr_name: str, default_value: Any) -> Any:
     return getattr(settings, attr_name, default_value)
+
+def _calculate_period_environmental_kpis(
+    iot_df_period: pd.DataFrame, 
+    log_prefix: str
+) -> Dict[str, Any]:
+    """
+    CORRECTED: Local implementation to calculate summary KPIs for the environmental details.
+    This replaces the call to the placeholder function in aggregation.py.
+    """
+    kpis = {
+        "avg_co2_overall_ppm": np.nan, "rooms_co2_very_high_alert_latest_count": 0,
+        "rooms_co2_high_alert_latest_count": 0, "avg_pm25_overall_ugm3": np.nan,
+        "rooms_pm25_very_high_alert_latest_count": 0, "rooms_pm25_high_alert_latest_count": 0,
+        "avg_waiting_room_occupancy_overall_persons": np.nan,
+        "waiting_room_high_occupancy_alert_latest_flag": False,
+        "avg_noise_overall_dba": np.nan, "rooms_noise_high_alert_latest_count": 0,
+        "latest_readings_timestamp": None
+    }
+
+    if iot_df_period.empty:
+        return kpis
+
+    # Get latest reading for each sensor/room
+    latest_readings = iot_df_period.sort_values(by='timestamp').drop_duplicates(subset=['clinic_id', 'room_name'], keep='last')
+    
+    if latest_readings.empty:
+        return kpis
+
+    kpis['latest_readings_timestamp'] = latest_readings['timestamp'].max()
+
+    # Calculate overall averages from latest readings for a representative snapshot
+    if 'avg_co2_ppm' in latest_readings: kpis['avg_co2_overall_ppm'] = latest_readings['avg_co2_ppm'].mean()
+    if 'avg_pm25' in latest_readings: kpis['avg_pm25_overall_ugm3'] = latest_readings['avg_pm25'].mean()
+    if 'avg_noise_db' in latest_readings: kpis['avg_noise_overall_dba'] = latest_readings['avg_noise_db'].mean()
+
+    # CO2 Alerts
+    co2_very_high = _get_setting('ALERT_AMBIENT_CO2_VERY_HIGH_PPM', 2500)
+    co2_high = _get_setting('ALERT_AMBIENT_CO2_HIGH_PPM', 1500)
+    if 'avg_co2_ppm' in latest_readings:
+        kpis['rooms_co2_very_high_alert_latest_count'] = latest_readings[latest_readings['avg_co2_ppm'] > co2_very_high].shape[0]
+        kpis['rooms_co2_high_alert_latest_count'] = latest_readings[(latest_readings['avg_co2_ppm'] > co2_high) & (latest_readings['avg_co2_ppm'] <= co2_very_high)].shape[0]
+
+    # PM2.5 Alerts
+    pm25_very_high = _get_setting('ALERT_AMBIENT_PM25_VERY_HIGH_UGM3', 50)
+    pm25_high = _get_setting('ALERT_AMBIENT_PM25_HIGH_UGM3', 35)
+    if 'avg_pm25' in latest_readings:
+        kpis['rooms_pm25_very_high_alert_latest_count'] = latest_readings[latest_readings['avg_pm25'] > pm25_very_high].shape[0]
+        kpis['rooms_pm25_high_alert_latest_count'] = latest_readings[(latest_readings['avg_pm25'] > pm25_high) & (latest_readings['avg_pm25'] <= pm25_very_high)].shape[0]
+
+    # Noise Alerts
+    noise_high = _get_setting('ALERT_AMBIENT_NOISE_HIGH_DBA', 85)
+    if 'avg_noise_db' in latest_readings:
+        kpis['rooms_noise_high_alert_latest_count'] = latest_readings[latest_readings['avg_noise_db'] > noise_high].shape[0]
+        
+    # Occupancy Alerts
+    occupancy_max = _get_setting('TARGET_CLINIC_WAITING_ROOM_OCCUPANCY_MAX', 10)
+    waiting_rooms_latest = latest_readings[latest_readings['room_name'].str.contains('Waiting', case=False, na=False)]
+    if not waiting_rooms_latest.empty and 'waiting_room_occupancy' in waiting_rooms_latest:
+        kpis['avg_waiting_room_occupancy_overall_persons'] = waiting_rooms_latest['waiting_room_occupancy'].mean()
+        if (waiting_rooms_latest['waiting_room_occupancy'] > occupancy_max).any():
+            kpis['waiting_room_high_occupancy_alert_latest_flag'] = True
+            
+    return kpis
 
 
 def prepare_clinic_environmental_detail_data(
@@ -83,7 +146,6 @@ def prepare_clinic_environmental_detail_data(
         return env_details_output
 
     # ---Numeric Column Preparation---
-    # Define expected numeric columns and ensure they exist, converting to numeric with NaN for errors
     expected_numeric_env_cols = [
         'avg_co2_ppm', 'max_co2_ppm', 'avg_pm25', 'voc_index', 'avg_temp_celsius', 
         'avg_humidity_rh', 'avg_noise_db', 'waiting_room_occupancy', 
@@ -94,22 +156,22 @@ def prepare_clinic_environmental_detail_data(
             df_iot[col_name] = convert_to_numeric(df_iot[col_name], default_value=np.nan)
         else:
             logger.debug(f"({module_log_prefix}) Numeric IoT column '{col_name}' not found. Will be treated as NaN.")
-            df_iot[col_name] = np.nan # Ensure column exists for consistent processing
+            df_iot[col_name] = np.nan
 
     # --- Current Environmental Alerts (Derived from latest summary KPIs for the period) ---
     try:
-        # Use the already filtered df_iot for the period to get latest alerts
-        env_summary_kpis = get_clinic_environmental_summary_kpis(
-            iot_df_period=df_iot, # Pass the period-filtered and cleaned df_iot
-            source_context=f"{module_log_prefix}/LatestAlertsKPIs"
+        # CORRECTED: Call the local, implemented KPI calculation function.
+        env_summary_kpis = _calculate_period_environmental_kpis(
+            iot_df_period=df_iot,
+            log_prefix=f"{module_log_prefix}/LatestAlertsKPIs"
         )
         
         alerts_buffer_list: List[Dict[str, Any]] = []
-        co2_very_high_thresh = _get_setting('ALERT_AMBIENT_CO2_VERY_HIGH_PPM', 1500)
-        co2_high_thresh = _get_setting('ALERT_AMBIENT_CO2_HIGH_PPM', 1000)
-        pm25_very_high_thresh = _get_setting('ALERT_AMBIENT_PM25_VERY_HIGH_UGM3', 35.4)
-        pm25_high_thresh = _get_setting('ALERT_AMBIENT_PM25_HIGH_UGM3', 12.0)
-        noise_high_thresh = _get_setting('ALERT_AMBIENT_NOISE_HIGH_DBA', 70)
+        co2_very_high_thresh = _get_setting('ALERT_AMBIENT_CO2_VERY_HIGH_PPM', 2500)
+        co2_high_thresh = _get_setting('ALERT_AMBIENT_CO2_HIGH_PPM', 1500)
+        pm25_very_high_thresh = _get_setting('ALERT_AMBIENT_PM25_VERY_HIGH_UGM3', 50)
+        pm25_high_thresh = _get_setting('ALERT_AMBIENT_PM25_HIGH_UGM3', 35)
+        noise_high_thresh = _get_setting('ALERT_AMBIENT_NOISE_HIGH_DBA', 85)
         occupancy_max_thresh = _get_setting('TARGET_CLINIC_WAITING_ROOM_OCCUPANCY_MAX', 10)
 
         if env_summary_kpis.get('rooms_co2_very_high_alert_latest_count', 0) > 0:
@@ -152,10 +214,8 @@ def prepare_clinic_environmental_detail_data(
 
     # --- Hourly Waiting Room Occupancy Trend ---
     occupancy_col = 'waiting_room_occupancy'
-    room_name_col = 'room_name' # Assuming this column exists for filtering waiting rooms
+    room_name_col = 'room_name'
     if occupancy_col in df_iot.columns and room_name_col in df_iot.columns and df_iot[occupancy_col].notna().any():
-        # Filter for rows specifically related to waiting rooms
-        # Ensure room_name is string for robust .str.contains
         df_iot[room_name_col] = df_iot[room_name_col].astype(str)
         df_waiting_iot_data = df_iot[df_iot[room_name_col].str.contains('Waiting', case=False, na=False) & df_iot[occupancy_col].notna()]
         
@@ -172,14 +232,11 @@ def prepare_clinic_environmental_detail_data(
     else: env_details_output["processing_notes"].append(f"'{occupancy_col}' or '{room_name_col}' data missing or all NaN. Cannot generate occupancy trend.")
 
     # --- Latest Sensor Readings by Room ---
-    # Ensure essential columns for grouping and displaying latest readings exist
-    latest_reading_key_cols = ['clinic_id', room_name_col, timestamp_col] # Use defined room_name_col
+    latest_reading_key_cols = ['clinic_id', room_name_col, timestamp_col]
     if all(col in df_iot.columns for col in latest_reading_key_cols):
-        # Select only relevant columns for the latest readings display
         cols_for_latest_display = latest_reading_key_cols + [col for col in expected_numeric_env_cols if col in df_iot.columns]
         
         try:
-            # Sort by timestamp to get the latest, then drop duplicates keeping the last record per room
             latest_readings_df = df_iot[cols_for_latest_display].sort_values(timestamp_col, ascending=True, na_position='first').drop_duplicates(subset=['clinic_id', room_name_col], keep='last')
             if not latest_readings_df.empty:
                 env_details_output["latest_room_sensor_readings_df"] = latest_readings_df.reset_index(drop=True)
