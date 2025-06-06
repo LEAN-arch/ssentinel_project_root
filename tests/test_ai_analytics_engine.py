@@ -36,8 +36,9 @@ def test_risk_model_condition_base_score(risk_model: RiskPredictionModel):
         assert risk_model._get_condition_base_score(cond.upper()) == expected_score, f"Score mismatch for: {cond.upper()}" # Test case insensitivity
 
     multi_cond = f"{key_conditions[0]}; Pneumonia" if len(key_conditions) >=1 else "Pneumonia; Sepsis"
-    expected_multi_score = max(risk_model._get_condition_base_score(key_conditions[0] if len(key_conditions) >=1 else "Sepsis"), 
-                               risk_model._get_condition_base_score("Pneumonia"))
+    # CORRECTED: The fallback condition in the expected score now matches the one in multi_cond.
+    expected_multi_score = max(risk_model._get_condition_base_score(key_conditions[0] if len(key_conditions) >=1 else "Pneumonia"), 
+                               risk_model._get_condition_base_score("Pneumonia" if len(key_conditions) >=1 else "Sepsis"))
     assert risk_model._get_condition_base_score(multi_cond) == expected_multi_score, "Multi-condition score incorrect."
     
     assert risk_model._get_condition_base_score("UnknownCondition") == 0.0
@@ -164,10 +165,7 @@ def test_supply_model_ai_forecast_output(supply_model_ai: SupplyForecastingModel
         
         item1_data = forecast_df[forecast_df['item'] == item_name]
         if not item1_data.empty and len(item1_data) > 1:
-            # Check stock depletion, allowing for very low consumption where stock might not change much
             initial_stock_input = supply_input.loc[supply_input['item'] == item_name, 'current_stock'].iloc[0]
-            # The forecasted_stock_level in output is *after* first day's consumption.
-            # So, compare initial_stock_input with final stock.
             final_stock_output = item1_data['forecasted_stock_level'].iloc[-1]
             assert final_stock_output < initial_stock_input or np.isclose(final_stock_output, 0.0) or \
                    (np.isclose(final_stock_output, initial_stock_input) and supply_input.loc[supply_input['item']==item_name, 'avg_daily_consumption_historical'].iloc[0] < 0.1), \
@@ -180,7 +178,6 @@ def test_apply_ai_models_adds_cols_preserves_rows(sample_health_records_df_main_
         pytest.skip("Sample health data empty. Skipping apply_ai_models test.")
     
     df_input = sample_health_records_df_main_fixture.copy()
-    # Drop AI columns if they exist from fixture's own apply_ai_models call to test recalculation
     cols_to_drop = ['ai_risk_score', 'ai_followup_priority_score']
     df_input_clean = df_input.drop(columns=[c for c in cols_to_drop if c in df_input.columns], errors='ignore')
             
@@ -190,7 +187,7 @@ def test_apply_ai_models_adds_cols_preserves_rows(sample_health_records_df_main_
     assert 'ai_followup_priority_score' in enriched_df.columns
     assert len(enriched_df) == len(df_input_clean)
     
-    if not enriched_df.empty: # Ensure no all-NaN columns were produced if data was present
+    if not enriched_df.empty:
         assert enriched_df['ai_risk_score'].notna().any() or enriched_df['ai_risk_score'].isnull().all(), "ai_risk_score should have values or be all NaN if input had no basis."
         assert enriched_df['ai_followup_priority_score'].notna().any() or enriched_df['ai_followup_priority_score'].isnull().all()
 
