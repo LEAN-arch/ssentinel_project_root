@@ -174,8 +174,7 @@ def plot_annotated_line_chart(
 def plot_bar_chart(
     df_input: Optional[pd.DataFrame], x_col_name: str, y_col_name: str, chart_title: str,
     color_col_name: Optional[str] = None, bar_mode_style: str = 'group',
-    y_values_are_counts_flag: bool = False, # CORRECTED: Added the missing parameter
-    **kwargs 
+    y_values_are_counts_flag: bool = False, **kwargs
 ) -> go.Figure:
     log_prefix_plot = f"PlotBar/{html.escape(chart_title[:30])}"
     if not isinstance(df_input, pd.DataFrame) or df_input.empty:
@@ -186,10 +185,10 @@ def plot_bar_chart(
     try:
         fig = px.bar(df_plot, x=x_col_name, y=y_col_name, color=color_col_name, barmode=bar_mode_style, text_auto=True)
         
-        # CORRECTED: Use the flag to apply integer-specific formatting for counts.
+        # CORRECTED: This block now robustly formats all chart elements for integer counts when the flag is True.
         if y_values_are_counts_flag:
             fig.update_traces(texttemplate='%{y:,d}', hovertemplate=f'<b>%{{x}}</b><br>Count: %{{y:,d}}<extra></extra>')
-            fig.update_yaxes(tickformat='d')
+            fig.update_yaxes(tickformat='d', rangemode='tozero')
         else:
             fig.update_traces(texttemplate='%{y:,.1f}', hovertemplate=f'<b>%{{x}}</b><br>Value: %{{y:,.1f}}<extra></extra>')
 
