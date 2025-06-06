@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
 import re 
 import html 
+import plotly.express as px # <--- ****** CORRECTED: ADDED THIS IMPORT ******
 
 try:
     from config import settings
