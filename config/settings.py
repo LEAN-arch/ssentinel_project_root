@@ -5,12 +5,23 @@ import os
 import logging
 from datetime import datetime
 from pathlib import Path
+# import sys # Avoid sys import here to prevent any accidental path manipulation from settings itself
 
 # --- Base Project Directory ---
-# This robust definition is the foundation of all path configurations.
 PROJECT_ROOT_DIR = Path(__file__).resolve().parent.parent
+# print(f"DEBUG settings.py: PROJECT_ROOT_DIR resolved to: {PROJECT_ROOT_DIR}", file=sys.stderr) # Keep for debug if needed
 
 settings_logger = logging.getLogger(__name__)
+
+def validate_path(path_obj: Path, description: str, is_dir: bool = False) -> Path:
+    abs_path = path_obj.resolve() 
+    if not abs_path.exists():
+        settings_logger.warning(f"{description} not found at resolved absolute path: {abs_path}")
+    elif is_dir and not abs_path.is_dir():
+        settings_logger.warning(f"{description} is not a directory: {abs_path}")
+    elif not is_dir and not abs_path.is_file():
+        settings_logger.warning(f"{description} is not a file: {abs_path}")
+    return abs_path
 
 # --- I. Core System & Directory Configuration ---
 APP_NAME = "Sentinel Health Co-Pilot"
@@ -22,23 +33,20 @@ LOG_LEVEL = os.getenv("SENTINEL_LOG_LEVEL", "INFO").upper()
 LOG_FORMAT = os.getenv("SENTINEL_LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(pathname)s:%(lineno)d - %(message)s")
 LOG_DATE_FORMAT = os.getenv("SENTINEL_LOG_DATE_FORMAT", "%Y-%m-%d %H:%M:%S")
 
-# --- Path Definitions as 'pathlib.Path' Objects (NO str() conversion or validation) ---
-# This is the key change. We define the intended structure. The application code
-# that uses these paths is responsible for run-time validation (e.g., checking .is_file()).
-ASSETS_DIR = PROJECT_ROOT_DIR / "assets"
-DATA_SOURCES_DIR = PROJECT_ROOT_DIR / "data_sources"
+ASSETS_DIR = validate_path(PROJECT_ROOT_DIR / "assets", "Assets directory", is_dir=True)
+DATA_SOURCES_DIR = validate_path(PROJECT_ROOT_DIR / "data_sources", "Data sources directory", is_dir=True)
 
-APP_LOGO_SMALL_PATH = ASSETS_DIR / "sentinel_logo_small.png"
-APP_LOGO_LARGE_PATH = ASSETS_DIR / "sentinel_logo_large.png"
-STYLE_CSS_PATH_WEB = ASSETS_DIR / "style_web_reports.css"
-ESCALATION_PROTOCOLS_JSON_PATH = ASSETS_DIR / "escalation_protocols.json"
-PICTOGRAM_MAP_JSON_PATH = ASSETS_DIR / "pictogram_map.json"
-HAPTIC_PATTERNS_JSON_PATH = ASSETS_DIR / "haptic_patterns.json"
+APP_LOGO_SMALL_PATH = str(validate_path(ASSETS_DIR / "sentinel_logo_small.png", "Small app logo"))
+APP_LOGO_LARGE_PATH = str(validate_path(ASSETS_DIR / "sentinel_logo_large.png", "Large app logo"))
+STYLE_CSS_PATH_WEB = str(validate_path(ASSETS_DIR / "style_web_reports.css", "Global CSS stylesheet"))
+ESCALATION_PROTOCOLS_JSON_PATH = str(validate_path(ASSETS_DIR / "escalation_protocols.json", "Escalation protocols JSON"))
+PICTOGRAM_MAP_JSON_PATH = str(validate_path(ASSETS_DIR / "pictogram_map.json", "Pictogram map JSON"))
+HAPTIC_PATTERNS_JSON_PATH = str(validate_path(ASSETS_DIR / "haptic_patterns.json", "Haptic patterns JSON"))
 
-HEALTH_RECORDS_CSV_PATH = DATA_SOURCES_DIR / "health_records_expanded.csv"
-ZONE_ATTRIBUTES_CSV_PATH = DATA_SOURCES_DIR / "zone_attributes.csv"
-ZONE_GEOMETRIES_GEOJSON_FILE_PATH = DATA_SOURCES_DIR / "zone_geometries.geojson"
-IOT_CLINIC_ENVIRONMENT_CSV_PATH = DATA_SOURCES_DIR / "iot_clinic_environment.csv"
+HEALTH_RECORDS_CSV_PATH = str(validate_path(DATA_SOURCES_DIR / "health_records_expanded.csv", "Health records CSV"))
+ZONE_ATTRIBUTES_CSV_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_attributes.csv", "Zone attributes CSV"))
+ZONE_GEOMETRIES_GEOJSON_FILE_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_geometries.geojson", "Zone geometries GeoJSON"))
+IOT_CLINIC_ENVIRONMENT_CSV_PATH = str(validate_path(DATA_SOURCES_DIR / "iot_clinic_environment.csv", "IoT clinic environment CSV"))
 
 # --- II. Health & Operational Thresholds ---
 ALERT_SPO2_CRITICAL_LOW_PCT = 90
@@ -134,27 +142,35 @@ MAP_DEFAULT_CENTER_LON = 36.817223
 MAP_DEFAULT_ZOOM_LEVEL = 5
 
 # --- VII. Color Palette ---
+# These MUST be defined for visualization.plots.set_sentinel_plotly_theme to work
 COLOR_RISK_HIGH = "#D32F2F"
 COLOR_RISK_MODERATE = "#FBC02D"
 COLOR_RISK_LOW = "#388E3C"
 COLOR_RISK_NEUTRAL = "#757575"
+
 COLOR_ACTION_PRIMARY = "#1976D2"
 COLOR_ACTION_SECONDARY = "#546E7A"
 COLOR_ACCENT_BRIGHT = "#4D7BF3"
+
 COLOR_POSITIVE_DELTA = "#27AE60"
 COLOR_NEGATIVE_DELTA = "#C0392B"
+
 COLOR_TEXT_DARK = "#343a40"
 COLOR_TEXT_HEADINGS_MAIN = "#1A2557"
 COLOR_TEXT_HEADINGS_SUB = "#2C3E50"
 COLOR_TEXT_MUTED = "#6c757d"
-COLOR_TEXT_LINK_DEFAULT = COLOR_ACTION_PRIMARY
+COLOR_TEXT_LINK_DEFAULT = COLOR_ACTION_PRIMARY # Should use COLOR_ACTION_PRIMARY
+
 COLOR_BACKGROUND_PAGE = "#f8f9fa"
 COLOR_BACKGROUND_CONTENT = "#ffffff"
 COLOR_BACKGROUND_SUBTLE = "#e9ecef"
-COLOR_BACKGROUND_WHITE = "#FFFFFF"
-COLOR_BACKGROUND_CONTENT_TRANSPARENT = 'rgba(255,255,255,0.85)'
+COLOR_BACKGROUND_WHITE = "#FFFFFF" # Explicit white for clarity
+COLOR_BACKGROUND_CONTENT_TRANSPARENT = 'rgba(255,255,255,0.85)' # Added for legend
+
+
 COLOR_BORDER_LIGHT = "#dee2e6"
 COLOR_BORDER_MEDIUM = "#ced4da"
+
 LEGACY_DISEASE_COLORS_WEB = {
     "TB": "#EF4444", "Malaria": "#F59E0B", "HIV-Positive": "#8B5CF6", "Pneumonia": "#3B82F6",
     "Anemia": "#10B981", "STI": "#EC4899", "Dengue": "#6366F1", "Hypertension": "#F97316",
@@ -163,4 +179,12 @@ LEGACY_DISEASE_COLORS_WEB = {
     "Other": "#6B7280"
 }
 
-settings_logger.info(f"Sentinel settings module loaded. APP_NAME: {APP_NAME} v{APP_VERSION}. PROJECT_ROOT_DIR: {PROJECT_ROOT_DIR}")
+# Ensure log level from env var is valid before using it for logging within settings.py if needed
+if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    print(f"WARNING (settings.py): Invalid LOG_LEVEL '{LOG_LEVEL}' from env. Defaulting to INFO for settings_logger.", file=sys.stderr)
+    # LOG_LEVEL = "INFO" # This would change the global LOG_LEVEL, which might not be desired if app.py already handled it.
+    # Instead, if settings_logger needs specific config:
+    # settings_logger.setLevel(logging.INFO)
+    pass # Assume app.py's basicConfig sets the root logger level correctly.
+
+settings_logger.info(f"Sentinel settings module loaded. APP_NAME: {APP_NAME} v{APP_VERSION}. PROJECT_ROOT_DIR defined in settings: {PROJECT_ROOT_DIR}")
