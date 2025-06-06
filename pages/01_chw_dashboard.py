@@ -511,72 +511,96 @@ if data_load_successful and not daily_activity_df.empty:
         st.markdown("ℹ️ _No activity data for local epi signals for selected date/filters._")
 st.divider()
 
+# ... (previous parts of 01_chw_dashboard.py) ...
+
 # --- Section 4: CHW Team Activity Trends ---
 st.header("📈 CHW Team Activity Trends")
 trend_period_str = f"{trend_start_date_filter.strftime('%d %b %Y')} - {trend_end_date_filter.strftime('%d %b %Y')}"
-trend_filter_str = f" for CHW **{active_chw_filter}**" if active_chw_filter else ""
-trend_filter_str += f" in Zone **{active_zone_filter}**" if active_zone_filter else ""
-trend_filter_str = trend_filter_str or " (All CHWs/Zones)" 
-st.markdown(f"Displaying trends from **{trend_period_str}**{trend_filter_str}.")
+trend_filter_context_str = f" for CHW **{active_chw_filter}**" if active_chw_filter else ""
+trend_filter_context_str += f" in Zone **{active_zone_filter}**" if active_zone_filter else ""
+trend_filter_context_str = trend_filter_context_str or " (All CHWs/Zones)" 
+st.markdown(f"Displaying trends from **{trend_period_str}**{trend_filter_context_str}.")
 
 activity_trends_calculated_successfully = False
-if data_load_successful and not trend_activity_df.empty:
-    activity_trends = {}
-    try:
-        activity_trends = calculate_chw_activity_trends_data(
-            trend_activity_df, 
-            trend_start_date_filter, 
-            trend_end_date_filter, 
-            active_zone_filter, 
-            time_period_aggregation='D' 
-        )
-        activity_trends_calculated_successfully = True
-    except Exception as e_trends:
-        logger.error(f"CHW Dashboard: Error calculating activity trends: {e_trends}", exc_info=True)
-        st.warning("⚠️ Could not calculate activity trends for display.")
+activity_trends_data: Dict[str, Optional[pd.Series]] = {} # Initialize
 
-    if activity_trends_calculated_successfully and activity_trends:
-        trend_plot_cols = st.columns(2)
-        with trend_plot_cols[0]:
-            visits_trend = activity_trends.get("patient_visits_trend")
-            if isinstance(visits_trend, pd.Series) and not visits_trend.empty:
-                try:
-                    fig_visits = plot_annotated_line_chart(
-                        visits_trend, 
-                        "Daily Patient Visits Trend", 
-                        "Unique Patients Visited", 
-                        y_values_are_counts=True 
-                    )
-                    st.plotly_chart(fig_visits, use_container_width=True)
-                except Exception as e_plot_visits:
-                    logger.error(f"Error plotting patient visits trend: {e_plot_visits}", exc_info=True)
-                    st.caption("⚠️ Error displaying patient visits trend plot.")
-            else:
-                st.caption("ℹ️ No patient visit trend data for this selection.")
-        with trend_plot_cols[1]:
-            prio_trend = activity_trends.get("high_priority_followups_trend")
-            if isinstance(prio_trend, pd.Series) and not prio_trend.empty:
-                try:
-                    fig_prio = plot_annotated_line_chart(
-                        prio_trend, 
-                        "Daily High Prio. Follow-ups Trend", 
-                        "High Prio. Follow-ups (Patients)", 
-                        y_values_are_counts=True 
-                    )
-                    st.plotly_chart(fig_prio, use_container_width=True)
-                except Exception as e_plot_prio:
-                    logger.error(f"Error plotting high priority followups trend: {e_plot_prio}", exc_info=True)
-                    st.caption("⚠️ Error displaying high priority follow-ups trend plot.")
-            else:
-                st.caption("ℹ️ No high-priority follow-up trend data for this selection.")
-    elif trend_activity_df.empty and not data_load_successful: 
-        st.markdown("ℹ️ _Data loading failed. Cannot display activity trends._")
-    else: 
-        st.markdown("ℹ️ _No historical data available for the selected trend period and/or filters._")
-elif not data_load_successful:
-    st.markdown("ℹ️ _Data loading failed. Cannot display activity trends._")
-else: 
-    st.markdown("ℹ️ _No historical data available for the selected trend period and/or filters._")
+if data_load_successful: # Only proceed if initial data load was okay
+    if not trend_activity_df.empty:
+        logger.debug(f"--- TRENDS DEBUG: Input trend_activity_df to calculate_chw_activity_trends_data ---")
+        logger.debug(f"Shape: {trend_activity_df.shape}")
+        logger.debug(f"Columns: {trend_activity_df.columns.tolist()}")
+        logger.debug(f"Is 'encounter_date' present: {'encounter_date' in trend_activity_df.columns}")
+        if 'encounter_date' in trend_activity_df.columns:
+            logger.debug(f"'encounter_date' dtype: {trend_activity_df['encounter_date'].dtype}, NaNs: {trend_activity_df['encounter_date'].isnull().sum()}")
+        logger.debug(f"Is 'patient_id' present: {'patient_id' in trend_activity_df.columns}")
+        logger.debug(f"Is 'ai_followup_priority_score' present: {'ai_followup_priority_score' in trend_activity_df.columns}")
+        if len(trend_activity_df) < 10:
+             logger.debug(f"Sample trend_activity_df data:\n{trend_activity_df.head().to_string()}")
+        logger.debug(f"--- END TRENDS DEBUG ---")
+        
+        try:
+            activity_trends_data = calculate_chw_activity_trends_data(
+                trend_activity_df, 
+                trend_start_date_filter, 
+                trend_end_date_filter, 
+                active_zone_filter, 
+                time_period_aggregation='D' 
+            )
+            activity_trends_calculated_successfully = True
+        except Exception as e_trends_calc: # Catch errors from the component call itself
+            logger.error(f"CHW Dashboard: CRITICAL Error calling calculate_chw_activity_trends_data: {e_trends_calc}", exc_info=True)
+            st.error("⚠️ A critical error occurred while calculating activity trends.") # More direct error
+    else: # trend_activity_df was empty from load_chw_dashboard_data
+        st.markdown("ℹ️ _No historical data available from main load for the selected trend period and/or filters._")
+elif not data_load_successful: # Data load failed earlier
+    st.markdown("ℹ️ _Data loading failed earlier. Cannot display activity trends._")
+else: # Should not be reached if data_load_successful is False, but as a fallback
+    st.markdown("ℹ️ _No historical data available for activity trends._")
+
+
+# Display logic, now using activity_trends_data
+if activity_trends_calculated_successfully and activity_trends_data:
+    trend_plot_cols = st.columns(2)
+    with trend_plot_cols[0]:
+        visits_trend_series = activity_trends_data.get("patient_visits_trend")
+        logger.debug(f"Visits Trend Series for plot: {type(visits_trend_series)}, Empty: {visits_trend_series.empty if isinstance(visits_trend_series, pd.Series) else 'N/A'}")
+        if isinstance(visits_trend_series, pd.Series) and not visits_trend_series.empty:
+            try:
+                fig_visits = plot_annotated_line_chart(
+                    visits_trend_series, 
+                    "Daily Patient Visits Trend", 
+                    "Unique Patients Visited", 
+                    y_values_are_counts=True 
+                )
+                st.plotly_chart(fig_visits, use_container_width=True)
+            except Exception as e_plot_visits:
+                logger.error(f"Error plotting patient visits trend: {e_plot_visits}", exc_info=True)
+                st.caption("⚠️ Error displaying patient visits trend plot.")
+        else:
+            st.caption("ℹ️ No patient visit trend data to display for this selection.") # More specific
+    with trend_plot_cols[1]:
+        prio_trend_series = activity_trends_data.get("high_priority_followups_trend")
+        logger.debug(f"Priority Trend Series for plot: {type(prio_trend_series)}, Empty: {prio_trend_series.empty if isinstance(prio_trend_series, pd.Series) else 'N/A'}")
+        if isinstance(prio_trend_series, pd.Series) and not prio_trend_series.empty:
+            try:
+                fig_prio = plot_annotated_line_chart(
+                    prio_trend_series, 
+                    "Daily High Prio. Follow-ups Trend", 
+                    "High Prio. Follow-ups (Patients)", 
+                    y_values_are_counts=True 
+                )
+                st.plotly_chart(fig_prio, use_container_width=True)
+            except Exception as e_plot_prio:
+                logger.error(f"Error plotting high priority followups trend: {e_plot_prio}", exc_info=True)
+                st.caption("⚠️ Error displaying high priority follow-ups trend plot.")
+        else:
+            st.caption("ℹ️ No high-priority follow-up trend data to display for this selection.") # More specific
+elif data_load_successful and (not trend_activity_df or trend_activity_df.empty):
+    # This case is if trend_activity_df was empty to begin with from load_chw_dashboard_data
+    st.markdown("ℹ️ _No historical data available for the selected trend period and/or filters to calculate trends._")
+# The 'data loading failed' case is handled by the outer if/else
+
+# ... (rest of 01_chw_dashboard.py) ...
 
 st.divider()
 footer_text = _get_setting('APP_FOOTER_TEXT', "Sentinel Health Co-Pilot.")
