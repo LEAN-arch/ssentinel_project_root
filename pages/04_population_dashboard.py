@@ -336,27 +336,44 @@ with tabs_population_display[1]:
                 zone_attr_display_df = zone_attr_display_df[zone_attr_display_df['zone_id'].astype(str) == str(selected_zone_id_val)]
             elif 'zone_id' in zone_attr_display_df: zone_attr_display_df = zone_attr_display_df[zone_attr_display_df['zone_id'].astype(str) == str(selected_zone_display_filter)]
         
-        if not zone_attr_display_df.empty:
-            st.markdown("---"); st.subheader("Zone Attributes" + (f" for {selected_zone_display_filter}" if selected_zone_display_filter != "All Zones/Regions" else ""))
-            if 'population' in zone_attr_display_df and zone_attr_display_df['population'].notna().any():
-                pop_by_zone_plot_data = zone_attr_display_df.dropna(subset=['population', 'name']).sort_values('population', ascending=False).head(15)
-                if not pop_by_zone_plot_data.empty:
-                    fig_pop_by_zone = px.bar(pop_by_zone_plot_data, x='name', y='population', title="Population by Zone")
-                    fig_pop_by_zone.update_layout(yaxis_tickformat='d', yaxis_rangemode='tozero')
-                    if pop_by_zone_plot_data['population'].max() < 30 and pop_by_zone_plot_data['population'].max() > 0 : fig_pop_by_zone.update_yaxes(dtick=1)
-                    elif pop_by_zone_plot_data['population'].max() == 0 : fig_pop_by_zone.update_yaxes(dtick=1, range=[0,1])
-                    st.plotly_chart(fig_pop_by_zone, use_container_width=True)
-            if 'socio_economic_index' in zone_attr_display_df and zone_attr_display_df['socio_economic_index'].notna().any():
-                sei_by_zone_plot_data = zone_attr_display_df.dropna(subset=['socio_economic_index', 'name']).sort_values('socio_economic_index')
-                if not sei_by_zone_plot_data.empty: st.plotly_chart(px.bar(sei_by_zone_plot_data, x='name', y='socio_economic_index', title="Socio-Economic Index (Lower is better)"), use_container_width=True)
-            if selected_zone_display_filter != "All Zones/Regions" and not zone_attr_display_df.empty and 'name' in zone_attr_display_df:
-                sdoh_cols_for_table = [c for c in ['population', 'socio_economic_index', 'avg_travel_time_clinic_min', 'predominant_hazard_type', 'primary_livelihood', 'water_source_main'] if c in zone_attr_display_df]
-                if sdoh_cols_for_table : st.dataframe(zone_attr_display_df.set_index('name')[sdoh_cols_for_table].T.dropna(axis=1, how='all'), use_container_width=True)
-            elif not zone_attr_display_df.empty and display_zone_attr_data_df.shape[0] > 15: 
-                sdoh_sample_cols_for_table = [c for c in ['name', 'population', 'socio_economic_index'] if c in zone_attr_display_df]
-                if sdoh_sample_cols_for_table: st.dataframe(zone_attr_display_df[sdoh_sample_cols_for_table].head(15), use_container_width=True)
-        elif not data_load_error_flag and isinstance(zone_attr_main, pd.DataFrame) and not zone_attr_main.empty: st.caption("No zone attributes for selected zone.")
-
+        if not display_zone_attr_data_df.empty and selected_zone_filter_display_pop_val != "All Zones/Regions":
+            if zone_name_to_id_map_population and selected_zone_filter_display_pop_val in zone_name_to_id_map_population:
+                selected_zone_id_val = zone_name_to_id_map_population[selected_zone_filter_display_pop_val]
+                display_zone_attr_data_df = display_zone_attr_data_df[display_zone_attr_data_df['zone_id'].astype(str) == str(selected_zone_id_val)]
+            elif 'zone_id' in display_zone_attr_data_df.columns: 
+                display_zone_attr_data_df = display_zone_attr_data_df[display_zone_attr_data_df['zone_id'].astype(str) == str(selected_zone_filter_display_pop_val)]
+        
+        if not display_zone_attr_data_df.empty:
+            # OLD LINE THAT WOULD ALSO CAUSE ERROR:
+            # st.markdown("---"); st.subheader("Zone Attributes Overview" + (f" for {selected_zone_display_filter}" if selected_zone_display_filter != "All Zones/Regions" else ""))
+            # CORRECTED LINE:
+            st.markdown("---"); st.subheader("Zone Attributes Overview" + (f" for {selected_zone_filter_display_pop_val}" if selected_zone_filter_display_pop_val != "All Zones/Regions" else ""))
+            # ... (rest of the plotting for zone attributes)
+            if 'population' in display_zone_attr_data_df.columns and display_zone_attr_data_df['population'].notna().any():
+                pop_by_zone_data = display_zone_attr_data_df.dropna(subset=['population', 'name']).sort_values('population', ascending=False).head(15)
+                if not pop_by_zone_data.empty:
+                    fig_pop_zone_chart = px.bar(pop_by_zone_data, x='name', y='population', title="Population by Zone")
+                    fig_pop_zone_chart.update_layout(yaxis_tickformat='d', yaxis_rangemode='tozero')
+                    if pop_by_zone_data['population'].max() < 30 and pop_by_zone_data['population'].max() > 0 : fig_pop_zone_chart.update_yaxes(dtick=1)
+                    elif pop_by_zone_data['population'].max() == 0 : fig_pop_zone_chart.update_yaxes(dtick=1, range=[0,1])
+                    st.plotly_chart(fig_pop_zone_chart, use_container_width=True)
+            if 'socio_economic_index' in display_zone_attr_data_df.columns and display_zone_attr_data_df['socio_economic_index'].notna().any():
+                sei_by_zone_data = display_zone_attr_data_df.dropna(subset=['socio_economic_index', 'name']).sort_values('socio_economic_index')
+                if not sei_by_zone_data.empty: st.plotly_chart(px.bar(sei_by_zone_data, x='name', y='socio_economic_index', title="Socio-Economic Index (Lower is better)"), use_container_width=True)
+            
+            # OLD LINE THAT WOULD ALSO CAUSE ERROR:
+            # if selected_zone_display_filter != "All Zones/Regions" and not display_zone_attr_data_df.empty and 'name' in display_zone_attr_data_df.columns:
+            # CORRECTED LINE:
+            if selected_zone_filter_display_pop_val != "All Zones/Regions" and not display_zone_attr_data_df.empty and 'name' in display_zone_attr_data_df.columns:
+                display_cols_sdoh_table = [col for col in ['population', 'socio_economic_index', 'avg_travel_time_clinic_min', 'predominant_hazard_type', 'primary_livelihood', 'water_source_main'] if col in display_zone_attr_data_df.columns]
+                if display_cols_sdoh_table :
+                    st.dataframe(display_zone_attr_data_df.set_index('name')[display_cols_sdoh_table].T.dropna(axis=1, how='all'), use_container_width=True) 
+            elif not display_zone_attr_data_df.empty and display_zone_attr_data_df.shape[0] > 15 : 
+                display_cols_sdoh_sample_table = [col for col in ['name', 'population', 'socio_economic_index'] if col in display_zone_attr_data_df.columns]
+                if display_cols_sdoh_sample_table:
+                    st.dataframe(display_zone_attr_data_df[display_cols_sdoh_sample_table].head(15), use_container_width=True)
+        elif not data_load_error_flag and isinstance(zone_attr_main, pd.DataFrame) and not zone_attr_main.empty: 
+            st.caption("No zone attribute data to display for the selected zone filter.")
 with tabs_rendered[2]: 
     st.header(f"Clinical Insights {filter_context_display_str}")
     if data_load_error_flag or df_filtered_final.empty: st.info("No data for Clinical Insights.")
