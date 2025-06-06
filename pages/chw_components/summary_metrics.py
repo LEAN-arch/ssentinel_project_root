@@ -113,32 +113,32 @@ def calculate_chw_daily_summary_metrics(
         "worker_self_fatigue_level_code": "NOT_ASSESSED", 
         "worker_self_fatigue_index_today": np.nan
     }
+    
+    # Store initial types for robust conversion
+    initial_metric_types = {k: type(v) for k, v in metrics_summary.items()}
 
     # Populate from pre-calculated KPIs first (if any)
     if isinstance(chw_daily_kpi_input_data, dict):
         logger.debug(f"({source_context}) Populating metrics from pre-calculated input data: {chw_daily_kpi_input_data.keys()}")
         for key, value in chw_daily_kpi_input_data.items():
-            if key in metrics_summary and pd.notna(value): # Only update if key exists and value is not NaN/None
+            if key in metrics_summary and pd.notna(value):
                 try:
-                    # Attempt conversion based on the expected type of the metric in metrics_summary
-                    if isinstance(metrics_summary[key], int):
+                    # CORRECTED: Robustly convert incoming value to the expected type defined in the initial metrics dictionary.
+                    expected_type = initial_metric_types.get(key)
+                    if expected_type is int:
                         metrics_summary[key] = int(convert_to_numeric(value, default_value=metrics_summary[key]))
-                    elif isinstance(metrics_summary[key], float):
+                    elif expected_type is float:
                         metrics_summary[key] = float(convert_to_numeric(value, default_value=metrics_summary[key]))
-                    elif isinstance(metrics_summary[key], str):
+                    elif expected_type is str:
                         metrics_summary[key] = str(value)
-                    # else: # If type is not int, float, or str, keep original default type or handle specifically
-                    #    logger.debug(f"({source_context}) Pre-calc KPI '{key}' has unhandled type in metrics_summary. Keeping as is.")
+                    else:
+                        metrics_summary[key] = value # Assign directly for other types
                 except (ValueError, TypeError) as e_kpi_conv_sum:
                     logger.warning(f"({source_context}) Error converting pre-calc KPI '{key}' (value: '{value}', type: {type(value)}): {e_kpi_conv_sum}. Using default for this metric.")
-                    # Revert to initial default if conversion fails
-                    # metrics_summary[key] = initial_default_for_key (would need to store initial defaults separately)
-
+                    # Let it fall back to the initial default by not assigning on error.
+                    
     if not isinstance(chw_daily_encounter_df, pd.DataFrame) or chw_daily_encounter_df.empty:
         logger.info(f"({source_context}) No daily encounter DataFrame provided for {target_date_iso_str}. Metrics will rely on pre-calculated data or defaults.")
-        # Finalize fatigue level from pre-calculated index if DataFrame is empty (already populated if pre_calc_kpis had it)
-        # This logic is now at the end for unified fatigue calculation.
-        # (Metrics are already initialized with defaults)
     else: # Process encounter DataFrame
         df_enc_sum = chw_daily_encounter_df # Work on the provided df if not empty
 
@@ -165,7 +165,6 @@ def calculate_chw_daily_summary_metrics(
             df_enc_sum = df_enc_sum[df_enc_sum['encounter_date'].dt.date == target_processing_date]
         else:
             logger.warning(f"({source_context}) 'encounter_date' missing or all null after prep. Metrics for {target_date_iso_str} may be inaccurate.")
-            # Proceed with potentially empty df_enc_sum, relying on defaults or pre-calc for metrics.
 
         if df_enc_sum.empty:
             logger.info(f"({source_context}) No encounters for {target_date_iso_str} after date filtering.")
@@ -180,32 +179,30 @@ def calculate_chw_daily_summary_metrics(
                     metrics_summary["visits_count"] = patient_records_df['patient_id'].nunique()
                 
                 prio_score_col = 'ai_followup_priority_score'
-                prio_high_thresh = getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 0.7) # Using a common high prio threshold
+                prio_high_thresh = getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 80)
                 if prio_score_col in patient_records_df.columns and 'patient_id' in patient_records_df.columns:
                     prio_scores = patient_records_df[prio_score_col] # Already numeric
                     metrics_summary["high_ai_prio_followups_count"] = patient_records_df[prio_scores >= prio_high_thresh]['patient_id'].nunique()
 
                 risk_score_col = 'ai_risk_score'
                 if risk_score_col in patient_records_df.columns and 'patient_id' in patient_records_df.columns:
-                    # Average risk for unique patients visited
                     unique_patient_risks = patient_records_df.drop_duplicates(subset=['patient_id'])[risk_score_col].dropna()
                     if not unique_patient_risks.empty:
                         metrics_summary["avg_risk_of_visited_patients"] = unique_patient_risks.mean()
                 
-                # Temperature metrics
                 temp_col_to_use = next((tc for tc in ['vital_signs_temperature_celsius', 'max_skin_temp_celsius'] 
                                         if tc in patient_records_df.columns and patient_records_df[tc].notna().any()), None)
                 if temp_col_to_use:
-                    temps = patient_records_df[temp_col_to_use] # Already numeric
+                    temps = patient_records_df[temp_col_to_use]
                     fever_thresh = getattr(settings, 'ALERT_BODY_TEMP_FEVER_C', 38.0)
-                    high_fever_thresh = getattr(settings, 'ALERT_BODY_TEMP_HIGH_FEVER_C', 39.0)
+                    high_fever_thresh = getattr(settings, 'ALERT_BODY_TEMP_HIGH_FEVER_C', 39.5)
                     metrics_summary["fever_cases_identified_count"] = patient_records_df[temps >= fever_thresh]['patient_id'].nunique()
                     metrics_summary["high_fever_cases_identified_count"] = patient_records_df[temps >= high_fever_thresh]['patient_id'].nunique()
 
                 spo2_col = 'min_spo2_pct'
                 spo2_critical_thresh = getattr(settings, 'ALERT_SPO2_CRITICAL_LOW_PCT', 90.0)
                 if spo2_col in patient_records_df.columns and 'patient_id' in patient_records_df.columns:
-                    spo2_values = patient_records_df[spo2_col] # Already numeric
+                    spo2_values = patient_records_df[spo2_col]
                     metrics_summary["critical_spo2_cases_identified_count"] = patient_records_df[spo2_values < spo2_critical_thresh]['patient_id'].nunique()
 
                 steps_col = 'avg_daily_steps'
@@ -218,11 +215,9 @@ def calculate_chw_daily_summary_metrics(
                 if fall_col in patient_records_df.columns and 'patient_id' in patient_records_df.columns:
                     metrics_summary["fall_events_among_visited_count"] = patient_records_df[patient_records_df[fall_col] > 0]['patient_id'].nunique()
 
-                # Pending Critical Referrals
                 key_conds = getattr(settings, 'KEY_CONDITIONS_FOR_ACTION', [])
                 if key_conds and 'condition' in patient_records_df.columns and \
                    'referral_status' in patient_records_df.columns and 'patient_id' in patient_records_df.columns:
-                    # Build regex pattern safely from key conditions
                     key_cond_pattern = '|'.join(re.escape(kc) for kc in key_conds)
                     crit_ref_mask = (
                         patient_records_df['referral_status'].astype(str).str.lower() == 'pending'
@@ -230,11 +225,10 @@ def calculate_chw_daily_summary_metrics(
                         patient_records_df['condition'].astype(str).str.contains(key_cond_pattern, case=False, na=False, regex=True)
                     )
                     metrics_summary["pending_critical_referrals_generated_today_count"] = patient_records_df[crit_ref_mask]['patient_id'].nunique()
-            else: # patient_records_df is empty
+            else:
                  logger.info(f"({source_context}) No patient encounters (excluding self-checks) for {target_date_iso_str}.")
 
 
-        # Worker Self-Fatigue (calculated from original df_enc_sum if not already populated by pre_calc_kpis)
         if pd.isna(metrics_summary.get("worker_self_fatigue_index_today")): 
             worker_self_checks_df = df_enc_sum[
                 df_enc_sum.get('encounter_type', pd.Series(dtype=str)).astype(str).str.contains("WORKER_SELF_CHECK", case=False, na=False)
@@ -243,26 +237,23 @@ def calculate_chw_daily_summary_metrics(
                 fatigue_cols_to_check = ['ai_followup_priority_score', 'rapid_psychometric_distress_score', 'stress_level_score']
                 chosen_fatigue_metric_col = next((col for col in fatigue_cols_to_check if col in worker_self_checks_df.columns and worker_self_checks_df[col].notna().any()), None)
                 if chosen_fatigue_metric_col:
-                    fatigue_value = worker_self_checks_df[chosen_fatigue_metric_col].max() # Max fatigue score for the day
+                    fatigue_value = worker_self_checks_df[chosen_fatigue_metric_col].max()
                     if pd.notna(fatigue_value):
                         metrics_summary["worker_self_fatigue_index_today"] = float(fatigue_value)
 
-    # Determine worker_self_fatigue_level_code based on the final index (either from pre-calc or df)
     final_fatigue_score = metrics_summary.get("worker_self_fatigue_index_today")
     if pd.notna(final_fatigue_score):
-        high_thresh = getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 0.7)
-        mod_thresh = getattr(settings, 'FATIGUE_INDEX_MODERATE_THRESHOLD', 0.5)
+        high_thresh = getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 80)
+        mod_thresh = getattr(settings, 'FATIGUE_INDEX_MODERATE_THRESHOLD', 60)
         if final_fatigue_score >= high_thresh:
             metrics_summary["worker_self_fatigue_level_code"] = "HIGH"
         elif final_fatigue_score >= mod_thresh:
             metrics_summary["worker_self_fatigue_level_code"] = "MODERATE"
         else:
             metrics_summary["worker_self_fatigue_level_code"] = "LOW"
-    else: # If still NaN (no pre-calc, no self-check data)
+    else:
         metrics_summary["worker_self_fatigue_level_code"] = "NOT_ASSESSED"
 
-
-    # Round float metrics for cleaner display
     float_metrics_to_round = {
         "avg_risk_of_visited_patients": 1, 
         "avg_steps_of_visited_patients": 0, 
