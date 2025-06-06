@@ -89,7 +89,11 @@ st.divider()
     hash_funcs={pd.DataFrame: hash_dataframe_safe},
     show_spinner="Aggregating district-level operational data..."
 )
-def get_dho_command_center_processed_datasets() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], Optional[pd.DataFrame], Dict[str, Any], Dict[str, Any]]:
+def get_dho_command_center_processed_datasets() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], Optional[pd.DataFrame], Dict[str, Any]]:
+    """
+    Loads and processes core data. Returns only serializable (cacheable) objects.
+    The intervention criteria options (which may contain non-serializable lambdas) are generated outside this cached function.
+    """
     log_ctx = "DHODatasetPrep"
     logger.info(f"({log_ctx}) Initializing full data pipeline for DHO view...")
     
@@ -99,7 +103,7 @@ def get_dho_command_center_processed_datasets() -> Tuple[Optional[pd.DataFrame],
 
     if not isinstance(base_zone_df_dho, pd.DataFrame) or base_zone_df_dho.empty or 'zone_id' not in base_zone_df_dho.columns:
         logger.error(f"({log_ctx}) Base zone DataFrame failed to load or is invalid. DHO dashboard heavily impacted.")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}, {}
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
 
     ai_enriched_health_df_dho: Optional[pd.DataFrame] = pd.DataFrame() # Initialize
     if isinstance(raw_health_df_dho, pd.DataFrame) and not raw_health_df_dho.empty:
@@ -116,19 +120,28 @@ def get_dho_command_center_processed_datasets() -> Tuple[Optional[pd.DataFrame],
         enriched_zone_df_for_dho = base_zone_df_dho if not base_zone_df_dho.empty else pd.DataFrame()
 
     district_summary_kpis_map = get_district_summary_kpis(enriched_zone_df_for_dho, f"{log_ctx}/CalcDistrictKPIs")
-    intervention_criteria_opts = get_district_intervention_criteria_options(
-        district_zone_df_sample_check=enriched_zone_df_for_dho.head(2) if isinstance(enriched_zone_df_for_dho, pd.DataFrame) and not enriched_zone_df_for_dho.empty else None
-    )
+    
+    # DEBUG FIX: Removed generation of intervention_criteria_opts from the cached function.
     
     df_shape_log = enriched_zone_df_for_dho.shape if isinstance(enriched_zone_df_for_dho, pd.DataFrame) else 'N/A'
     logger.info(f"({log_ctx}) DHO data preparation complete. Enriched Zone DF shape: {df_shape_log}")
-    return enriched_zone_df_for_dho, ai_enriched_health_df_dho, raw_iot_df_dho, district_summary_kpis_map, intervention_criteria_opts
+    return enriched_zone_df_for_dho, ai_enriched_health_df_dho, raw_iot_df_dho, district_summary_kpis_map
 
 # --- Load and Prepare Data for the Dashboard ---
-enriched_zone_df_display, historical_health_df_for_trends, historical_iot_df_for_trends, district_kpis_summary_data, intervention_criteria_options_data = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}, {}
+# DEBUG FIX: Initialize variables to match the new return signature of the cached function.
+enriched_zone_df_display, historical_health_df_for_trends, historical_iot_df_for_trends, district_kpis_summary_data = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+intervention_criteria_options_data = {} # Will be populated after data loading.
+
 try:
+    # DEBUG FIX: Unpack fewer variables, as the cached function returns one less item.
     (enriched_zone_df_display, historical_health_df_for_trends, historical_iot_df_for_trends,
-     district_kpis_summary_data, intervention_criteria_options_data) = get_dho_command_center_processed_datasets()
+     district_kpis_summary_data) = get_dho_command_center_processed_datasets()
+     
+    # DEBUG FIX: Generate the (potentially non-serializable) intervention options *after* loading data from the cache.
+    intervention_criteria_options_data = get_district_intervention_criteria_options(
+        district_zone_df_sample_check=enriched_zone_df_display.head(2) if isinstance(enriched_zone_df_display, pd.DataFrame) and not enriched_zone_df_display.empty else None
+    )
+
 except Exception as e_dho_data_main_load:
     logger.error(f"DHO Dashboard: Failed to load/process main datasets: {e_dho_data_main_load}", exc_info=True)
     st.error(f"Error loading DHO dashboard data: {e_dho_data_main_load}. Check logs.")
