@@ -88,7 +88,7 @@ def _prepare_task_dataframe(
             else: df_prepared[col_name] = default_value
             
     if 'patient_id' in df_prepared.columns:
-        df_prepared['patient_id'] = df_prepared['patient_id'].replace('', default_patient_id_prefix).fillna(default_patient_id_prefix).astype(str)
+        df_prepared['patient_id'] = df_prepared['patient_id'].replace('', default_patient_id_prefix).fillna(default_pid_prefix_tasks).astype(str)
     
     logger.debug(f"({log_prefix}) Task dataframe preparation complete. Shape: {df_prepared.shape}. Dtypes:\n{df_prepared.dtypes}")
     return df_prepared
@@ -169,15 +169,12 @@ def generate_chw_tasks(
 
     # Get setting values with robust fallbacks
     spo2_critical_thresh = float(_get_setting('ALERT_SPO2_CRITICAL_LOW_PCT', 90.0))
-    temp_high_fever_thresh = float(_get_setting('ALERT_BODY_TEMP_HIGH_FEVER_C', 39.0))
-    # Assuming priority scores in data are 0-100, and thresholds in settings are 0-1 (like fatigue)
-    # Adjust if settings provide 0-100 thresholds directly
-    prio_high_thresh_raw = float(_get_setting('TASK_RULE_AI_PRIO_HIGH_THRESHOLD', _get_setting('FATIGUE_INDEX_HIGH_THRESHOLD', 0.7)))
-    prio_high_thresh = prio_high_thresh_raw * 100 if prio_high_thresh_raw <=1 else prio_high_thresh_raw # Scale if it's 0-1
+    temp_high_fever_thresh = float(_get_setting('ALERT_BODY_TEMP_HIGH_FEVER_C', 39.5))
     
-    prio_mod_thresh_raw = float(_get_setting('TASK_RULE_AI_PRIO_MODERATE_THRESHOLD', _get_setting('FATIGUE_INDEX_MODERATE_THRESHOLD', 0.5)))
-    prio_mod_thresh = prio_mod_thresh_raw * 100 if prio_mod_thresh_raw <=1 else prio_mod_thresh_raw
-
+    # CORRECTED: Simplified threshold logic. Assumes settings provide a 0-100 scale directly.
+    prio_high_thresh = float(_get_setting('FATIGUE_INDEX_HIGH_THRESHOLD', 80))
+    prio_mod_thresh = float(_get_setting('FATIGUE_INDEX_MODERATE_THRESHOLD', 60))
+    
     key_conditions_for_action_list = _get_setting('KEY_CONDITIONS_FOR_ACTION', [])
 
 
