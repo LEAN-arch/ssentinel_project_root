@@ -204,7 +204,7 @@ def structure_disease_specific_clinic_kpis(
             except (ValueError, TypeError):
                  logger.warning(f"({module_log_prefix}) Could not convert positivity rate '{positivity_rate}' for {display_name} to float.")
         
-        # CORRECTED: Use the specific display_name in the title to provide clarity.
+        # CORRECTED: Use the specific display_name in the title to provide clarity and resolve the bug.
         structured_kpis_list.append({
             "title": f"{display_name} Positivity",
             "value_str": _format_kpi_value(positivity_rate, precision=1, is_percentage=True),
