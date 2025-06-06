@@ -96,7 +96,10 @@ h6 {font-size: 0.95rem; color: var(--sentinel-color-text-muted); font-weight: 50
     display: flex;
     flex-direction: column;
     justify-content: space-between; /* Pushes kpi-body down if header is short */
-    height: 100%; /* For consistent height in st.columns */
+    /* REMOVED: The height: 100% rule was causing the rendering glitch with st.columns' flexbox implementation. */
+    /* height: 100%; */
+    /* ADDED: A min-height provides consistent sizing without breaking the layout. Adjust as needed. */
+    min-height: 125px;
     transition: box-shadow 0.2s ease-in-out, transform 0.15s ease-in-out; 
 }
 .kpi-card:hover {
@@ -105,7 +108,6 @@ h6 {font-size: 0.95rem; color: var(--sentinel-color-text-muted); font-weight: 50
 }
 
 /* KPI Card Status Variants - kebab-case CSS classes derived from Pythonic status_level names */
-/* Ensure these match the status levels used in Python code (e.g., HIGH_RISK -> status-high-risk) */
 .kpi-card.status-high-risk, 
 .kpi-card.status-critical, 
 .kpi-card.status-high-concern { 
@@ -196,7 +198,7 @@ h6 {font-size: 0.95rem; color: var(--sentinel-color-text-muted); font-weight: 50
 
 /* ----- Streamlit Component Overrides & Enhancements ----- */
 section[data-testid="stSidebar"] {
-    background-color: var(--sentinel-color-background-page); /* Consistent sidebar background */
+    background-color: var(--sentinel-color-background-page);
     border-right: 1px solid var(--sentinel-color-border-medium);
     padding-top: 0.7rem;
 }
@@ -207,9 +209,9 @@ section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, sectio
 }
 section[data-testid="stSidebar"] .stImage > img { margin-bottom: 0.6rem; } 
 section[data-testid="stSidebar"] .stMarkdown p, section[data-testid="stSidebar"] .stCaption {
-    font-size: 0.8rem; color: var(--sentinel-color-text-muted); /* Adjusted color for better contrast */
+    font-size: 0.8rem; color: var(--sentinel-color-text-muted);
 }
-section[data-testid="stSidebar"] label { /* Labels for widgets */
+section[data-testid="stSidebar"] label {
     font-weight: 500; font-size: 0.88rem; color: var(--sentinel-color-text-headings-sub);
 }
 
@@ -219,21 +221,20 @@ div[data-testid="stMetric"] {
     padding: 0.8rem 1.0rem; box-shadow: 0 2px 5px rgba(0,0,0,0.04);
     border-left: 4px solid var(--sentinel-color-action-primary); margin-bottom: 0.8rem;
 }
-div[data-testid="stMetric"] > label { /* Metric label */
-    font-size: 0.8rem !important; /* Ensure font size is applied */
+div[data-testid="stMetric"] > label {
+    font-size: 0.8rem !important;
     color: var(--sentinel-color-text-muted) !important; 
     font-weight: 600 !important; margin-bottom: 0.2rem !important; 
 }
 div[data-testid="stMetricValue"] { font-size: 1.7rem; font-weight: 700; color: var(--sentinel-color-text-headings-main); }
 div[data-testid="stMetricDelta"] { font-size: 0.8rem; font-weight: 500; padding-top: 0.15rem; }
-/* Ensure delta colors are applied correctly, overriding Streamlit defaults if needed */
 div[data-testid="stMetricDelta"] > div.positive { color: var(--sentinel-color-delta-positive) !important; } 
 div[data-testid="stMetricDelta"] > div.negative { color: var(--sentinel-color-delta-negative) !important; }
 
 /* Expander */
 div[data-testid="stExpander"] {
     border: 1px solid var(--sentinel-color-border-light); border-radius: 6px; margin-bottom: 1.0rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.03); overflow: hidden; /* Prevents shadow clipping */
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03); overflow: hidden;
 }
 div[data-testid="stExpander"] summary {
     font-weight: 600; color: var(--sentinel-color-text-headings-sub);
@@ -244,23 +245,22 @@ div[data-testid="stExpander"] summary:hover { background-color: var(--sentinel-c
 div[data-testid="stExpander"] > div[data-testid="stExpanderDetails"] { padding: 1.0rem; background-color: var(--sentinel-color-background-content); }
 
 /* Tabs */
-div[data-testid="stTabs"] button { /* Tab buttons */
+div[data-testid="stTabs"] button {
     font-weight: 600; color: var(--sentinel-color-text-muted);
     padding: 0.6rem 0.9rem; border-radius: 5px 5px 0 0;
     border-bottom: 2px solid transparent; margin-right: 1px;
     background-color: var(--sentinel-color-background-subtle); 
 }
 div[data-testid="stTabs"] button:hover {
-    background-color: var(--sentinel-color-background-subtle); /* Keep subtle or slightly darker */
+    background-color: var(--sentinel-color-background-subtle);
     color: var(--sentinel-color-text-headings-main);
     border-bottom-color: var(--sentinel-color-border-medium);
 }
 div[data-testid="stTabs"] button[aria-selected="true"] {
     color: var(--sentinel-color-action-primary);
     border-bottom: 2px solid var(--sentinel-color-action-primary);
-    background-color: var(--sentinel-color-background-content); /* Active tab matches content background */
+    background-color: var(--sentinel-color-background-content);
 }
-/* Tab content panel */
 div[data-testid="stTabs"] div[data-testid^="stVerticalBlock"] { 
     border: 1px solid var(--sentinel-color-border-light); border-top: none;
     padding: 1.3rem; border-radius: 0 0 6px 6px;
@@ -271,47 +271,23 @@ div[data-testid="stTabs"] div[data-testid^="stVerticalBlock"] {
 .stDataFrame { border: 1px solid var(--sentinel-color-border-light); border-radius: 5px; font-size: 0.82rem; } 
 .stDataFrame thead th {
     background-color: var(--sentinel-color-background-page); color: var(--sentinel-color-text-headings-sub);
-    font-weight: 600; text-transform: none; /* Or 'capitalize' if preferred */
+    font-weight: 600; text-transform: none;
     font-size: 0.8rem; letter-spacing: 0.01em; border-bottom: 2px solid var(--sentinel-color-border-medium);
     padding: 0.5rem 0.4rem; 
 }
 .stDataFrame tbody td { padding: 0.4rem 0.4rem; border-bottom: 1px solid var(--sentinel-color-border-light); }
 .stDataFrame tbody tr:nth-of-type(odd) { background-color: var(--sentinel-color-background-subtle); } 
-.stDataFrame tbody tr:hover { background-color: #dde1e5; } /* Slightly darker hover for rows */
-
+.stDataFrame tbody tr:hover { background-color: #dde1e5; }
 
 /* General UI Elements */
 a { color: var(--sentinel-color-text-link-default); text-decoration: none; font-weight: 500; }
 a:hover { text-decoration: underline; color: color-mix(in srgb, var(--sentinel-color-text-link-default) 70%, black); } 
 hr { border-top: 1px solid var(--sentinel-color-border-medium); margin: 1.3rem 0; }
 
-/* Streamlit Buttons - Targeting Streamlit's generated classes can be fragile.
-   Prefer direct st.button arguments for kind="primary" / "secondary" if possible.
-   If styling by class is necessary, inspect generated HTML for current classes.
-*/
+/* Streamlit Buttons */
 .stButton>button {
     border-radius: 4px; padding: 0.45rem 0.85rem; font-weight: 500; font-size: 0.9rem;
     transition: background-color 0.1s ease, transform 0.1s ease, border-color 0.1s ease;
-}
-/* Example for primary button (class might change with Streamlit versions) */
-.stButton>button.st-emotion-cache-19rxjzo { /* This class is an EXAMPLE, check current Streamlit version */
-    background-color: var(--sentinel-color-action-primary) !important;
-    color: white !important; border: 1px solid var(--sentinel-color-action-primary) !important;
-}
-.stButton>button.st-emotion-cache-19rxjzo:hover {
-    background-color: color-mix(in srgb, var(--sentinel-color-action-primary) 85%, black) !important; 
-    border-color: color-mix(in srgb, var(--sentinel-color-action-primary) 80%, black) !important;
-}
-/* Example for secondary button */
-.stButton>button.st-emotion-cache-qzia8b { /* This class is an EXAMPLE */
-    background-color: var(--sentinel-color-background-content) !important;
-    color: var(--sentinel-color-action-primary) !important;
-    border: 1px solid var(--sentinel-color-action-primary) !important;
-}
-.stButton>button.st-emotion-cache-qzia8b:hover {
-    background-color: var(--sentinel-color-background-subtle) !important;
-    border-color: color-mix(in srgb, var(--sentinel-color-action-primary) 85%, black) !important;
-    color: color-mix(in srgb, var(--sentinel-color-action-primary) 90%, black) !important;
 }
 
 div[data-testid="stProgress"] > div { background-color: var(--sentinel-color-action-primary); border-radius: 3px; }
@@ -321,7 +297,7 @@ div[data-testid="stProgress"] > div { background-color: var(--sentinel-color-act
     background-color: var(--sentinel-color-background-content);
     border-radius: 8px; padding: 1.2rem;
     box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
-    border-left: 5px solid var(--sentinel-color-risk-neutral); /* Default edge color */
+    border-left: 5px solid var(--sentinel-color-risk-neutral);
     margin-bottom: 1rem; display: flex; flex-direction: column; height: 100%; text-align: left;
 }
 .custom-markdown-kpi-box.highlight-red-edge { border-left-color: var(--sentinel-color-risk-high) !important; }
@@ -346,7 +322,7 @@ div[data-testid="stProgress"] > div { background-color: var(--sentinel-color-act
     border-collapse: collapse;
     margin-bottom: 1rem;
     font-size: 0.85rem;
-    background-color: var(--sentinel-color-background-content); /* Add background to table */
+    background-color: var(--sentinel-color-background-content);
 }
 .sentinel-table th, .sentinel-table td {
     border: 1px solid var(--sentinel-color-border-light);
