@@ -202,7 +202,8 @@ def empty_zone_data_df_schema_fixture() -> pd.DataFrame:
 @pytest.fixture
 def empty_enriched_zone_df_schema_fixture() -> pd.DataFrame:
     base_cols = ['zone_id', 'name', 'geometry_obj', 'population', 'avg_risk_score', 'prevalence_per_1000']
-    dyn_cond_cols = [f"active_{re.sub(r'[^a-z0-9_]+', '_', c.lower().replace('(severe)','').strip())}_cases" 
+    # CORRECTED: Use the same re.sub logic from enrichment.py to ensure the schema matches perfectly.
+    dyn_cond_cols = [f"active_{re.sub(r'[^a-z0-9_]+', '_', c.lower().strip())}_cases" 
                      for c in settings.KEY_CONDITIONS_FOR_ACTION]
     return pd.DataFrame(columns=list(set(base_cols + dyn_cond_cols)))
 
