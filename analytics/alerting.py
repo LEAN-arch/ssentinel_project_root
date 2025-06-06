@@ -4,6 +4,7 @@
 import pandas as pd
 import numpy as np
 import logging
+import re  # Added this import
 from typing import List, Dict, Any, Optional, Tuple 
 from datetime import date as date_type # For type hinting date objects
 
@@ -316,6 +317,11 @@ def get_patient_alerts_for_clinic(
     alerts_df_for_clinic.sort_values(by=['Priority Score', 'encounter_date'], ascending=[False, False], inplace=True, na_position='last')
     
     for col in output_columns: # Ensure all expected columns are present before returning
+        if col not in alerts_df_for_clinic.columns:
+            alerts_df_for_clinic[col] = np.nan
+            
+    logger.info(f"({source_context}) Generated {len(alerts_df_for_clinic)} patient entries for clinic review list.")
+    return alerts_df_for_clinic[output_columns].reset_index(drop=True)
         if col not in alerts_df_for_clinic.columns:
             alerts_df_for_clinic[col] = np.nan
             
