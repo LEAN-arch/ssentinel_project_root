@@ -9,7 +9,7 @@ import logging
 import plotly.io as pio 
 import os 
 from typing import Optional, List, Dict, Any, Union
-import html # For escaping text in plots
+import html 
 import re 
 
 try:
@@ -223,7 +223,6 @@ def plot_bar_chart(
     final_height = chart_height or _get_setting_or_default('WEB_PLOT_DEFAULT_HEIGHT', 450)
     log_prefix_plot = f"PlotBar/{html.escape(chart_title[:30])}"
     if not isinstance(df_input, pd.DataFrame) or df_input.empty or x_col_name not in df_input.columns or y_col_name not in df_input.columns:
-        logger.warning(f"({log_prefix_plot}) Missing required columns or empty data.")
         return create_empty_figure(chart_title, final_height, f"Data for '{html.escape(x_col_name)}' or '{html.escape(y_col_name)}' is missing.")
     df_plot = df_input.copy()
     try:
@@ -239,7 +238,7 @@ def plot_bar_chart(
         try: df_plot.sort_values(by=sort_by_col, ascending=sort_ascending_flag, inplace=True, na_position='last')
         except Exception as e_sort_bar: logger.warning(f"({log_prefix_plot}) Sorting by '{html.escape(sort_by_col)}' failed: {e_sort_bar}.")
     
-    effective_text_fmt = text_format_str if text_format_str else ('.0f' if y_values_are_counts_flag else '.1f')
+    effective_text_fmt = text_format_str if text_format_str else (',.0f' if y_values_are_counts_flag else ',.1f')
     y_hover_fmt_bar = 'd' if y_values_are_counts_flag else effective_text_fmt
     x_label_final = html.escape(x_axis_label_text or x_col_name.replace('_', ' ').title())
     y_label_final = html.escape(y_axis_label_text or y_col_name.replace('_', ' ').title())
@@ -248,7 +247,6 @@ def plot_bar_chart(
         df_plot[color_col_name] = df_plot[color_col_name].astype(str).str.strip()
         legend_title_final = html.escape(color_col_name.replace('_', ' ').title())
     
-    # CORRECTED: Build the color map by resolving each unique value individually.
     final_color_map_resolved = custom_color_map
     if not final_color_map_resolved and color_col_name and color_col_name in df_plot.columns:
         unique_color_vals = df_plot[color_col_name].dropna().unique()
@@ -310,7 +308,6 @@ def plot_donut_chart(
     final_height = chart_height or (_get_setting_or_default('WEB_PLOT_COMPACT_HEIGHT', 350) + 50)
     log_prefix_plot = f"PlotDonut/{html.escape(chart_title[:30])}"
     if not isinstance(df_input, pd.DataFrame) or df_input.empty or labels_col_name not in df_input.columns or values_col_name not in df_input.columns:
-        logger.warning(f"({log_prefix_plot}) Missing required columns or empty data.")
         return create_empty_figure(chart_title, final_height, "Missing data for donut chart.")
     df_plot = df_input.copy()
     try:
