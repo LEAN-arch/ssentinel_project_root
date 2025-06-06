@@ -14,16 +14,14 @@ try:
     from config import settings
     SETTINGS_IMPORTED_SUCCESSFULLY = True
 except ImportError as e_config_import:
-    logging.basicConfig(level=logging.INFO) # Ensure logger is available for fallback
-    _logger_init_fallback = logging.getLogger(__name__) # Use a different name to avoid conflict
+    logging.basicConfig(level=logging.INFO) 
+    _logger_init_fallback = logging.getLogger(__name__)
     _logger_init_fallback.error(
         f"CRITICAL IMPORT ERROR: 'config.settings' could not be imported in ui_elements.py: {e_config_import}. "
-        "Using internal fallback settings. THIS IS NOT INTENDED FOR PRODUCTION. "
-        "Please ensure 'config.py' exists, is in PYTHONPATH, and has no import errors itself."
+        "Using internal fallback settings. THIS IS NOT INTENDED FOR PRODUCTION."
     )
     
     class FallbackSettings:
-        """Provides minimal default values if the main settings module cannot be imported."""
         COLOR_RISK_HIGH = "#D32F2F"; COLOR_RISK_MODERATE = "#FFA000"; COLOR_RISK_LOW = "#388E3C";
         COLOR_RISK_NEUTRAL = "#757575"; COLOR_ACTION_PRIMARY = "#1976D2"; COLOR_ACTION_SECONDARY = "#607D8B";
         COLOR_POSITIVE_DELTA = "#388E3C"; COLOR_NEGATIVE_DELTA = "#D32F2F"; COLOR_TEXT_DARK = "#212121";
@@ -39,13 +37,6 @@ logger = logging.getLogger(__name__)
 
 # --- Safe Settings Access Helper ---
 def _get_setting_attr(attr_name: str, default_value: Any) -> Any:
-    """
-    Safely gets an attribute from the (potentially fallback) settings object.
-    """
-    if not SETTINGS_IMPORTED_SUCCESSFULLY and not isinstance(settings, FallbackSettings):
-        logger.error(f"Attempting to access setting '{attr_name}' but 'config.settings' failed to import and FallbackSettings is not active. This is a critical failure.")
-        return default_value
-
     val = getattr(settings, attr_name, default_value)
     if val is default_value and not hasattr(settings, attr_name) and default_value is not None:
         logger.debug(f"Setting '{attr_name}' not found; using provided default: '{default_value}'.")
@@ -57,9 +48,6 @@ def get_theme_color(
     color_category: str = "general",
     fallback_color_hex: Optional[str] = None
 ) -> str:
-    """
-    Retrieves a color from the application's theme settings or a predefined list.
-    """
     direct_color_map: Dict[str, str] = {
         "risk_high": _get_setting_attr('COLOR_RISK_HIGH', "#E53935"), "risk_moderate": _get_setting_attr('COLOR_RISK_MODERATE', "#FFB300"),
         "risk_low": _get_setting_attr('COLOR_RISK_LOW', "#43A047"), "risk_neutral": _get_setting_attr('COLOR_RISK_NEUTRAL', "#757575"),
@@ -80,8 +68,7 @@ def get_theme_color(
         
         legacy_disease_colors_map = _get_setting_attr('LEGACY_DISEASE_COLORS_WEB', {})
         if color_category == "disease" and isinstance(legacy_disease_colors_map, dict) and color_name_or_index in legacy_disease_colors_map:
-            color_value = legacy_disease_colors_map[color_name_or_index]
-            return str(color_value) if color_value is not None else direct_color_map["text_muted"]
+            return str(legacy_disease_colors_map[color_name_or_index])
 
     general_theme_colorway = [
         direct_color_map["action_primary"], direct_color_map["risk_low"], direct_color_map["risk_moderate"],
@@ -91,10 +78,7 @@ def get_theme_color(
     if isinstance(color_name_or_index, int) and color_category == "general":
         return general_theme_colorway[color_name_or_index % len(general_theme_colorway)]
     
-    if fallback_color_hex and isinstance(fallback_color_hex, str) and fallback_color_hex.startswith("#"):
-        return fallback_color_hex
-    
-    logger.debug(f"Color key/index '{color_name_or_index}' (category: '{color_category}') not resolved. Using fallback.")
+    if fallback_color_hex: return fallback_color_hex
     return direct_color_map["text_muted"] 
 
 
@@ -104,7 +88,6 @@ def render_kpi_card(
     delta_value: Optional[str] = None, delta_is_positive: Optional[bool] = None,
     help_text: Optional[str] = None, units: Optional[str] = None, container_border: bool = True
 ) -> None:
-    """Renders a KPI card using Streamlit Markdown and custom CSS."""
     safe_title = html.escape(str(title).strip())
     safe_value_str = html.escape(str(value_str).strip())
     safe_icon = html.escape(str(icon).strip())
@@ -125,7 +108,7 @@ def render_kpi_card(
     
     border_css_class_str = " kpi-card-bordered" if container_border else ""
 
-    # CORRECTED: Removed 'sentinel-' prefix to match CSS file selectors (e.g., 'kpi-card', 'kpi-icon')
+    # CORRECTED: Changed class names to match CSS (e.g., "kpi-card" instead of "sentinel-kpi-card")
     kpi_html_content = f"""
     <div class="kpi-card {css_status_class}{border_css_class_str}" {tooltip_html_attribute}>
         <div class="kpi-card-header">
@@ -139,7 +122,9 @@ def render_kpi_card(
     </div>
     """
     try:
-        st.markdown(kpi_html_content, unsafe_allow_html=True)
+        # CORRECTED: Wrap the markdown in a container to isolate it from parent layout elements.
+        with st.container():
+            st.markdown(kpi_html_content, unsafe_allow_html=True)
     except Exception as e_render_kpi: 
         logger.error(f"KPI Card Render Error: Title '{safe_title}', Details: {e_render_kpi}", exc_info=True)
         try: st.error(f"Error rendering KPI: {safe_title}")
@@ -149,7 +134,6 @@ def render_kpi_card(
 def render_traffic_light_indicator(
     message: str, status_level: str, details_text: Optional[str] = None, container_border: bool = False
 ) -> None:
-    """Renders a traffic light style indicator using Streamlit Markdown and custom CSS."""
     safe_message = html.escape(str(message).strip())
     status_str_clean = str(status_level).lower().replace('_', '-').strip() if status_level else "neutral"
     css_dot_class_name = f"status-{html.escape(status_str_clean)}"
@@ -161,7 +145,7 @@ def render_traffic_light_indicator(
     border_css_class_str = " traffic-light-bordered" if container_border else ""
     aria_label_status = html.escape(str(status_level).replace('_', ' ').strip())
 
-    # CORRECTED: Removed 'sentinel-' prefix to match CSS file selectors
+    # CORRECTED: Changed class names to match CSS
     traffic_html_content = f"""
     <div class="traffic-light-indicator{border_css_class_str}">
         <span class="traffic-light-dot {css_dot_class_name}" role="img" aria-label="{aria_label_status} status indicator"></span>
@@ -170,7 +154,8 @@ def render_traffic_light_indicator(
     </div>
     """
     try:
-        st.markdown(traffic_html_content, unsafe_allow_html=True)
+        with st.container():
+            st.markdown(traffic_html_content, unsafe_allow_html=True)
     except Exception as e_render_traffic:
         logger.error(f"Traffic Light Indicator Render Error: Message '{safe_message}', Details: {e_render_traffic}", exc_info=True)
         try: st.error(f"Error rendering indicator: {safe_message}")
@@ -181,13 +166,9 @@ def display_custom_styled_kpi_box(
     label: str, value: Union[str, int, float, None], 
     sub_text: Optional[str] = None, highlight_edge_color: Optional[str] = None
 ) -> None:
-    """
-    Renders a custom KPI box. Relies on CSS classes: `custom-markdown-kpi-box`
-    and edge highlight classes like `highlight-red-edge`.
-    """
     safe_label = html.escape(str(label).strip())
     
-    value_display_formatted = "N/A" # Default for None or NaN
+    value_display_formatted = "N/A"
     if pd.notna(value):
         if isinstance(value, (int, float)):
             if np.isinf(value): value_display_formatted = "Inf" if value > 0 else "-Inf"
@@ -213,7 +194,7 @@ def display_custom_styled_kpi_box(
         }
         edge_highlight_css_class_name = color_class_mappings.get(color_upper, "")
         if not edge_highlight_css_class_name:
-            logger.debug(f"No specific CSS class mapping for highlight_edge_color: '{highlight_edge_color}'. No edge highlight applied.")
+            logger.debug(f"No specific CSS class mapping for highlight_edge_color: '{highlight_edge_color}'.")
 
     box_html_final_content = f"""
     <div class="custom-markdown-kpi-box {edge_highlight_css_class_name}">
@@ -223,7 +204,8 @@ def display_custom_styled_kpi_box(
     </div>
     """
     try:
-        st.markdown(box_html_final_content, unsafe_allow_html=True)
+        with st.container():
+            st.markdown(box_html_final_content, unsafe_allow_html=True)
     except Exception as e_render_custom_box:
         logger.error(f"Custom Styled KPI Box Render Error: Label '{safe_label}', Details: {e_render_custom_box}", exc_info=True)
         try: st.error(f"Error rendering custom KPI: {safe_label}")
