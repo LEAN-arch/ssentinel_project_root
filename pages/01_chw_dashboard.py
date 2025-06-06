@@ -242,7 +242,7 @@ if isinstance(df_for_filters, pd.DataFrame) and 'encounter_date' in df_for_filte
 daily_date_ss_key = "chw_dashboard_daily_view_date_v9"
 default_daily_date = abs_max_data_date 
 if daily_date_ss_key not in st.session_state or \
-   not (abs_min_data_date <= st.session_state[daily_date_ss_key] <= abs_max_data_date):
+   not (isinstance(st.session_state[daily_date_ss_key], date) and abs_min_data_date <= st.session_state[daily_date_ss_key] <= abs_max_data_date):
     st.session_state[daily_date_ss_key] = default_daily_date
 selected_daily_date = st.sidebar.date_input(
     "View Daily Activity For:", value=st.session_state[daily_date_ss_key],
@@ -257,6 +257,8 @@ default_trend_start_date = max(abs_min_data_date, default_trend_end_date - timed
 
 if trend_range_ss_key not in st.session_state or \
    not (isinstance(st.session_state[trend_range_ss_key], list) and len(st.session_state[trend_range_ss_key]) == 2 and \
+        isinstance(st.session_state[trend_range_ss_key][0], date) and \
+        isinstance(st.session_state[trend_range_ss_key][1], date) and \
         abs_min_data_date <= st.session_state[trend_range_ss_key][0] <= abs_max_data_date and \
         abs_min_data_date <= st.session_state[trend_range_ss_key][1] <= abs_max_data_date and \
         st.session_state[trend_range_ss_key][0] <= st.session_state[trend_range_ss_key][1]):
@@ -349,7 +351,7 @@ if data_load_successful and not daily_activity_df.empty:
             daily_activity_df, 
             selected_daily_date, 
             active_zone_filter or "All Zones", 
-            max_alerts_to_return=10 # Corrected argument name
+            max_alerts_to_return=10 # CORRECTED from max_alerts
         )
         alerts_generated_successfully = True
     except Exception as e_alerts:
@@ -389,7 +391,7 @@ if data_load_successful and not daily_activity_df.empty:
             selected_daily_date, 
             active_chw_filter, 
             active_zone_filter or "All Zones", 
-            max_tasks_to_return_for_summary=10 # Corrected argument name
+            max_tasks_to_return_for_summary=10 # CORRECTED from max_tasks
         )
         tasks_generated_successfully = True
     except Exception as e_tasks:
@@ -422,12 +424,12 @@ if data_load_successful and not daily_activity_df.empty:
     epi_signals = {}
     try:
         epi_signals = extract_chw_epi_signals(
-            for_date=selected_daily_date, # Corrected: first argument is for_date
-            chw_zone_context=active_zone_filter or "All Zones", # Corrected: second argument
+            for_date=selected_daily_date, 
+            chw_zone_context=active_zone_filter or "All Zones", 
             chw_daily_encounter_df=daily_activity_df, 
             pre_calculated_chw_kpis=daily_kpis_precalculated, 
             max_symptom_clusters_to_report=3 
-            # min_cluster_size is handled internally by extract_chw_epi_signals
+            # min_cluster_size removed from call as it's handled internally in optimized version
         )
         epi_signals_calculated_successfully = True
     except Exception as e_epi:
@@ -476,7 +478,7 @@ if data_load_successful and not trend_activity_df.empty:
             trend_start_date_filter, 
             trend_end_date_filter, 
             active_zone_filter, 
-            time_period_aggregation='D' # Corrected argument name
+            time_period_aggregation='D' # CORRECTED from freq_alias
         )
         activity_trends_calculated_successfully = True
     except Exception as e_trends:
