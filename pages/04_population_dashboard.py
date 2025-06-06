@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
 import re 
 import html 
-import plotly.express as px # <--- ****** CORRECTED: ADDED THIS IMPORT ******
+import plotly.express as px 
 
 try:
     from config import settings
@@ -36,9 +36,11 @@ except ImportError as e_pop_dash_import:
 
 logger = logging.getLogger(__name__)
 
+# --- Helper to get setting with fallback ---
 def _get_setting(attr_name: str, default_value: Any) -> Any:
     return getattr(settings, attr_name, default_value)
 
+# --- Page Configuration (Call this early) ---
 try:
     page_icon_value = "🌍" 
     if hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'APP_FAVICON_PATH'):
@@ -56,6 +58,10 @@ try:
 except Exception as e_page_config:
     logger.error(f"Error applying page configuration for Population Dashboard: {e_page_config}", exc_info=True)
     st.set_page_config(page_title="Population Analytics", page_icon="🌍", layout="wide") 
+
+# --- Global Variables / Constants for this page ---
+# Define aggregation period for time series plots on this page
+PAGE_TIME_AGGREGATION_PERIOD = 'W-MON' # Weekly, starting Monday
 
 st.title(f"📊 {_get_setting('APP_NAME', 'Sentinel Health Co-Pilot')} - Population Health Analytics & Research Console")
 st.markdown("In-depth exploration of demographic distributions, epidemiological patterns, clinical trends, and health system factors using aggregated population-level data.")
@@ -139,7 +145,7 @@ if isinstance(health_df_main, pd.DataFrame) and 'encounter_date' in health_df_ma
             if min_calc <= max_calc: min_data_date_pop, max_data_date_pop = min_calc, max_calc
     except Exception as e_dt_range: logger.warning(f"Pop Dash: Error setting date range: {e_dt_range}")
 
-ss_key_date_pop = "pop_dashboard_date_range_v10"
+ss_key_date_pop = "pop_dashboard_date_range_v11" # Incremented key
 if ss_key_date_pop not in st.session_state or \
    not (isinstance(st.session_state[ss_key_date_pop], list) and len(st.session_state[ss_key_date_pop]) == 2 and \
         all(isinstance(d, date) for d in st.session_state[ss_key_date_pop]) and \
@@ -151,17 +157,33 @@ if ss_key_date_pop not in st.session_state or \
 selected_date_range_pop_val = st.sidebar.date_input("Select Date Range:", value=st.session_state[ss_key_date_pop], min_value=min_data_date_pop, max_value=max_data_date_pop, key=f"{ss_key_date_pop}_widget")
 start_filter_pop, end_filter_pop = st.session_state[ss_key_date_pop]
 if isinstance(selected_date_range_pop_val, (list, tuple)) and len(selected_date_range_pop_val) == 2:
-    start_ui_pop, end_ui_pop = selected_date_range_pop_val 
-    start_filter_pop = min(max(start_ui_pop, min_data_date_pop), max_data_date_pop)
-    end_filter_pop = min(max(end_ui_pop, min_data_date_pop), max_data_date_pop)
+    start_ui, end_ui = selected_date_range_pop_val
+    start_filter_pop = min(max(start_ui, min_data_date_pop), max_data_date_pop)
+    end_filter_pop = min(max(end_ui, min_data_date_pop), max_data_date_pop)
     if start_filter_pop > end_filter_pop: end_filter_pop = start_filter_pop 
     st.session_state[ss_key_date_pop] = [start_filter_pop, end_filter_pop]
 
-cond_options_list = ["All Conditions"]
+# --- REVISED Condition Filter (Multi-Select) ---
+all_conditions_options_list = []
 if isinstance(health_df_main, pd.DataFrame) and 'condition' in health_df_main.columns:
-    unique_c = health_df_main['condition'].dropna().astype(str).unique()
-    if len(unique_c) > 0 : cond_options_list.extend(sorted(list(unique_c)))
-selected_condition_filter_pop_val = st.sidebar.selectbox("Filter by Condition:", options=cond_options_list, index=0, key="pop_cond_v6_final") 
+    all_conditions_options_list = sorted(list(health_df_main['condition'].dropna().astype(str).unique()))
+
+pop_condition_filter_ss_key_multi = "pop_dashboard_conditions_multiselect_v3" # New unique key
+if pop_condition_filter_ss_key_multi not in st.session_state:
+    st.session_state[pop_condition_filter_ss_key_multi] = [] # Default to no conditions selected
+else:
+    st.session_state[pop_condition_filter_ss_key_multi] = [
+        cond for cond in st.session_state[pop_condition_filter_ss_key_multi] if cond in all_conditions_options_list
+    ]
+selected_conditions_list_filter = st.sidebar.multiselect(
+    "Filter by Condition(s) for Page & Trends:",
+    options=all_conditions_options_list,
+    default=st.session_state[pop_condition_filter_ss_key_multi],
+    help="Select conditions to filter the entire dashboard. Also used for specific condition trend plot.",
+    key="pop_cond_multiselect_widget_v3" # New unique key
+)
+st.session_state[pop_condition_filter_ss_key_multi] = selected_conditions_list_filter
+
 
 zone_options_list = ["All Zones/Regions"]
 zone_name_id_map = {} 
@@ -170,8 +192,9 @@ if isinstance(zone_attr_main, pd.DataFrame) and 'name' in zone_attr_main.columns
     if not valid_zones.empty: zone_name_id_map = valid_zones.groupby('name')['zone_id'].first().to_dict(); zone_options_list.extend(sorted(list(zone_name_id_map.keys())))
 elif isinstance(health_df_main, pd.DataFrame) and 'zone_id' in health_df_main.columns: 
     zone_options_list.extend(sorted(list(health_df_main['zone_id'].dropna().astype(str).unique())))
-selected_zone_display_filter_pop_val = st.sidebar.selectbox("Filter by Zone/Region:", options=zone_options_list, index=0, key="pop_zone_v6_final") 
+selected_zone_display_filter_val = st.sidebar.selectbox("Filter by Zone/Region:", options=zone_options_list, index=0, key="pop_zone_v6_final") 
 
+# --- Apply Filters to Data ---
 df_filtered_final = pd.DataFrame()
 if not data_load_error_flag and isinstance(health_df_main, pd.DataFrame) and not health_df_main.empty:
     df_processing = health_df_main.copy()
@@ -179,8 +202,16 @@ if not data_load_error_flag and isinstance(health_df_main, pd.DataFrame) and not
         start_dt_norm_filter = pd.to_datetime(start_filter_pop).normalize()
         end_dt_norm_filter = pd.to_datetime(end_filter_pop).normalize()
         df_processing = df_processing[(df_processing['encounter_date'].notna()) & (df_processing['encounter_date'].dt.normalize() >= start_dt_norm_filter) & (df_processing['encounter_date'].dt.normalize() <= end_dt_norm_filter)]
-    if selected_condition_filter_pop_val != "All Conditions" and 'condition' in df_processing.columns: 
-        df_processing = df_processing[df_processing['condition'] == selected_condition_filter_pop_val]
+    
+    # --- MODIFIED: Apply multi-select condition filter ---
+    if selected_conditions_list_filter: # If list is not empty
+        if 'condition' in df_processing.columns:
+            df_processing = df_processing[df_processing['condition'].isin(selected_conditions_list_filter)]
+        else:
+            logger.warning("Population Dashboard: 'condition' column missing, cannot apply multi-select condition filter to main data.")
+            # df_processing = pd.DataFrame() # Or let it proceed unfiltered by condition
+    # If selected_conditions_list_filter is empty, all conditions are included (no filtering by condition)
+
     if selected_zone_display_filter_pop_val != "All Zones/Regions":
         if zone_name_id_map and selected_zone_display_filter_pop_val in zone_name_id_map:
             zone_id_to_filter = zone_name_id_map[selected_zone_display_filter_pop_val]
@@ -190,9 +221,11 @@ if not data_load_error_flag and isinstance(health_df_main, pd.DataFrame) and not
             df_processing = df_processing[df_processing['zone_id'].astype(str) == str(selected_zone_display_filter_pop_val)]
     df_filtered_final = df_processing
 
+# --- Main Page Content ---
+condition_filter_display_str = ", ".join(selected_conditions_list_filter) if selected_conditions_list_filter else "All Conditions"
 filter_context_display_str = (
     f"({start_filter_pop.strftime('%d %b %Y')} - {end_filter_pop.strftime('%d %b %Y')}, "
-    f"Cond: {selected_condition_filter_pop_val}, Zone: {selected_zone_display_filter_pop_val})"
+    f"Cond: {condition_filter_display_str}, Zone: {selected_zone_display_filter_pop_val})"
 )
 st.subheader(f"Population Health Snapshot {filter_context_display_str}")
 
@@ -217,10 +250,11 @@ with tabs_rendered[0]:
     st.header(f"Epidemiological Overview {filter_context_display_str}")
     if data_load_error_flag or df_filtered_final.empty: st.info("No data for Epi Overview.")
     else:
+        # Top 10 Conditions (based on already filtered df_filtered_final)
         if 'condition' in df_filtered_final.columns:
             top_conds_data_epi = df_filtered_final['condition'].value_counts().nlargest(10)
             if not top_conds_data_epi.empty:
-                fig_cond = px.bar(top_conds_data_epi, y=top_conds_data_epi.index, x=top_conds_data_epi.values, orientation='h', title="Top 10 Conditions by Encounters", labels={'y':'Condition', 'x':'Number of Encounters'})
+                fig_cond = px.bar(top_conds_data_epi, y=top_conds_data_epi.index, x=top_conds_data_epi.values, orientation='h', title="Top 10 Conditions by Encounters (Overall Filtered Data)", labels={'y':'Condition', 'x':'Number of Encounters'})
                 fig_cond.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_tickformat='d', xaxis_rangemode='tozero') 
                 if not top_conds_data_epi.empty: 
                     max_val = top_conds_data_epi.max()
@@ -228,22 +262,63 @@ with tabs_rendered[0]:
                         if max_val < 30 and max_val > 0 : fig_cond.update_xaxes(dtick=1) 
                         elif max_val == 0 : fig_cond.update_xaxes(dtick=1, range=[0,1]) 
                 st.plotly_chart(fig_cond, use_container_width=True)
-            else: st.caption("No condition data for top conditions chart.")
-        else: st.caption("'condition' column missing for top conditions chart.")
         
+        # Weekly Encounters Trend (Overall)
         if 'encounter_date' in df_filtered_final.columns:
             df_trend_epi_source = df_filtered_final.set_index('encounter_date')
             if pd.api.types.is_datetime64_any_dtype(df_trend_epi_source.index) and not df_trend_epi_source.empty:
                 try:
-                    weekly_enc_trend_data = df_trend_epi_source.resample('W-MON').size().reset_index(name='count')
+                    weekly_enc_trend_data = df_trend_epi_source.resample(PAGE_TIME_AGGREGATION_PERIOD).size().reset_index(name='count')
                     if not weekly_enc_trend_data.empty:
                         weekly_enc_trend_data['count'] = weekly_enc_trend_data['count'].astype(int)
-                        fig_weekly_trend = plot_annotated_line_chart(data_series=weekly_enc_trend_data.set_index('encounter_date')['count'], chart_title="Weekly Encounters Trend", y_axis_label="Number of Encounters", y_values_are_counts=True)
+                        fig_weekly_trend = plot_annotated_line_chart(data_series=weekly_enc_trend_data.set_index('encounter_date')['count'], chart_title="Weekly Encounters Trend (Overall Filtered Data)", y_axis_label="Number of Encounters", y_values_are_counts=True)
                         st.plotly_chart(fig_weekly_trend, use_container_width=True)
-                    else: st.caption("No weekly encounter trend data after resampling.")
                 except Exception as e_resample_epi: logger.error(f"Epi Trend Error: {e_resample_epi}", exc_info=True); st.caption("Trend error.")
-            else: st.caption("Encounter dates unsuitable for trend.")
-        else: st.caption("'encounter_date' column missing for weekly trend.")
+            else: st.caption("Encounter dates unsuitable for overall trend.")
+        
+        # --- NEW: Trend for Selected Conditions from Multiselect ---
+        st.markdown("---"); st.markdown("#### Trend of Specifically Selected Condition(s)")
+        if not selected_conditions_list_filter:
+            st.caption("Select one or more conditions from the sidebar filter to see their specific trends here.")
+        elif 'encounter_date' in health_df_main.columns and 'condition' in health_df_main.columns: # Use health_df_main for this specific plot, then filter
+            df_for_specific_cond_trend = health_df_main[health_df_main['condition'].isin(selected_conditions_list_filter)]
+            # Also apply the main date and zone filters to this specific trend data
+            if 'encounter_date' in df_for_specific_cond_trend.columns:
+                start_dt_norm_filter = pd.to_datetime(start_filter_pop).normalize()
+                end_dt_norm_filter = pd.to_datetime(end_filter_pop).normalize()
+                df_for_specific_cond_trend = df_for_specific_cond_trend[(df_for_specific_cond_trend['encounter_date'].notna()) & (df_for_specific_cond_trend['encounter_date'].dt.normalize() >= start_dt_norm_filter) & (df_for_specific_cond_trend['encounter_date'].dt.normalize() <= end_dt_norm_filter)]
+            
+            if selected_zone_display_filter_pop_val != "All Zones/Regions":
+                if zone_name_id_map and selected_zone_display_filter_pop_val in zone_name_id_map:
+                    zone_id_to_filter_spec = zone_name_id_map[selected_zone_display_filter_pop_val]
+                    if 'zone_id' in df_for_specific_cond_trend.columns: 
+                        df_for_specific_cond_trend = df_for_specific_cond_trend[df_for_specific_cond_trend['zone_id'].astype(str) == str(zone_id_to_filter_spec)]
+                elif 'zone_id' in df_for_specific_cond_trend.columns: 
+                    df_for_specific_cond_trend = df_for_specific_cond_trend[df_for_specific_cond_trend['zone_id'].astype(str) == str(selected_zone_display_filter_pop_val)]
+
+            if not df_for_specific_cond_trend.empty:
+                try:
+                    selected_cond_trend_df = df_for_specific_cond_trend.groupby([
+                        pd.Grouper(key='encounter_date', freq=PAGE_TIME_AGGREGATION_PERIOD, label='left', closed='left'), 
+                        'condition'
+                    ]).size().reset_index(name='count')
+                    selected_cond_trend_df.rename(columns={'encounter_date': 'period_start_date'}, inplace=True)
+                    selected_cond_trend_df['count'] = selected_cond_trend_df['count'].astype(int)
+
+                    if not selected_cond_trend_df.empty:
+                        fig_selected_cond_trend = px.line(
+                            selected_cond_trend_df, x='period_start_date', y='count', color='condition',
+                            title=f"Weekly Encounters for: {', '.join(selected_conditions_list_filter)}",
+                            labels={'period_start_date': 'Week Starting', 'count': 'Encounters', 'condition': 'Condition'},
+                            markers=True
+                        )
+                        fig_selected_cond_trend.update_layout(yaxis_tickformat='d', yaxis_dtick=1, yaxis_rangemode='tozero')
+                        st.plotly_chart(fig_selected_cond_trend, use_container_width=True)
+                    else: st.caption("No data for selected conditions after grouping for trend.")
+                except Exception as e_sel_trend: logger.error(f"Selected conditions trend error: {e_sel_trend}", exc_info=True); st.caption("Error in selected conditions trend.")
+            else: st.caption("No data found for the specifically selected condition(s) within the chosen date/zone filters.")
+        else: st.caption("Required columns missing for selected conditions trend.")
+
 
 with tabs_rendered[1]: 
     st.header(f"Demographics & Socio-demographic Health (SDOH) {filter_context_display_str}")
@@ -255,17 +330,12 @@ with tabs_rendered[1]:
                 fig_age_dist_plot = px.histogram(unique_ages_dist, nbins=20, title="Age Distribution (Unique Patients)")
                 fig_age_dist_plot.update_layout(yaxis_title="Patient Count", xaxis_title="Age", yaxis_tickformat='d', yaxis_dtick=1, yaxis_rangemode='tozero')
                 st.plotly_chart(fig_age_dist_plot, use_container_width=True)
-            else: st.caption("No age data for unique patients.")
-        else: st.caption("Required columns for age distribution missing ('age' or 'patient_id').")
-
         if 'gender' in df_filtered_final.columns and 'patient_id' in df_filtered_final.columns:
             unique_genders_dist = df_filtered_final.drop_duplicates(subset=['patient_id'])['gender'].astype(str).value_counts()
             if not unique_genders_dist.empty:
                 fig_gender_dist_plot = px.pie(unique_genders_dist, values=unique_genders_dist.values, names=unique_genders_dist.index, title="Gender Distribution (Unique Patients)")
                 fig_gender_dist_plot.update_traces(texttemplate='%{value:d} (%{percent})', hoverinfo='label+percent+value')
                 st.plotly_chart(fig_gender_dist_plot, use_container_width=True)
-            else: st.caption("No gender data for unique patients.")
-        else: st.caption("Required columns for gender distribution missing ('gender' or 'patient_id').")
         
         zone_attr_display_df = zone_attr_main.copy() if isinstance(zone_attr_main, pd.DataFrame) else pd.DataFrame()
         if not zone_attr_display_df.empty and selected_zone_display_filter_pop_val != "All Zones/Regions": 
@@ -308,17 +378,12 @@ with tabs_rendered[2]:
                 fig_risk_hist = px.histogram(risk_scores_data_clin, title="AI Risk Score Distribution")
                 fig_risk_hist.update_layout(yaxis_title="Frequency", yaxis_tickformat='d', yaxis_dtick=1, yaxis_rangemode='tozero')
                 st.plotly_chart(fig_risk_hist, use_container_width=True)
-            else: st.caption("No AI risk score data to display.")
-        else: st.caption("'ai_risk_score' column missing.")
-
         if 'ai_followup_priority_score' in df_filtered_final.columns:
             prio_scores_data_clin = convert_to_numeric(df_filtered_final['ai_followup_priority_score'], np.nan).dropna()
             if not prio_scores_data_clin.empty:
                 fig_prio_hist = px.histogram(prio_scores_data_clin, title="AI Follow-up Priority Score Distribution")
                 fig_prio_hist.update_layout(yaxis_title="Frequency", yaxis_tickformat='d', yaxis_dtick=1, yaxis_rangemode='tozero')
                 st.plotly_chart(fig_prio_hist, use_container_width=True)
-            else: st.caption("No AI follow-up priority score data to display.")
-        else: st.caption("'ai_followup_priority_score' column missing.")
 
 with tabs_rendered[3]: 
     st.header(f"Systems & Equity Insights {filter_context_display_str}")
@@ -337,8 +402,6 @@ with tabs_rendered[3]:
                     if pd.notna(max_enc) and max_enc < 30 and max_enc > 0 : fig_enc_zone_plot.update_xaxes(dtick=1)
                     elif pd.notna(max_enc) and max_enc == 0 : fig_enc_zone_plot.update_xaxes(dtick=1, range=[0,1])
                 st.plotly_chart(fig_enc_zone_plot, use_container_width=True)
-            else: st.caption("No encounter by zone data to display.")
-        else: st.caption("'zone_id' column missing for encounter distribution.")
         
         required_cols_equity = ['zone_id', 'name', 'avg_travel_time_clinic_min', 'population']
         if not df_filtered_final.empty and isinstance(zone_attr_main, pd.DataFrame) and not zone_attr_main.empty and \
@@ -367,13 +430,9 @@ with tabs_rendered[3]:
                                         'utilization_per_1000_pop': 'Encounters per 1,000 Pop'}
                             )
                             st.plotly_chart(fig_equity_plot_final, use_container_width=True)
-                        else: st.caption("Insufficient valid data for utilization vs. travel time plot after calculations.")
-                    else: st.caption("Insufficient data for utilization vs. travel time plot after aggregation.")
-                else: st.caption("Merged data for equity plot missing key columns or travel time data.")
             except Exception as e_eq_plot_final: 
                 logger.error(f"Equity plot error: {e_eq_plot_final}", exc_info=True)
                 st.caption(f"Could not generate service utilization vs. travel time plot: {e_eq_plot_final}")
-        else: st.caption("Required data for Service Utilization vs. Travel Time plot is missing or incomplete.")
 
 st.divider()
 footer_text_val = _get_setting('APP_FOOTER_TEXT', "Sentinel Health Co-Pilot.")
