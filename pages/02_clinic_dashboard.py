@@ -47,7 +47,7 @@ def setup_page_config():
 
 setup_page_config()
 
-# --- Data Loading & Caching ---
+# --- Data Loading & Caching (Optimized) ---
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 3600), show_spinner="Loading and enriching health records...")
 def load_and_prepare_health_data() -> pd.DataFrame:
     """Loads raw health records, applies AI models, and prepares dates. This is cached for performance."""
