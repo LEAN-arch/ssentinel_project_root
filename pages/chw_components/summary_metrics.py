@@ -13,15 +13,15 @@ try:
     from data_processing.helpers import convert_to_numeric
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
-    logger = logging.getLogger(__name__)
-    logger.error(f"Critical import error in summary_metrics.py: {e}. Ensure paths/dependencies are correct.")
+    logger_init = logging.getLogger(__name__)
+    logger_init.error(f"Critical import error in summary_metrics.py: {e}. Ensure paths/dependencies are correct.")
     raise
 
 logger = logging.getLogger(__name__)
 
 # Common NA strings for robust replacement
 COMMON_NA_STRINGS_SUMMARY = frozenset(['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown'])
-NA_REGEX_SUMMARY_PATTERN = r'^(?:' + '|'.join(re.escape(s) for s in COMMON_NA_STRINGS_SUMMARY if s) + r')$' if COMMON_NA_STRINGS_SUMMARY else None
+NA_REGEX_SUMMARY_PATTERN = r'^\s*$' + (r'|^(?:' + '|'.join(re.escape(s) for s in COMMON_NA_STRINGS_SUMMARY if s) + r')$' if any(COMMON_NA_STRINGS_SUMMARY) else '')
 
 
 def _prepare_summary_dataframe(
@@ -37,45 +37,40 @@ def _prepare_summary_dataframe(
         default_value = config["default"]
         target_type_str = config["type"]
 
-        # Assign default if column is missing
         if col_name not in df_prepared.columns:
             if target_type_str == "datetime" and default_value is pd.NaT:
                  df_prepared[col_name] = pd.NaT
             elif isinstance(default_value, (list, dict)): 
-                 df_prepared[col_name] = [default_value.copy() if isinstance(default_value, (list, dict)) else default_value for _ in range(len(df_prepared))]
+                 df_prepared[col_name] = [default_value.copy() for _ in range(len(df_prepared))]
             else:
                  df_prepared[col_name] = default_value
         
-        # Replace common string NAs with np.nan before type conversion for numeric/datetime
         if target_type_str in [float, int, "datetime"] and pd.api.types.is_object_dtype(df_prepared[col_name].dtype):
             if NA_REGEX_SUMMARY_PATTERN:
                 try:
-                    df_prepared[col_name] = df_prepared[col_name].replace(NA_REGEX_SUMMARY_PATTERN, np.nan, regex=True)
+                    df_prepared[col_name].replace(NA_REGEX_SUMMARY_PATTERN, np.nan, regex=True, inplace=True)
                 except Exception as e_regex:
                      logger.warning(f"({log_prefix}) Regex NA replacement failed for '{col_name}': {e_regex}. Proceeding.")
         
-        # Type conversion
         try:
             if target_type_str == "datetime":
                 df_prepared[col_name] = pd.to_datetime(df_prepared[col_name], errors='coerce')
             elif target_type_str == float:
-                df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value)
+                df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value, target_type=float)
             elif target_type_str == int:
                 df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value, target_type=int)
             elif target_type_str == str:
-                df_prepared[col_name] = df_prepared[col_name].fillna(str(default_value)).astype(str)
-                if NA_REGEX_SUMMARY_PATTERN:
-                     df_prepared[col_name] = df_prepared[col_name].replace(NA_REGEX_SUMMARY_PATTERN, str(default_value), regex=True)
-                df_prepared[col_name] = df_prepared[col_name].str.strip()
+                series = df_prepared[col_name].fillna(str(default_value))
+                df_prepared[col_name] = series.astype(str).str.strip()
         except Exception as e_conv:
             logger.error(f"({log_prefix}) Error converting column '{col_name}' to {target_type_str}: {e_conv}. Using defaults.", exc_info=True)
             if target_type_str == "datetime" and default_value is pd.NaT: df_prepared[col_name] = pd.NaT
             else: df_prepared[col_name] = default_value
     
-    # Specific default for patient_id after all processing
     placeholder_pid = f"UPID_Sum_{target_date_iso_str}"
     if 'patient_id' in df_prepared.columns:
-        df_prepared['patient_id'] = df_prepared['patient_id'].replace('', placeholder_pid).fillna(placeholder_pid)
+        df_prepared['patient_id'].replace('', placeholder_pid, inplace=True)
+        df_prepared['patient_id'].fillna(placeholder_pid, inplace=True)
 
     return df_prepared
 
@@ -97,12 +92,11 @@ def calculate_chw_daily_summary_metrics(
         target_processing_date = target_processing_date_dt.date()
     except Exception as e_date_parse_sum:
         logger.warning(f"({source_context}) Invalid 'for_date' ('{for_date}'): {e_date_parse_sum}. Defaulting to current system date.", exc_info=True)
-        target_processing_date = pd.Timestamp('now').date() # Fallback
+        target_processing_date = pd.Timestamp('now').date()
     
     target_date_iso_str = target_processing_date.isoformat()
     logger.info(f"({source_context}) Calculating CHW daily summary metrics for date: {target_date_iso_str}")
 
-    # Initialize metrics with defaults
     metrics_summary: Dict[str, Any] = {
         "date_of_activity": target_date_iso_str, "visits_count": 0, 
         "high_ai_prio_followups_count": 0, "avg_risk_of_visited_patients": np.nan, 
@@ -114,35 +108,34 @@ def calculate_chw_daily_summary_metrics(
         "worker_self_fatigue_index_today": np.nan
     }
     
-    # Store initial types for robust conversion
     initial_metric_types = {k: type(v) for k, v in metrics_summary.items()}
 
-    # Populate from pre-calculated KPIs first (if any)
     if isinstance(chw_daily_kpi_input_data, dict):
-        logger.debug(f"({source_context}) Populating metrics from pre-calculated input data: {chw_daily_kpi_input_data.keys()}")
+        logger.debug(f"({source_context}) Populating metrics from pre-calculated input data: {list(chw_daily_kpi_input_data.keys())}")
         for key, value in chw_daily_kpi_input_data.items():
             if key in metrics_summary and pd.notna(value):
                 try:
-                    # CORRECTED: Robustly convert incoming value to the expected type defined in the initial metrics dictionary.
+                    # CORRECTED: Removed redundant/fragile nested casting. Delegated conversion fully
+                    # to the robust `convert_to_numeric` helper by passing the target type.
                     expected_type = initial_metric_types.get(key)
-                    if expected_type is int:
-                        metrics_summary[key] = int(convert_to_numeric(value, default_value=metrics_summary[key]))
-                    elif expected_type is float:
-                        metrics_summary[key] = float(convert_to_numeric(value, default_value=metrics_summary[key]))
+                    if expected_type in [int, float]:
+                        metrics_summary[key] = convert_to_numeric(
+                            value,
+                            default_value=metrics_summary[key],
+                            target_type=expected_type
+                        )
                     elif expected_type is str:
                         metrics_summary[key] = str(value)
                     else:
-                        metrics_summary[key] = value # Assign directly for other types
+                        metrics_summary[key] = value
                 except (ValueError, TypeError) as e_kpi_conv_sum:
-                    logger.warning(f"({source_context}) Error converting pre-calc KPI '{key}' (value: '{value}', type: {type(value)}): {e_kpi_conv_sum}. Using default for this metric.")
-                    # Let it fall back to the initial default by not assigning on error.
+                    logger.warning(f"({source_context}) Error converting pre-calc KPI '{key}' (value: '{value}', type: {type(value)}): {e_kpi_conv_sum}. Using default.")
                     
     if not isinstance(chw_daily_encounter_df, pd.DataFrame) or chw_daily_encounter_df.empty:
-        logger.info(f"({source_context}) No daily encounter DataFrame provided for {target_date_iso_str}. Metrics will rely on pre-calculated data or defaults.")
-    else: # Process encounter DataFrame
-        df_enc_sum = chw_daily_encounter_df # Work on the provided df if not empty
+        logger.info(f"({source_context}) No daily encounter DataFrame for {target_date_iso_str}. Metrics will rely on pre-calculated data or defaults.")
+    else:
+        df_enc_sum = chw_daily_encounter_df
 
-        # Define column configurations for preparation
         enc_cols_cfg_sum = {
             'patient_id': {"default": f"UPID_Sum_{target_date_iso_str}", "type": str},
             'encounter_date': {"default": pd.NaT, "type": "datetime"},
@@ -160,33 +153,26 @@ def calculate_chw_daily_summary_metrics(
         }
         df_enc_sum = _prepare_summary_dataframe(df_enc_sum, enc_cols_cfg_sum, source_context, target_date_iso_str)
 
-        # Filter for the specific processing_date AFTER encounter_date preparation
         if 'encounter_date' in df_enc_sum.columns and df_enc_sum['encounter_date'].notna().any():
             df_enc_sum = df_enc_sum[df_enc_sum['encounter_date'].dt.date == target_processing_date]
-        else:
-            logger.warning(f"({source_context}) 'encounter_date' missing or all null after prep. Metrics for {target_date_iso_str} may be inaccurate.")
 
         if df_enc_sum.empty:
             logger.info(f"({source_context}) No encounters for {target_date_iso_str} after date filtering.")
         else:
-            # Exclude worker self-checks for patient-related metrics
             patient_records_df = df_enc_sum[
                 ~df_enc_sum.get('encounter_type', pd.Series(dtype=str)).astype(str).str.contains("WORKER_SELF_CHECK", case=False, na=False)
             ]
 
             if not patient_records_df.empty:
-                if 'patient_id' in patient_records_df.columns:
-                    metrics_summary["visits_count"] = patient_records_df['patient_id'].nunique()
+                metrics_summary["visits_count"] = patient_records_df['patient_id'].nunique()
                 
                 prio_score_col = 'ai_followup_priority_score'
                 prio_high_thresh = getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 80)
-                if prio_score_col in patient_records_df.columns and 'patient_id' in patient_records_df.columns:
-                    prio_scores = patient_records_df[prio_score_col] # Already numeric
-                    metrics_summary["high_ai_prio_followups_count"] = patient_records_df[prio_scores >= prio_high_thresh]['patient_id'].nunique()
+                if prio_score_col in patient_records_df.columns:
+                    metrics_summary["high_ai_prio_followups_count"] = patient_records_df[patient_records_df[prio_score_col] >= prio_high_thresh]['patient_id'].nunique()
 
-                risk_score_col = 'ai_risk_score'
-                if risk_score_col in patient_records_df.columns and 'patient_id' in patient_records_df.columns:
-                    unique_patient_risks = patient_records_df.drop_duplicates(subset=['patient_id'])[risk_score_col].dropna()
+                if 'ai_risk_score' in patient_records_df.columns:
+                    unique_patient_risks = patient_records_df.drop_duplicates(subset=['patient_id'])['ai_risk_score'].dropna()
                     if not unique_patient_risks.empty:
                         metrics_summary["avg_risk_of_visited_patients"] = unique_patient_risks.mean()
                 
@@ -199,39 +185,31 @@ def calculate_chw_daily_summary_metrics(
                     metrics_summary["fever_cases_identified_count"] = patient_records_df[temps >= fever_thresh]['patient_id'].nunique()
                     metrics_summary["high_fever_cases_identified_count"] = patient_records_df[temps >= high_fever_thresh]['patient_id'].nunique()
 
-                spo2_col = 'min_spo2_pct'
                 spo2_critical_thresh = getattr(settings, 'ALERT_SPO2_CRITICAL_LOW_PCT', 90.0)
-                if spo2_col in patient_records_df.columns and 'patient_id' in patient_records_df.columns:
-                    spo2_values = patient_records_df[spo2_col]
-                    metrics_summary["critical_spo2_cases_identified_count"] = patient_records_df[spo2_values < spo2_critical_thresh]['patient_id'].nunique()
+                if 'min_spo2_pct' in patient_records_df.columns:
+                    metrics_summary["critical_spo2_cases_identified_count"] = patient_records_df[patient_records_df['min_spo2_pct'] < spo2_critical_thresh]['patient_id'].nunique()
 
-                steps_col = 'avg_daily_steps'
-                if steps_col in patient_records_df.columns and 'patient_id' in patient_records_df.columns:
-                    unique_patient_steps = patient_records_df.drop_duplicates(subset=['patient_id'])[steps_col].dropna()
+                if 'avg_daily_steps' in patient_records_df.columns:
+                    unique_patient_steps = patient_records_df.drop_duplicates(subset=['patient_id'])['avg_daily_steps'].dropna()
                     if not unique_patient_steps.empty:
                         metrics_summary["avg_steps_of_visited_patients"] = unique_patient_steps.mean()
 
-                fall_col = 'fall_detected_today'
-                if fall_col in patient_records_df.columns and 'patient_id' in patient_records_df.columns:
-                    metrics_summary["fall_events_among_visited_count"] = patient_records_df[patient_records_df[fall_col] > 0]['patient_id'].nunique()
+                if 'fall_detected_today' in patient_records_df.columns:
+                    metrics_summary["fall_events_among_visited_count"] = patient_records_df[patient_records_df['fall_detected_today'] > 0]['patient_id'].nunique()
 
                 key_conds = getattr(settings, 'KEY_CONDITIONS_FOR_ACTION', [])
-                if key_conds and 'condition' in patient_records_df.columns and \
-                   'referral_status' in patient_records_df.columns and 'patient_id' in patient_records_df.columns:
-                    key_cond_pattern = '|'.join(re.escape(kc) for kc in key_conds)
+                if key_conds and all(c in patient_records_df.columns for c in ['condition', 'referral_status']):
+                    key_cond_pattern = '|'.join([re.escape(kc) for kc in key_conds])
                     crit_ref_mask = (
-                        patient_records_df['referral_status'].astype(str).str.lower() == 'pending'
+                        patient_records_df['referral_status'].str.lower() == 'pending'
                     ) & (
-                        patient_records_df['condition'].astype(str).str.contains(key_cond_pattern, case=False, na=False, regex=True)
+                        patient_records_df['condition'].str.contains(key_cond_pattern, case=False, na=False, regex=True)
                     )
                     metrics_summary["pending_critical_referrals_generated_today_count"] = patient_records_df[crit_ref_mask]['patient_id'].nunique()
-            else:
-                 logger.info(f"({source_context}) No patient encounters (excluding self-checks) for {target_date_iso_str}.")
-
 
         if pd.isna(metrics_summary.get("worker_self_fatigue_index_today")): 
             worker_self_checks_df = df_enc_sum[
-                df_enc_sum.get('encounter_type', pd.Series(dtype=str)).astype(str).str.contains("WORKER_SELF_CHECK", case=False, na=False)
+                df_enc_sum.get('encounter_type', pd.Series(dtype=str)).str.contains("WORKER_SELF_CHECK", case=False, na=False)
             ]
             if not worker_self_checks_df.empty:
                 fatigue_cols_to_check = ['ai_followup_priority_score', 'rapid_psychometric_distress_score', 'stress_level_score']
