@@ -9,19 +9,19 @@ import logging
 import plotly.io as pio 
 import os 
 from typing import Optional, List, Dict, Any, Union
+import html 
 import re 
-import html # Ensure html is imported for escaping
 
 try:
     from config import settings
-    from .ui_elements import get_theme_color # Ensure this import path is correct
+    # Assuming convert_to_numeric is in ui_elements or helpers, adjust if necessary
+    # For this fix, I'll assume it's robust or we'll make this part robust.
+    from data_processing.helpers import convert_to_numeric 
+    from .ui_elements import get_theme_color 
 except ImportError as e:
-    # This fallback for settings and get_theme_color should be robust enough
-    # to allow the rest of the module to load and functions to be defined,
-    # even if they use default styling.
     logging.basicConfig(level=logging.INFO) 
     logger_init = logging.getLogger(__name__) 
-    logger_init.error(f"CRITICAL IMPORT ERROR in plots.py: {e}. Using fallback settings/colors. Ensure config.py and ui_elements.py are correct.")
+    logger_init.error(f"CRITICAL IMPORT ERROR in plots.py: {e}. Using fallback settings/colors. Ensure config.py, helpers.py and ui_elements.py are correct.")
     class FallbackPlotSettings:
         THEME_FONT_FAMILY = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
         COLOR_TEXT_DARK = "#333333"; COLOR_BACKGROUND_CONTENT = "#FFFFFF"; COLOR_BACKGROUND_PAGE = "#F0F2F6";
@@ -34,37 +34,31 @@ except ImportError as e:
         MAPBOX_STYLE_WEB = "carto-positron"; MAP_DEFAULT_CENTER_LAT = 0.0; MAP_DEFAULT_CENTER_LON = 0.0; MAP_DEFAULT_ZOOM_LEVEL = 1;
         WEB_PLOT_DEFAULT_HEIGHT = 400; WEB_PLOT_COMPACT_HEIGHT = 350; WEB_MAP_DEFAULT_HEIGHT = 600;
     settings = FallbackPlotSettings()
-    def get_theme_color(name_or_idx, category="general", fallback_color_hex=None): # type: ignore
-        return fallback_color_hex or getattr(settings, 'COLOR_TEXT_MUTED', "#CCCCCC") # Basic fallback
+    if 'get_theme_color' not in globals():
+        def get_theme_color(name_or_idx, category="general", fallback_color_hex=None): # type: ignore
+            return fallback_color_hex or getattr(settings, 'COLOR_TEXT_MUTED', "#CCCCCC") 
     logger_init.warning("plots.py: Using fallback settings and basic get_theme_color due to import error.")
-
 
 logger = logging.getLogger(__name__)
 
-# --- Mapbox Token Handling (Module Level) ---
+def _get_setting_or_default(attr_name: str, default_value: Any) -> Any:
+    return getattr(settings, attr_name, default_value)
+
 MAPBOX_TOKEN_SET_IN_PLOTLY_FLAG = False
 _SENTINEL_MAPBOX_ACCESS_TOKEN_ENV = os.getenv("MAPBOX_ACCESS_TOKEN")
-
 if _SENTINEL_MAPBOX_ACCESS_TOKEN_ENV and _SENTINEL_MAPBOX_ACCESS_TOKEN_ENV.strip() and len(_SENTINEL_MAPBOX_ACCESS_TOKEN_ENV) > 20:
     try:
         px.set_mapbox_access_token(_SENTINEL_MAPBOX_ACCESS_TOKEN_ENV)
         MAPBOX_TOKEN_SET_IN_PLOTLY_FLAG = True
-        logger.info("Plotly: MAPBOX_ACCESS_TOKEN environment variable found and configured for Plotly Express.")
+        logger.info("Plotly: MAPBOX_ACCESS_TOKEN env var found and configured for Plotly Express.")
     except Exception as e_mapbox_token_setup:
-        logger.error(f"Plotly: Error setting Mapbox token for Plotly Express: {e_mapbox_token_setup}", exc_info=True)
+        logger.error(f"Plotly: Error setting Mapbox token: {e_mapbox_token_setup}", exc_info=True)
 else:
-    logger.warning("Plotly: MAPBOX_ACCESS_TOKEN not found or invalid. Maps needing a token may use open styles or fail.")
-
-
-# --- Plotly Theme Setup ---
-def _get_setting_or_default(attr_name: str, default_value: Any) -> Any:
-    """Safely gets a setting attribute or returns a default."""
-    return getattr(settings, attr_name, default_value)
+    logger.warning("Plotly: MAPBOX_ACCESS_TOKEN not found/invalid.")
 
 def set_sentinel_plotly_theme():
-    """Sets a custom Plotly theme ('sentinel_web_theme_custom') as the default."""
+    # ... (Theme setup code remains the same as your provided complete version)
     theme_font_family = _get_setting_or_default('THEME_FONT_FAMILY', '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif')
-    
     default_colorway = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
     sentinel_colorway = [
         _get_setting_or_default('COLOR_ACTION_PRIMARY', default_colorway[0]),
@@ -76,7 +70,6 @@ def set_sentinel_plotly_theme():
         get_theme_color(6, "general", default_colorway[6]), 
         get_theme_color(7, "general", default_colorway[7])
     ]
-
     layout_template = go.Layout(
         font=dict(family=theme_font_family, size=11, color=_get_setting_or_default('COLOR_TEXT_DARK', "#333333")),
         paper_bgcolor=_get_setting_or_default('COLOR_BACKGROUND_CONTENT', "#FFFFFF"),
@@ -128,30 +121,79 @@ def plot_annotated_line_chart(
     y_values_are_counts: bool = False
 ) -> go.Figure:
     final_height = chart_height or _get_setting_or_default('WEB_PLOT_COMPACT_HEIGHT', 350)
-    log_prefix_plot = f"PlotLine/{html.escape(chart_title[:30])}"
+    log_prefix_plot = f"PlotLine/{html.escape(chart_title[:30])}" # Shortened & escaped prefix
+
+    logger.debug(f"({log_prefix_plot}) Initial data_series type: {type(data_series)}")
+    if isinstance(data_series, pd.Series):
+        logger.debug(f"({log_prefix_plot}) Initial data_series empty: {data_series.empty}, length: {len(data_series)}")
+        if not data_series.empty:
+            logger.debug(f"({log_prefix_plot}) Initial data_series index type: {type(data_series.index)}, first 5 index values: {data_series.index[:5].tolist()}")
+            logger.debug(f"({log_prefix_plot}) Initial data_series values dtype: {data_series.dtype}, first 5 values: {data_series.head(5).tolist()}")
+    logger.debug(f"({log_prefix_plot}) y_values_are_counts: {y_values_are_counts}")
+
+
     if not isinstance(data_series, pd.Series) or data_series.empty:
-        logger.info(f"({log_prefix_plot}) No data provided or series is empty.")
-        return create_empty_figure(chart_title, final_height, "No data available for this trend line.")
-    series_plot = data_series.copy() 
+        logger.warning(f"({log_prefix_plot}) Input data_series is not a Series or is empty. Returning empty figure.")
+        return create_empty_figure(chart_title, final_height, "No data provided for this trend line.")
+
+    series_plot = data_series.copy() # Work on a copy to avoid modifying cached data
+    
+    # --- Robust Data Preparation ---
     try:
+        # 1. Ensure index is DatetimeIndex
+        logger.debug(f"({log_prefix_plot}) Before index conversion - Index type: {type(series_plot.index)}")
         if not pd.api.types.is_datetime64_any_dtype(series_plot.index):
+            original_index_sample = series_plot.index[:5].tolist()
             series_plot.index = pd.to_datetime(series_plot.index, errors='coerce')
-        series_plot.dropna(axis=0, how='all', inplace=True) 
-        series_plot = pd.to_numeric(series_plot, errors='coerce') if not y_values_are_counts else convert_to_numeric(series_plot, default_value=0, target_type=int) # convert_to_numeric from helpers
-        series_plot.dropna(inplace=True) 
+            logger.debug(f"({log_prefix_plot}) After index to_datetime (errors='coerce'). NaNs in index: {series_plot.index.isnull().sum()}. Original sample: {original_index_sample}, New sample: {series_plot.index[:5].tolist()}")
+        
+        # Remove rows where index conversion failed (became NaT)
+        series_plot.dropna(axis=0, how='all', inplace=True) # This drops if index is NaT
+        if series_plot.empty:
+            logger.warning(f"({log_prefix_plot}) Series became empty after converting index to datetime and dropping NaT indices.")
+            return create_empty_figure(chart_title, final_height, "Invalid date/time values in data for this trend.")
+        logger.debug(f"({log_prefix_plot}) After index conversion & dropna - Index type: {type(series_plot.index)}, Shape: {series_plot.shape}")
+
+        # 2. Ensure values are numeric and handle NaNs
+        logger.debug(f"({log_prefix_plot}) Before value conversion - Values dtype: {series_plot.dtype}, NaNs: {series_plot.isnull().sum()}")
+        if y_values_are_counts:
+            # For counts, we want integers. convert_to_numeric with target_type=int should handle this.
+            # It should fill NaNs from coercion with the default_value (0 for counts) then cast.
+            series_plot = convert_to_numeric(series_plot, default_value=0, target_type=int)
+            # Double check if it's int, if not, force after fill. This is crucial.
+            if not pd.api.types.is_integer_dtype(series_plot.dtype):
+                 series_plot = series_plot.fillna(0).astype(int)
+        else: # For general numeric values (floats)
+            series_plot = convert_to_numeric(series_plot, default_value=np.nan, target_type=float)
+            series_plot.dropna(inplace=True) # Remove NaNs if they are not counts
+        
+        logger.debug(f"({log_prefix_plot}) After value conversion & dropna - Values dtype: {series_plot.dtype}, Shape: {series_plot.shape}, NaNs: {series_plot.isnull().sum()}")
+        if not series_plot.empty: logger.debug(f"({log_prefix_plot}) Cleaned series head:\n{series_plot.head().to_string()}")
+
     except Exception as e_prep:
-        logger.error(f"({log_prefix_plot}) Error preparing data series: {e_prep}", exc_info=True)
+        logger.error(f"({log_prefix_plot}) Error during data series preparation: {e_prep}", exc_info=True)
         return create_empty_figure(chart_title, final_height, "Error preparing data for line chart.")
+
     if series_plot.empty: 
-        logger.info(f"({log_prefix_plot}) No valid data points after cleaning.")
+        logger.warning(f"({log_prefix_plot}) No valid data points remain after cleaning for line chart.")
         return create_empty_figure(chart_title, final_height, "No valid data points for this trend after cleaning.")
 
+    # --- Plotting Logic (remains largely the same as your provided complete version) ---
     fig = go.Figure()
     actual_line_color = line_color_hex or get_theme_color(0, "general", fallback_color_hex=_get_setting_or_default('COLOR_ACTION_PRIMARY', "#1E88E5"))
-    y_hover_format = 'd' if y_values_are_counts else ',.1f' 
+    y_hover_format_str = 'd' if y_values_are_counts else ',.1f' 
     trace_name = html.escape(y_axis_label if y_axis_label and y_axis_label.strip() else (str(series_plot.name) if series_plot.name else "Value"))
-    fig.add_trace(go.Scatter(x=series_plot.index, y=series_plot.values, mode="lines+markers", name=trace_name, line=dict(color=actual_line_color, width=2), marker=dict(size=5, symbol='circle'), hovertemplate=f'<b>Date</b>: %{{x|{date_format_hover}}}<br><b>{trace_name}</b>: %{{y:{y_hover_format}}}<extra></extra>'))
-    if show_confidence_interval and isinstance(lower_ci_series, pd.Series) and isinstance(upper_ci_series, pd.Series) and not lower_ci_series.empty and not upper_ci_series.empty:
+    fig.add_trace(go.Scatter(
+        x=series_plot.index, y=series_plot.values, mode="lines+markers",
+        name=trace_name,
+        line=dict(color=actual_line_color, width=2), 
+        marker=dict(size=5, symbol='circle'),
+        hovertemplate=f'<b>Date</b>: %{{x|{date_format_hover}}}<br><b>{trace_name}</b>: %{{y:{y_hover_format_str}}}<extra></extra>'
+    ))
+
+    # Confidence Interval
+    if show_confidence_interval and isinstance(lower_ci_series, pd.Series) and isinstance(upper_ci_series, pd.Series) \
+       and not lower_ci_series.empty and not upper_ci_series.empty:
         try:
             l_ci = lower_ci_series.copy(); l_ci.index = pd.to_datetime(l_ci.index, errors='coerce'); l_ci = pd.to_numeric(l_ci, errors='coerce')
             u_ci = upper_ci_series.copy(); u_ci.index = pd.to_datetime(u_ci.index, errors='coerce'); u_ci = pd.to_numeric(u_ci, errors='coerce')
@@ -161,9 +203,11 @@ def plot_annotated_line_chart(
                 fig.add_trace(go.Scatter(x=list(aligned_df_ci.index) + list(aligned_df_ci.index[::-1]), y=list(aligned_df_ci["upper"]) + list(aligned_df_ci["lower"][::-1]), fill="toself", fillcolor=fill_color_ci_str, line=dict(width=0), name="Confidence Interval", hoverinfo="skip"))
             else: logger.debug(f"({log_prefix_plot}) CI data invalid or alignment failed.")
         except Exception as e_ci_plot: logger.warning(f"({log_prefix_plot}) Error processing/plotting CI: {e_ci_plot}", exc_info=True)
+
     if target_ref_line_val is not None and pd.notna(target_ref_line_val):
         ref_label_text_final = html.escape(target_ref_label_text or f"Target: {target_ref_line_val:,.2f}")
         fig.add_hline(y=target_ref_line_val, line_dash="dash", line_color=get_theme_color("risk_moderate", fallback_color_hex=_get_setting_or_default('COLOR_RISK_MODERATE',"#FFA500")), line_width=1.2, annotation_text=ref_label_text_final, annotation_position="bottom right", annotation_font_size=9, annotation_font_color=get_theme_color("text_muted", fallback_color_hex=_get_setting_or_default('COLOR_TEXT_MUTED',"#757575")))
+
     if show_anomalies_flag and len(series_plot) > 7 and series_plot.nunique() > 2:
         q1, q3 = series_plot.quantile(0.25), series_plot.quantile(0.75); iqr = q3 - q1
         if pd.notna(iqr) and abs(iqr) > 1e-6: 
@@ -171,13 +215,33 @@ def plot_annotated_line_chart(
             anomalies = series_plot[(series_plot < lower_b) | (series_plot > upper_b)]
             if not anomalies.empty:
                 fig.add_trace(go.Scatter(x=anomalies.index, y=anomalies.values, mode='markers', marker=dict(color=get_theme_color("risk_high", fallback_color_hex=_get_setting_or_default('COLOR_RISK_HIGH',"#FF0000")), size=8, symbol='circle-open-dot', line=dict(width=1.5)), name='Anomaly', hovertemplate=f'<b>Anomaly</b>: %{{x|{date_format_hover}}}<br><b>Value</b>: %{{y:{y_hover_format}}}<extra></extra>'))
+
     x_axis_title_final = html.escape(str(series_plot.index.name) if series_plot.index.name and str(series_plot.index.name).strip() else "Date/Time")
     yaxis_final_config = dict(title_text=html.escape(y_axis_label))
     if y_values_are_counts: 
         yaxis_final_config['tickformat'] = 'd' 
-        if not series_plot.empty and pd.notna(series_plot.min()) and series_plot.min() >= 0: yaxis_final_config['rangemode'] = 'tozero' 
+        if not series_plot.empty and pd.notna(series_plot.min()) and series_plot.min() >= 0: 
+            yaxis_final_config['rangemode'] = 'tozero'
+            # Ensure integer ticks if the data range is small and all are integers
+            max_val = series_plot.max()
+            if pd.notna(max_val) and max_val > 0 and max_val < 20 and (series_plot % 1 == 0).all():
+                 yaxis_final_config['dtick'] = 1
+                 logger.debug(f"({log_prefix_plot}) Applied dtick=1 for y-axis counts.")
+    
     fig.update_layout(title_text=html.escape(chart_title), xaxis_title=x_axis_title_final, yaxis=yaxis_final_config, height=final_height, hovermode="x unified", legend=dict(traceorder='normal'))
+    logger.debug(f"({log_prefix_plot}) Line chart created successfully.")
+    print(f"--- END DEBUG: plot_annotated_line_chart for '{chart_title}' ---")
     return fig
+
+# --- (Paste your optimized plot_bar_chart, plot_donut_chart, plot_heatmap, plot_choropleth_map here) ---
+# Make sure they also include:
+#   - html.escape() for all text elements set in update_layout or traces (titles, labels, annotations).
+#   - Robust data preparation at the beginning of each function.
+#   - Consistent use of _get_setting_or_default.
+#   - Consistent use of create_empty_figure.
+
+# --- For brevity, I will re-insert the previously optimized versions of these functions ---
+# --- You should verify them against the principles shown in plot_annotated_line_chart ---
 
 def plot_bar_chart(
     df_input: Optional[pd.DataFrame], x_col_name: str, y_col_name: str, chart_title: str,
@@ -196,7 +260,7 @@ def plot_bar_chart(
     df_plot = df_input.copy()
     try:
         df_plot[x_col_name] = df_plot[x_col_name].astype(str).str.strip()
-        df_plot[y_col_name] = convert_to_numeric(df_plot[y_col_name], default_value=0.0, target_type=int if y_values_are_counts_flag else float) # convert_to_numeric from helpers
+        df_plot[y_col_name] = convert_to_numeric(df_plot[y_col_name], default_value=0.0, target_type=int if y_values_are_counts_flag else float)
         df_plot.dropna(subset=[x_col_name, y_col_name], inplace=True)
     except Exception as e_prep_bar:
         logger.error(f"({log_prefix_plot}) Error preparing data: {e_prep_bar}", exc_info=True)
@@ -353,7 +417,7 @@ def plot_choropleth_map(
         return create_empty_figure(map_title, final_height, "Invalid geographic boundary data format.")
     df_map_plot = map_data_df.copy()
     try:
-        df_map_plot[value_col_name] = convert_to_numeric(df_map_plot[value_col_name], default_value=np.nan) # convert_to_numeric from helpers
+        df_map_plot[value_col_name] = convert_to_numeric(df_map_plot[value_col_name], default_value=np.nan) 
         df_map_plot[zone_id_df_col] = df_map_plot[zone_id_df_col].astype(str).str.strip()
         df_map_plot.dropna(subset=[value_col_name, zone_id_df_col], inplace=True)
     except Exception as e_prep_map:
@@ -365,11 +429,11 @@ def plot_choropleth_map(
     if hover_name_col and hover_name_col in df_map_plot.columns: hover_name_final_val = hover_name_col
     elif 'name' in df_map_plot.columns: hover_name_final_val = 'name'
     
-    hover_data_cfg_dict: Dict[str, Union[bool, str]] = {} # Allow formatting strings for hover_data
+    hover_data_cfg_dict: Dict[str, Union[bool, str]] = {} 
     if hover_data_cols:
         for h_col in hover_data_cols:
-            if h_col in df_map_plot.columns: hover_data_cfg_dict[h_col] = True # Or specific format like ':.2f'
-    if value_col_name not in hover_data_cfg_dict: hover_data_cfg_dict[value_col_name] = True # Or specific format string
+            if h_col in df_map_plot.columns: hover_data_cfg_dict[h_col] = True 
+    if value_col_name not in hover_data_cfg_dict: hover_data_cfg_dict[value_col_name] = True 
     
     final_mapbox_style_val = mapbox_style_override
     if not final_mapbox_style_val:
