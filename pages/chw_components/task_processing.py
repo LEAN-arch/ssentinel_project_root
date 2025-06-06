@@ -36,7 +36,7 @@ def _prepare_task_dataframe(
     log_prefix: str,
     default_chw_id: str,
     default_zone_id: str,
-    default_patient_id_prefix: str
+    default_patient_id_prefix: str # CORRECTED: Added argument to function signature
 ) -> pd.DataFrame:
     df_prepared = df.copy()
     logger.debug(f"({log_prefix}) Preparing task dataframe. Initial shape: {df_prepared.shape}, Columns: {df_prepared.columns.tolist()}")
@@ -74,7 +74,6 @@ def _prepare_task_dataframe(
             elif target_type_str == float:
                 df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value, target_type=float)
             elif target_type_str == int:
-                 # Ensure default_value for int is int, or handle np.nan carefully if target is nullable int
                  int_default = default_value if isinstance(default_value, int) else (0 if default_value is np.nan else default_value)
                  df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=int_default, target_type=int)
             elif target_type_str == str:
@@ -88,7 +87,8 @@ def _prepare_task_dataframe(
             else: df_prepared[col_name] = default_value
             
     if 'patient_id' in df_prepared.columns:
-        df_prepared['patient_id'] = df_prepared['patient_id'].replace('', default_patient_id_prefix).fillna(default_pid_prefix_tasks).astype(str)
+        # CORRECTED: Use the passed-in argument instead of the undefined variable
+        df_prepared['patient_id'] = df_prepared['patient_id'].replace('', default_patient_id_prefix).fillna(default_patient_id_prefix).astype(str)
     
     logger.debug(f"({log_prefix}) Task dataframe preparation complete. Shape: {df_prepared.shape}. Dtypes:\n{df_prepared.dtypes}")
     return df_prepared
@@ -143,7 +143,7 @@ def generate_chw_tasks(
     }
     df_task_src = _prepare_task_dataframe(
         source_patient_data_df, task_gen_cols_cfg, module_log_prefix, 
-        safe_chw_id_context, safe_zone_context_str, default_pid_prefix_tasks
+        safe_chw_id_context, safe_zone_context_str, default_pid_prefix_tasks # CORRECTED: Pass the argument
     )
 
     if 'encounter_date' in df_task_src.columns and df_task_src['encounter_date'].notna().any():
@@ -167,11 +167,8 @@ def generate_chw_tasks(
         temp_col_to_use = 'max_skin_temp_celsius'
         logger.debug(f"({module_log_prefix}) Using 'max_skin_temp_celsius' for temperature checks.")
 
-    # Get setting values with robust fallbacks
     spo2_critical_thresh = float(_get_setting('ALERT_SPO2_CRITICAL_LOW_PCT', 90.0))
     temp_high_fever_thresh = float(_get_setting('ALERT_BODY_TEMP_HIGH_FEVER_C', 39.5))
-    
-    # CORRECTED: Simplified threshold logic. Assumes settings provide a 0-100 scale directly.
     prio_high_thresh = float(_get_setting('FATIGUE_INDEX_HIGH_THRESHOLD', 80))
     prio_mod_thresh = float(_get_setting('FATIGUE_INDEX_MODERATE_THRESHOLD', 60))
     
@@ -191,8 +188,7 @@ def generate_chw_tasks(
 
         triggered_task_details: Optional[Dict[str, Any]] = None
 
-        # Rule 1: Critical Vitals
-        min_spo2_val = row_data.get('min_spo2_pct') # Already float or NaN from prep
+        min_spo2_val = row_data.get('min_spo2_pct')
         if pd.notna(min_spo2_val) and min_spo2_val < spo2_critical_thresh:
             task_type = "TASK_VISIT_VITALS_URGENT_SPO2"
             if (patient_id_str, task_type) not in processed_patient_task_types_set:
@@ -213,7 +209,6 @@ def generate_chw_tasks(
                 triggered_task_details = {"type": task_type, "desc": f"Assess After Fall (Falls today: {falls_today_val})", "prio": 92.0}
                 current_task_due_date = task_gen_target_date
         
-        # Rule 2: Pending Critical Referral
         referral_status_str = str(row_data.get('referral_status', '')).lower().strip()
         if not triggered_task_details and referral_status_str == 'pending':
             condition_str_for_ref = str(row_data.get('condition', '')).lower()
@@ -226,21 +221,18 @@ def generate_chw_tasks(
                 if (patient_id_str, task_type) not in processed_patient_task_types_set:
                     triggered_task_details = {"type": task_type, "desc": f"Follow-up: Critical Referral for {row_data.get('condition', 'N/A')}", "prio": 88.0}
         
-        # Rule 3: High AI Follow-up Priority
         if not triggered_task_details and base_prio_val >= prio_high_thresh:
             task_type = "TASK_VISIT_FOLLOWUP_AI"
             if (patient_id_str, task_type) not in processed_patient_task_types_set:
                 triggered_task_details = {"type": task_type, "desc": f"Priority Follow-up (AI Prio Score: {base_prio_val:.0f})", "prio": base_prio_val}
 
-        # Rule 4: Medication Adherence
         med_adherence_str_val = str(row_data.get('medication_adherence_self_report', '')).lower().strip()
         if not triggered_task_details and med_adherence_str_val == 'poor':
             task_type = "TASK_VISIT_ADHERENCE_SUPPORT"
             if (patient_id_str, task_type) not in processed_patient_task_types_set:
                 triggered_task_details = {"type": task_type, "desc": "Support Medication Adherence (Reported Poor)", "prio": max(base_prio_val, 75.0)}
         
-        # Rule 5: TB Contact Tracing
-        tb_contact_traced_val_int = int(row_data.get('tb_contact_traced', 1)) # Default to 1 (traced) if missing/NaN
+        tb_contact_traced_val_int = int(row_data.get('tb_contact_traced', 1))
         if not triggered_task_details and \
            TB_CONDITION_PATTERN.search(str(row_data.get('condition', ''))) and \
            tb_contact_traced_val_int == 0: 
@@ -248,7 +240,6 @@ def generate_chw_tasks(
             if (patient_id_str, task_type) not in processed_patient_task_types_set:
                 triggered_task_details = {"type": task_type, "desc": "Initiate/Continue TB Contact Tracing", "prio": max(base_prio_val, 80.0)}
         
-        # Rule 6: Routine Checkup
         if not triggered_task_details and base_prio_val >= prio_mod_thresh:
             task_type = "TASK_VISIT_ROUTINE_CHECK"
             if (patient_id_str, task_type) not in processed_patient_task_types_set:
