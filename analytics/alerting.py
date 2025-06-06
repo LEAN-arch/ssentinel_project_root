@@ -4,7 +4,7 @@
 import pandas as pd
 import numpy as np
 import logging
-import re  # Added this import
+import re
 from typing import List, Dict, Any, Optional, Tuple 
 from datetime import date as date_type # For type hinting date objects
 
@@ -76,11 +76,8 @@ def generate_chw_patient_alerts(
             df_alert_src[col_name] = convert_to_numeric(df_alert_src[col_name], default_value=config_details["default"], target_type=int)
         elif config_details["type"] == str:
             df_alert_src[col_name] = df_alert_src[col_name].astype(str).fillna(str(config_details["default"]))
-            # For strings, direct replace of common_na_values might be too broad if they are valid substrings.
-            # Better to replace only if the entire string matches one of the NA values.
-            # Using a regex with word boundaries for exact match of NA strings, case-insensitive.
-            na_regex = r'^(?:' + '|'.join(re.escape(s) for s in common_na_values if s) + r')$' # Avoid empty string in regex if present
-            if any(common_na_values): # Only if there are non-empty NA strings
+            na_regex = r'^(?:' + '|'.join(re.escape(s) for s in common_na_values if s) + r')$'
+            if any(common_na_values):
                  df_alert_src[col_name] = df_alert_src[col_name].str.replace(na_regex, str(config_details["default"]), case=False, regex=True)
             df_alert_src[col_name] = df_alert_src[col_name].str.strip()
 
@@ -95,20 +92,13 @@ def generate_chw_patient_alerts(
         patient_id_val = str(encounter_row['patient_id'])
         
         row_encounter_date = encounter_row['encounter_date']
-        # Effective date for the alert context: if row's date is valid and matches processing_date, use it.
-        # Else, use processing_date_str. This focuses alerts on "today's findings".
         if pd.notna(row_encounter_date) and row_encounter_date.date() == processing_date:
             effective_encounter_date_str = row_encounter_date.strftime('%Y-%m-%d')
         else:
-            # If data is from a different date, or date is invalid, use processing_date for this alert context
-            # This implies alerts are primarily for "today's" review of events that occurred today.
-            # For alerts about historical data (e.g. pending referral from yesterday), logic might need adjustment
-            # or `df_alert_src` should be pre-filtered more carefully.
             effective_encounter_date_str = processing_date_str
         
         context_info_str = f"Cond: {encounter_row['condition']} | Zone: {encounter_row['zone_id']} | Date: {effective_encounter_date_str}"
 
-        # Rule 1: Critical Low SpO2
         min_spo2_val = encounter_row['min_spo2_pct']
         if pd.notna(min_spo2_val) and min_spo2_val < settings.ALERT_SPO2_CRITICAL_LOW_PCT:
             alerts_buffer.append({
@@ -120,9 +110,8 @@ def generate_chw_patient_alerts(
             })
             execute_escalation_protocol("PATIENT_CRITICAL_SPO2_LOW", encounter_row.to_dict(), 
                                         additional_context={"SPO2_VALUE": min_spo2_val, "PATIENT_AGE": encounter_row.get('age')})
-            continue # Prioritize critical SpO2 alert for this encounter
+            continue
 
-        # Rule 2: Warning Low SpO2 (if not already critical for this encounter)
         if pd.notna(min_spo2_val) and min_spo2_val < settings.ALERT_SPO2_WARNING_LOW_PCT:
             alerts_buffer.append({
                 "alert_level": "WARNING", "primary_reason": "Low SpO2",
@@ -132,7 +121,6 @@ def generate_chw_patient_alerts(
                 "triggering_value": f"SpO2 {min_spo2_val:.0f}%", "encounter_date": effective_encounter_date_str
             })
 
-        # Rule 3: High Fever
         current_temp_val = encounter_row.get(temp_col_to_use) if temp_col_to_use else np.nan
         if pd.notna(current_temp_val) and current_temp_val >= settings.ALERT_BODY_TEMP_HIGH_FEVER_C:
             alerts_buffer.append({
@@ -142,10 +130,8 @@ def generate_chw_patient_alerts(
                 "patient_id": patient_id_val, "context_info": context_info_str,
                 "triggering_value": f"Temp {current_temp_val:.1f}°C", "encounter_date": effective_encounter_date_str
             })
-            # execute_escalation_protocol("PATIENT_HIGH_FEVER_CRITICAL", encounter_row.to_dict(), {"TEMP_VALUE": current_temp_val})
-            continue # Prioritize critical fever
+            continue
 
-        # Rule 4: Moderate Fever (if not already high fever for this encounter)
         if pd.notna(current_temp_val) and current_temp_val >= settings.ALERT_BODY_TEMP_FEVER_C:
             alerts_buffer.append({
                 "alert_level": "WARNING", "primary_reason": "Fever Present",
@@ -155,7 +141,6 @@ def generate_chw_patient_alerts(
                 "triggering_value": f"Temp {current_temp_val:.1f}°C", "encounter_date": effective_encounter_date_str
             })
 
-        # Rule 5: Fall Detected
         fall_detected_val = encounter_row['fall_detected_today']
         if pd.notna(fall_detected_val) and fall_detected_val > 0:
             alerts_buffer.append({
@@ -166,7 +151,6 @@ def generate_chw_patient_alerts(
             })
             execute_escalation_protocol("PATIENT_FALL_DETECTED", encounter_row.to_dict())
 
-        # Rule 6: High AI Follow-up Priority Score
         ai_followup_score = encounter_row['ai_followup_priority_score']
         if pd.notna(ai_followup_score) and ai_followup_score >= settings.FATIGUE_INDEX_HIGH_THRESHOLD:
             alerts_buffer.append({
@@ -177,7 +161,6 @@ def generate_chw_patient_alerts(
                 "triggering_value": f"AI Prio {ai_followup_score:.0f}", "encounter_date": effective_encounter_date_str
             })
 
-        # Rule 7: High AI Risk Score (INFO if no other CRITICAL/WARNING for this patient-date)
         ai_risk_score_val = encounter_row['ai_risk_score']
         if pd.notna(ai_risk_score_val) and ai_risk_score_val >= settings.RISK_SCORE_HIGH_THRESHOLD:
             is_more_severe = any(
@@ -193,7 +176,6 @@ def generate_chw_patient_alerts(
                     "triggering_value": f"AI Risk {ai_risk_score_val:.0f}", "encounter_date": effective_encounter_date_str
                 })
         
-        # Rule 8: Pending Critical Referral
         if str(encounter_row['referral_status']).lower() == 'pending' and \
            any(kc.lower() in str(encounter_row['condition']).lower() for kc in settings.KEY_CONDITIONS_FOR_ACTION):
             alerts_buffer.append({
@@ -214,7 +196,7 @@ def generate_chw_patient_alerts(
         final_alerts_list = sorted(
             list(alerts_deduplicated_map.values()), 
             key=lambda x_alert: ({"CRITICAL": 0, "WARNING": 1, "INFO": 2}.get(x_alert.get("alert_level", "INFO"), 3), 
-                                 -x_alert.get('raw_priority_score', 0.0)) # Sort by level, then descending priority score
+                                 -x_alert.get('raw_priority_score', 0.0))
         )
         logger.info(f"({module_log_prefix}) Generated {len(final_alerts_list)} unique CHW patient alerts after deduplication for {processing_date_str}.")
         return final_alerts_list[:max_alerts_to_return]
@@ -259,7 +241,6 @@ def get_patient_alerts_for_clinic(
             df[col] = df[col].replace(common_na_values_clinic, str(default), regex=False).str.strip()
 
     if 'encounter_date' in df.columns and df['encounter_date'].notna().any():
-        # Sort by encounter_date first (ascending so NaTs are first), then drop duplicates keeping last
         df_latest_encounters = df.sort_values('encounter_date', na_position='first').drop_duplicates(subset=['patient_id'], keep='last')
     else:
         df_latest_encounters = df.drop_duplicates(subset=['patient_id'], keep='last')
@@ -316,12 +297,8 @@ def get_patient_alerts_for_clinic(
     alerts_df_for_clinic = pd.DataFrame(alert_list_for_clinic)
     alerts_df_for_clinic.sort_values(by=['Priority Score', 'encounter_date'], ascending=[False, False], inplace=True, na_position='last')
     
+    # CORRECTED: The indentation of these lines was wrong. They should be outside the for loop.
     for col in output_columns: # Ensure all expected columns are present before returning
-        if col not in alerts_df_for_clinic.columns:
-            alerts_df_for_clinic[col] = np.nan
-            
-    logger.info(f"({source_context}) Generated {len(alerts_df_for_clinic)} patient entries for clinic review list.")
-    return alerts_df_for_clinic[output_columns].reset_index(drop=True)
         if col not in alerts_df_for_clinic.columns:
             alerts_df_for_clinic[col] = np.nan
             
