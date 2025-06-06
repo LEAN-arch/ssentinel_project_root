@@ -14,7 +14,6 @@ import re
 
 try:
     from config import settings
-    # Assuming convert_to_numeric is in helpers now
     from data_processing.helpers import convert_to_numeric 
     from .ui_elements import get_theme_color 
 except ImportError as e:
@@ -33,10 +32,10 @@ except ImportError as e:
         MAPBOX_STYLE_WEB = "carto-positron"; MAP_DEFAULT_CENTER_LAT = 0.0; MAP_DEFAULT_CENTER_LON = 0.0; MAP_DEFAULT_ZOOM_LEVEL = 1;
         WEB_PLOT_DEFAULT_HEIGHT = 400; WEB_PLOT_COMPACT_HEIGHT = 350; WEB_MAP_DEFAULT_HEIGHT = 600;
     settings = FallbackPlotSettings()
-    if 'get_theme_color' not in globals(): # Define a basic fallback if ui_elements also failed
+    if 'get_theme_color' not in globals():
         def get_theme_color(name_or_idx, category="general", fallback_color_hex=None): # type: ignore
             return fallback_color_hex or getattr(settings, 'COLOR_TEXT_MUTED', "#CCCCCC") 
-    if 'convert_to_numeric' not in globals(): # Define basic fallback if helpers failed
+    if 'convert_to_numeric' not in globals():
         def convert_to_numeric(data_input, default_value=np.nan, target_type=None): # type: ignore
             return pd.to_numeric(data_input, errors='coerce').fillna(default_value)
 
@@ -126,14 +125,6 @@ def plot_annotated_line_chart(
     final_height = chart_height or _get_setting_or_default('WEB_PLOT_COMPACT_HEIGHT', 350)
     log_prefix_plot = f"PlotLine/{html.escape(chart_title[:30])}" 
 
-    logger.debug(f"({log_prefix_plot}) Initial data_series type: {type(data_series)}")
-    if isinstance(data_series, pd.Series):
-        logger.debug(f"({log_prefix_plot}) Initial data_series empty: {data_series.empty}, length: {len(data_series)}")
-        if not data_series.empty:
-            logger.debug(f"({log_prefix_plot}) Initial data_series index type: {type(data_series.index)}, first 5 index values: {data_series.index[:5].tolist() if len(data_series.index) >=5 else data_series.index.tolist()}")
-            logger.debug(f"({log_prefix_plot}) Initial data_series values dtype: {data_series.dtype}, first 5 values: {data_series.head(5).tolist()}")
-    logger.debug(f"({log_prefix_plot}) y_values_are_counts: {y_values_are_counts}")
-
     if not isinstance(data_series, pd.Series) or data_series.empty:
         logger.warning(f"({log_prefix_plot}) Input data_series is not a Series or is empty. Returning empty figure.")
         return create_empty_figure(chart_title, final_height, "No data provided for this trend line.")
@@ -141,27 +132,20 @@ def plot_annotated_line_chart(
     series_plot = data_series.copy() 
     
     try:
-        logger.debug(f"({log_prefix_plot}) PREP: Index before conversion: Type={type(series_plot.index)}, Sample={series_plot.index[:3].tolist() if len(series_plot.index) >=3 else series_plot.index.tolist()}")
         if not pd.api.types.is_datetime64_any_dtype(series_plot.index):
             series_plot.index = pd.to_datetime(series_plot.index, errors='coerce')
-            logger.debug(f"({log_prefix_plot}) PREP: Index after to_datetime. NaNs in index: {series_plot.index.isnull().sum()}.")
         
         series_plot = series_plot[pd.notna(series_plot.index)] 
         if series_plot.empty:
             logger.warning(f"({log_prefix_plot}) PREP: Series became empty after index processing.")
             return create_empty_figure(chart_title, final_height, "Invalid date/time values in data.")
         
-        logger.debug(f"({log_prefix_plot}) PREP: Values before numeric conversion - Dtype: {series_plot.dtype}, NaNs: {series_plot.isnull().sum()}, Sample: {series_plot.head(3).tolist() if not series_plot.empty else 'Empty'}")
         if y_values_are_counts:
-            series_plot_numeric = convert_to_numeric(series_plot, default_value=0.0) # Convert to float first with 0 for NaN
-            series_plot = series_plot_numeric.astype(int) # Then to int
+            series_plot = convert_to_numeric(series_plot, default_value=0, target_type=int)
         else:
             series_plot = convert_to_numeric(series_plot, default_value=np.nan, target_type=float)
             series_plot.dropna(inplace=True) 
         
-        logger.debug(f"({log_prefix_plot}) PREP: Values after numeric conversion & dropna - Dtype: {series_plot.dtype}, Shape: {series_plot.shape}, NaNs: {series_plot.isnull().sum()}.")
-        if not series_plot.empty: logger.debug(f"({log_prefix_plot}) PREP: Cleaned series head:\n{series_plot.head().to_string()}")
-
     except Exception as e_prep:
         logger.error(f"({log_prefix_plot}) CRITICAL ERROR during data series preparation: {e_prep}", exc_info=True)
         return create_empty_figure(chart_title, final_height, "Critical error preparing data for line chart.")
@@ -208,7 +192,7 @@ def plot_annotated_line_chart(
             upper_b, lower_b = q3 + anomaly_iqr_factor * iqr, q1 - anomaly_iqr_factor * iqr
             anomalies = series_plot[(series_plot < lower_b) | (series_plot > upper_b)]
             if not anomalies.empty:
-                fig.add_trace(go.Scatter(x=anomalies.index, y=anomalies.values, mode='markers', marker=dict(color=get_theme_color("risk_high", fallback_color_hex=_get_setting_or_default('COLOR_RISK_HIGH',"#FF0000")), size=8, symbol='circle-open-dot', line=dict(width=1.5)), name='Anomaly', hovertemplate=f'<b>Anomaly</b>: %{{x|{date_format_hover}}}<br><b>Value</b>: %{{y:{y_hover_format}}}<extra></extra>'))
+                fig.add_trace(go.Scatter(x=anomalies.index, y=anomalies.values, mode='markers', marker=dict(color=get_theme_color("risk_high", fallback_color_hex=_get_setting_or_default('COLOR_RISK_HIGH',"#FF0000")), size=8, symbol='circle-open-dot', line=dict(width=1.5)), name='Anomaly', hovertemplate=f'<b>Anomaly</b>: %{{x|{date_format_hover}}}<br><b>Value</b>: %{{y:{y_hover_format_str}}}<extra></extra>'))
 
     x_axis_title_final = html.escape(str(series_plot.index.name) if series_plot.index.name and str(series_plot.index.name).strip() else "Date/Time")
     yaxis_final_config = dict(title_text=html.escape(y_axis_label))
@@ -217,8 +201,7 @@ def plot_annotated_line_chart(
         if not series_plot.empty and pd.notna(series_plot.min()) and series_plot.min() >= 0: 
             yaxis_final_config['rangemode'] = 'tozero'
             max_val = series_plot.max() 
-            if pd.notna(max_val) and max_val > 0 and max_val < 20 : # Only for small integer ranges
-                # Check if all values are whole numbers if the dtype is float
+            if pd.notna(max_val) and max_val > 0 and max_val < 20 :
                 is_whole_numbers = (series_plot % 1 == 0).all() if pd.api.types.is_float_dtype(series_plot.dtype) else True
                 if is_whole_numbers:
                     yaxis_final_config['dtick'] = 1
@@ -245,7 +228,6 @@ def plot_bar_chart(
     df_plot = df_input.copy()
     try:
         df_plot[x_col_name] = df_plot[x_col_name].astype(str).str.strip()
-        # Use convert_to_numeric from helpers for robust y-column conversion
         df_plot[y_col_name] = convert_to_numeric(df_plot[y_col_name], default_value=0.0, target_type=int if y_values_are_counts_flag else float)
         df_plot.dropna(subset=[x_col_name, y_col_name], inplace=True)
     except Exception as e_prep_bar:
@@ -266,11 +248,14 @@ def plot_bar_chart(
         df_plot[color_col_name] = df_plot[color_col_name].astype(str).str.strip()
         legend_title_final = html.escape(color_col_name.replace('_', ' ').title())
     
+    # CORRECTED: Build the color map by resolving each unique value individually.
     final_color_map_resolved = custom_color_map
     if not final_color_map_resolved and color_col_name and color_col_name in df_plot.columns:
-        legacy_colors_map = _get_setting_or_default('LEGACY_DISEASE_COLORS_WEB', {})
-        if any(str(val) in legacy_colors_map for val in df_plot[color_col_name].dropna().unique()):
-            final_color_map_resolved = { str(val): get_theme_color(str(val), "disease", get_theme_color(abs(hash(str(val))) % 8, "general")) for val in df_plot[color_col_name].dropna().unique() }
+        unique_color_vals = df_plot[color_col_name].dropna().unique()
+        final_color_map_resolved = {
+            str(val): get_theme_color(str(val), "disease", get_theme_color(i, "general"))
+            for i, val in enumerate(unique_color_vals)
+        }
     
     try:
         fig = px.bar(df_plot, x=x_col_name if orientation_bar == 'v' else y_col_name,
@@ -329,7 +314,7 @@ def plot_donut_chart(
         return create_empty_figure(chart_title, final_height, "Missing data for donut chart.")
     df_plot = df_input.copy()
     try:
-        df_plot[values_col_name] = convert_to_numeric(df_plot[values_col_name], default_value=0.0, target_type=int if values_are_counts else float)
+        df_plot[values_col_name] = convert_to_numeric(df_plot[values_col_name], default_value=0, target_type=int if values_are_counts else float)
         df_plot = df_plot[df_plot[values_col_name] > 1e-6].sort_values(by=values_col_name, ascending=False) 
         df_plot[labels_col_name] = df_plot[labels_col_name].astype(str).str.strip() 
     except Exception as e_prep_donut:
