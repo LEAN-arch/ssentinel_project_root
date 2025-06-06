@@ -217,8 +217,17 @@ def generate_simple_supply_forecast(
 
     for _, item_row in latest_item_status_df.iterrows():
         item_name_simple = item_row['item']
-        initial_stock_level = max(0.0, item_row['item_stock_agg_zone'])
         base_daily_consumption_rate = item_row['consumption_rate_per_day']
+        
+        # CORRECTED: Adjust the starting stock level to account for consumption since the last data point.
+        last_update_date = item_row['encounter_date']
+        latest_recorded_stock = max(0.0, item_row['item_stock_agg_zone'])
+
+        days_since_update = (effective_forecast_start_date - last_update_date).days if pd.notna(last_update_date) else 0
+        days_since_update = max(0, days_since_update) # Prevent issues if data is from the future.
+        
+        consumption_since_update = base_daily_consumption_rate * days_since_update
+        initial_stock_level = max(0.0, latest_recorded_stock - consumption_since_update)
         
         initial_dos_at_start = (initial_stock_level / base_daily_consumption_rate) if base_daily_consumption_rate > 1e-8 else np.inf
         estimated_stockout_dt_linear: Optional[pd.Timestamp] = pd.NaT
@@ -227,7 +236,8 @@ def generate_simple_supply_forecast(
 
         for day_idx in range(forecast_days_out):
             current_forecast_date = effective_forecast_start_date + pd.Timedelta(days=day_idx)
-            # Stock level at the *start* of `current_forecast_date`
+            # This calculation is now correct, as it projects from the adjusted initial_stock_level.
+            # It represents the stock at the *start* of the current_forecast_date.
             running_stock_level_simple = max(0.0, initial_stock_level - (base_daily_consumption_rate * day_idx))
             current_dos = (running_stock_level_simple / base_daily_consumption_rate) if base_daily_consumption_rate > 1e-8 else np.inf
             
