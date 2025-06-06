@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import logging
 from datetime import date, timedelta
-from typing import Optional, Dict, Any, Tuple, List, Union # Added Union
+from typing import Optional, Dict, Any, Tuple, List, Union
 from pathlib import Path
 
 # --- Sentinel System Imports (Absolute Imports from Project Root) ---
@@ -50,7 +50,6 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 try:
     page_icon_value = "🏥" 
-    # CORRECTED: Use the defined small logo path for the favicon.
     app_logo_small_path_str = _get_setting('APP_LOGO_SMALL_PATH', None)
     if app_logo_small_path_str:
         favicon_path = Path(app_logo_small_path_str)
@@ -85,21 +84,9 @@ def get_clinic_console_processed_data(
     logger.info(f"({log_ctx}) Loading data for period: {selected_period_start_date.isoformat()} to {selected_period_end_date.isoformat()}")
     raw_health_df = load_health_records(source_context=f"{log_ctx}/LoadRawHealthRecs")
     raw_iot_df = load_iot_clinic_environment_data(source_context=f"{log_ctx}/LoadRawIoTData")
-    iot_data_available_flag = False
-    iot_csv_path_setting = _get_setting('IOT_CLINIC_ENVIRONMENT_CSV_PATH', None)
-    project_root_dir_setting = _get_setting('PROJECT_ROOT_DIR', None)
-    # CORRECTED: Use DATA_SOURCES_DIR which is defined in settings.py
-    data_dir_setting_path = _get_setting('DATA_SOURCES_DIR', None)
-
-    if iot_csv_path_setting and project_root_dir_setting and data_dir_setting_path:
-        iot_path = Path(iot_csv_path_setting)
-        if not iot_path.is_absolute(): iot_path = (Path(data_dir_setting_path) / iot_path).resolve()
-        if iot_path.is_file():
-            if isinstance(raw_iot_df, pd.DataFrame) and not raw_iot_df.empty: iot_data_available_flag = True
-            else: logger.warning(f"({log_ctx}) IoT data file found at '{iot_path}', but failed to load/empty.")
-        else: logger.warning(f"({log_ctx}) IoT data file NOT FOUND at: '{iot_path}'.")
-    else: logger.warning(f"({log_ctx}) IoT path settings missing. IoT availability check incomplete.")
-
+    
+    iot_data_available_flag = isinstance(raw_iot_df, pd.DataFrame) and not raw_iot_df.empty
+    
     ai_enriched_health_df_full = pd.DataFrame() 
     if isinstance(raw_health_df, pd.DataFrame) and not raw_health_df.empty:
         try:
@@ -130,7 +117,7 @@ def get_clinic_console_processed_data(
     elif not ai_enriched_health_df_full.empty: logger.warning(f"({log_ctx}) 'encounter_date' missing in health data.")
 
     df_iot_period = pd.DataFrame()
-    if iot_data_available_flag and isinstance(raw_iot_df, pd.DataFrame) and 'timestamp' in raw_iot_df.columns:
+    if iot_data_available_flag and 'timestamp' in raw_iot_df.columns:
         try:
             if not pd.api.types.is_datetime64_any_dtype(raw_iot_df['timestamp']):
                 raw_iot_df['timestamp'] = pd.to_datetime(raw_iot_df['timestamp'], errors='coerce')
@@ -143,7 +130,7 @@ def get_clinic_console_processed_data(
             ].copy()
         except Exception as e_iot_filter:
             logger.error(f"({log_ctx}) Error filtering IoT data by period: {e_iot_filter}", exc_info=True)
-    elif iot_data_available_flag and isinstance(raw_iot_df, pd.DataFrame):
+    elif iot_data_available_flag:
          logger.warning(f"({log_ctx}) 'timestamp' missing in IoT data.")
 
     clinic_kpis_period_data: Dict[str, Any] = {"test_summary_details": {}} 
@@ -229,7 +216,7 @@ except Exception as e_load_clinic:
     logger.error(f"Clinic Dashboard: Main data loading failed: {e_load_clinic}", exc_info=True)
     st.error(f"🛑 Error loading clinic dashboard data: {str(e_load_clinic)}. Check logs and data sources.")
 
-if not iot_available_flag and not data_load_error_occurred : # Only show if no major load error already displayed
+if not iot_available_flag and not data_load_error_occurred:
     st.sidebar.warning("🔌 IoT environmental data source unavailable or empty. Some metrics may be missing.")
 st.info(f"Displaying Clinic Console data for period: **{current_period_str}**")
 
@@ -240,48 +227,33 @@ disease_kpis_display_data = []
 if not data_load_error_occurred and clinic_summary_kpis_data and isinstance(clinic_summary_kpis_data.get("test_summary_details"), dict): 
     try:
         main_kpis_display_data = structure_main_clinic_kpis(clinic_summary_kpis_data, current_period_str)
+        if main_kpis_display_data:
+            st.markdown("##### **Overall Service Performance:**")
+            kpi_cols_main = st.columns(min(len(main_kpis_display_data), 4))
+            for i, kpi_data_item in enumerate(main_kpis_display_data): 
+                with kpi_cols_main[i % 4]:
+                    render_kpi_card(**kpi_data_item)
+        elif not health_df_period.empty: 
+            st.info("ℹ️ Main service performance KPIs could not be fully generated for this period.")
     except Exception as e_struct_main_kpi:
         logger.error(f"Error structuring main clinic KPIs: {e_struct_main_kpi}", exc_info=True)
         st.warning("⚠️ Could not structure main clinic KPIs.")
+    
     try:
         disease_kpis_display_data = structure_disease_specific_clinic_kpis(clinic_summary_kpis_data, current_period_str)
+        if disease_kpis_display_data:
+            st.markdown("##### **Key Disease Testing & Supply Indicators:**")
+            kpi_cols_disease = st.columns(min(len(disease_kpis_display_data), 4))
+            for i, kpi_data_item in enumerate(disease_kpis_display_data): 
+                with kpi_cols_disease[i % 4]:
+                    render_kpi_card(**kpi_data_item)
+        elif not health_df_period.empty:
+             st.info("ℹ️ Disease-specific KPIs could not be fully generated for this period.")
     except Exception as e_struct_disease_kpi:
         logger.error(f"Error structuring disease specific KPIs: {e_struct_disease_kpi}", exc_info=True)
         st.warning("⚠️ Could not structure disease-specific KPIs.")
-elif not data_load_error_occurred: # Data loaded but KPIs might be empty
-    st.warning(f"Core clinic summary KPI data not available or in unexpected format for {current_period_str}. Some KPIs might be missing.")
-
-if main_kpis_display_data:
-    st.markdown("##### **Overall Service Performance:**")
-    kpi_cols_main = st.columns(min(len(main_kpis_display_data), 4))
-    for i, kpi_data_item in enumerate(main_kpis_display_data): 
-        try:
-            with kpi_cols_main[i % 4]: # Use with context manager for column placement
-                render_kpi_card(**kpi_data_item) 
-        except TypeError as te_main_kpi: 
-            logger.error(f"TypeError rendering main KPI {i}. Data: {kpi_data_item}. Error: {te_main_kpi}", exc_info=True)
-            with kpi_cols_main[i % 4]: st.error(f"KPI Display Error (Main)")
-        except Exception as e_main_kpi_render: 
-            logger.error(f"Error rendering main KPI {i}. Data: {kpi_data_item}. Error: {e_main_kpi_render}", exc_info=True)
-            with kpi_cols_main[i % 4]: st.error(f"KPI Display Error (Main)")
-elif not data_load_error_occurred and not health_df_period.empty: 
-    st.info("ℹ️ Main service performance KPIs could not be fully generated for this period.")
-
-if disease_kpis_display_data:
-    st.markdown("##### **Key Disease Testing & Supply Indicators:**")
-    kpi_cols_disease = st.columns(min(len(disease_kpis_display_data), 4))
-    for i, kpi_data_item in enumerate(disease_kpis_display_data): 
-        try:
-            with kpi_cols_disease[i % 4]: # Use with context manager
-                render_kpi_card(**kpi_data_item)
-        except TypeError as te_disease_kpi:
-            logger.error(f"TypeError rendering disease KPI {i}. Data: {kpi_data_item}. Error: {te_disease_kpi}", exc_info=True)
-            with kpi_cols_disease[i % 4]: st.error(f"KPI Display Error (Disease)")
-        except Exception as e_disease_kpi_render:
-            logger.error(f"Error rendering disease KPI {i}. Data: {kpi_data_item}. Error: {e_disease_kpi_render}", exc_info=True)
-            with kpi_cols_disease[i % 4]: st.error(f"KPI Display Error (Disease)")
 elif not data_load_error_occurred and not health_df_period.empty:
-     st.info("ℹ️ Disease-specific KPIs could not be fully generated for this period.")
+    st.warning(f"Core clinic summary KPI data not available or in unexpected format for {current_period_str}. Some KPIs might be missing.")
 
 st.markdown("##### **Clinic Environment Quick Check:**")
 env_summary_kpis_quick_check: Dict[str, Any] = {} 
@@ -343,7 +315,11 @@ tabs_list = st.tabs(tab_titles)
 
 with tabs_list[0]: 
     st.subheader(f"Local Epidemiological Intelligence ({current_period_str})")
-    if not data_load_error_occurred and not health_df_period.empty:
+    if data_load_error_occurred:
+        st.warning("Data loading failed, cannot display epidemiological insights.")
+    elif health_df_period.empty:
+        st.info("ℹ️ No health data available in the selected period for epidemiological analysis.")
+    else:
         try:
             epi_data = calculate_clinic_epidemiological_data(health_df_period, current_period_str)
             symptom_trends_df = epi_data.get("symptom_trends_weekly_top_n_df")
@@ -353,7 +329,7 @@ with tabs_list[0]:
 
             malaria_rdt_name_setting = _get_setting('KEY_TEST_TYPES_FOR_ANALYSIS', {}).get("RDT-Malaria", {}).get("display_name", "Malaria RDT")
             malaria_pos_trend_series = epi_data.get("key_test_positivity_trends", {}).get(malaria_rdt_name_setting)
-            malaria_target_pos_rate_setting = _get_setting('TARGET_MALARIA_POSITIVITY_RATE', 0.10)
+            malaria_target_pos_rate_setting = _get_setting('TARGET_MALARIA_POSITIVITY_RATE', 10.0)
             if isinstance(malaria_pos_trend_series, pd.Series) and not malaria_pos_trend_series.empty:
                 st.plotly_chart(plot_annotated_line_chart(malaria_pos_trend_series, f"Weekly {malaria_rdt_name_setting} Positivity Rate", "Positivity %", target_ref_line_val=malaria_target_pos_rate_setting, y_values_are_counts=False), use_container_width=True)
             else: st.caption(f"ℹ️ No {malaria_rdt_name_setting} positivity trend data to display for this period.")
@@ -362,15 +338,14 @@ with tabs_list[0]:
         except Exception as e_epi_tab:
             logger.error(f"Error processing Epi Tab content: {e_epi_tab}", exc_info=True)
             st.error("⚠️ An error occurred while generating epidemiological insights.")
-    elif not data_load_error_occurred:
-        st.info("ℹ️ No health data available in the selected period for epidemiological analysis.")
-    else:
-        st.warning("Data loading failed, cannot display epidemiological insights.")
-
 
 with tabs_list[1]: 
     st.subheader(f"Testing & Diagnostics Performance ({current_period_str})")
-    if not data_load_error_occurred and not health_df_period.empty: 
+    if data_load_error_occurred:
+        st.warning("Data loading failed, cannot display testing insights.")
+    elif health_df_period.empty:
+        st.info("ℹ️ No health data available in the selected period for testing insights.")
+    else: 
         try:
             testing_insights_map = prepare_clinic_lab_testing_insights_data(health_df_period, clinic_summary_kpis_data, current_period_str, "All Critical Tests Summary")
             crit_tests_summary_df = testing_insights_map.get("all_critical_tests_summary_table_df")
@@ -391,15 +366,14 @@ with tabs_list[1]:
         except Exception as e_testing_tab:
             logger.error(f"Error processing Testing Tab content: {e_testing_tab}", exc_info=True)
             st.error("⚠️ An error occurred while generating testing insights.")
-    elif not data_load_error_occurred:
-        st.info("ℹ️ No health data available in the selected period for testing insights.")
-    else:
-        st.warning("Data loading failed, cannot display testing insights.")
-
 
 with tabs_list[2]: 
     st.subheader(f"Medical Supply Forecast & Status ({current_period_str})")
-    if not data_load_error_occurred and not full_hist_health_df.empty: 
+    if data_load_error_occurred:
+        st.warning("Data loading failed, cannot display supply chain insights.")
+    elif full_hist_health_df.empty:
+        st.info("ℹ️ Insufficient historical health data available for supply forecasting.")
+    else: 
         try:
             use_ai_supply_forecast = st.checkbox("Use Advanced AI Supply Forecast (Simulated)", value=False, key="clinic_supply_ai_toggle_v5")
             supply_forecast_map = prepare_clinic_supply_forecast_overview_data(full_hist_health_df, current_period_str, use_ai_supply_forecasting_model=use_ai_supply_forecast)
@@ -417,15 +391,14 @@ with tabs_list[2]:
         except Exception as e_supply_tab:
             logger.error(f"Error processing Supply Tab content: {e_supply_tab}", exc_info=True)
             st.error("⚠️ An error occurred while generating supply chain insights.")
-    elif not data_load_error_occurred:
-        st.info("ℹ️ Insufficient historical health data available for supply forecasting.")
-    else:
-        st.warning("Data loading failed, cannot display supply chain insights.")
-
 
 with tabs_list[3]: 
     st.subheader(f"Patient Load & High-Interest Case Review ({current_period_str})")
-    if not data_load_error_occurred and not health_df_period.empty:
+    if data_load_error_occurred:
+        st.warning("Data loading failed, cannot display patient focus insights.")
+    elif health_df_period.empty:
+        st.info("ℹ️ No health data available in the selected period for patient focus analysis.")
+    else:
         try:
             patient_focus_map = prepare_clinic_patient_focus_overview_data(health_df_period, current_period_str)
             patient_load_plot_df = patient_focus_map.get("patient_load_by_key_condition_df")
@@ -445,16 +418,20 @@ with tabs_list[3]:
         except Exception as e_patient_tab:
             logger.error(f"Error processing Patient Focus Tab content: {e_patient_tab}", exc_info=True)
             st.error("⚠️ An error occurred while generating patient focus insights.")
-    elif not data_load_error_occurred:
-        st.info("ℹ️ No health data available in the selected period for patient focus analysis.")
-    else:
-        st.warning("Data loading failed, cannot display patient focus insights.")
 
 with tabs_list[4]: 
     st.subheader(f"Facility Environment Detailed Monitoring ({current_period_str})")
-    if not data_load_error_occurred and iot_available_flag: 
+    # CORRECTED: The logic is restructured to be more efficient and provide clearer user feedback.
+    if data_load_error_occurred:
+        st.warning("Data loading failed, cannot display environmental insights.")
+    elif not iot_available_flag:
+        st.warning("🔌 IoT environmental data source is unavailable. Detailed environmental monitoring not possible.")
+    elif iot_df_period.empty:
+        st.info("ℹ️ No IoT environmental data recorded for the selected period.")
+    else: # This block now only runs if there is IoT data for the period.
         try:
-            env_details_data_map = prepare_clinic_environmental_detail_data(iot_df_period, iot_available_flag, current_period_str)
+            env_details_data_map = prepare_clinic_environmental_detail_data(iot_df_period, current_period_str)
+            
             current_env_alerts_list = env_details_data_map.get("current_environmental_alerts_list", [])
             if current_env_alerts_list: 
                 st.markdown("###### **Current Environmental Alerts (Latest Readings):**")
@@ -467,39 +444,29 @@ with tabs_list[4]:
                             level=alert_item.get('level', 'UNKNOWN'), 
                             details=alert_item.get('alert_type', 'Env Alert') 
                         )
-                if not non_acceptable_found: 
-                    if len(current_env_alerts_list) == 1 and current_env_alerts_list[0].get("level") == "ACCEPTABLE":
-                        st.success(f"✅ {current_env_alerts_list[0].get('message', 'Environment appears normal.')}")
-                    else: 
-                        st.success("✅ All monitored environmental parameters appear within acceptable limits based on latest readings.")
-            elif not iot_df_period.empty: 
-                 st.info("ℹ️ No specific environmental alerts currently active based on latest readings for the period.")
+                if not non_acceptable_found:
+                    st.success("✅ All monitored environmental parameters appear within acceptable limits based on latest readings.")
+            else:
+                st.info("ℹ️ No specific environmental alerts currently active based on latest readings for the period.")
 
             co2_trend_series = env_details_data_map.get("hourly_avg_co2_trend")
             co2_high_target_setting = _get_setting('ALERT_AMBIENT_CO2_HIGH_PPM', 1000)
             if isinstance(co2_trend_series, pd.Series) and not co2_trend_series.empty:
                 st.plotly_chart(plot_annotated_line_chart(co2_trend_series, "Hourly Avg. CO2 Levels (Clinic-wide)", "CO2 (ppm)", date_format_hover="%H:%M (%d-%b)", target_ref_line_val=co2_high_target_setting), use_container_width=True)
-            elif not iot_df_period.empty: st.caption("ℹ️ CO2 trend data not available for display for this period.")
+            else: 
+                st.caption("ℹ️ CO2 trend data not available for display for this period.")
 
             latest_room_readings_df = env_details_data_map.get("latest_room_sensor_readings_df")
             if isinstance(latest_room_readings_df, pd.DataFrame) and not latest_room_readings_df.empty:
                 st.markdown("###### **Latest Sensor Readings by Room (End of Period):**")
                 st.dataframe(latest_room_readings_df, use_container_width=True, hide_index=True)
-            elif not iot_df_period.empty: st.caption("ℹ️ Latest room sensor readings not available for display for this period.")
+            else: 
+                st.caption("ℹ️ Latest room sensor readings not available for display for this period.")
             
             for note in env_details_data_map.get("processing_notes", []): st.caption(f"Note (Env. Detail Tab): {note}")
-
-            if iot_df_period.empty and iot_available_flag: 
-                st.info("ℹ️ No IoT environmental data recorded for the selected period.")
-
         except Exception as e_env_tab:
             logger.error(f"Error processing Environment Detail Tab content: {e_env_tab}", exc_info=True)
             st.error("⚠️ An error occurred while generating environmental details.")
-    elif not data_load_error_occurred and not iot_available_flag: 
-        st.warning("🔌 IoT environmental data source is unavailable. Detailed environmental monitoring not possible.")
-    elif data_load_error_occurred:
-        st.warning("Data loading failed, cannot display environmental insights.")
-
 
 st.divider()
 footer_text = _get_setting('APP_FOOTER_TEXT', "Sentinel Health Co-Pilot.")
