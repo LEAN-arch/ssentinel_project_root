@@ -48,8 +48,9 @@ def _validate_path(path_str: str, is_dir: bool = False) -> Path:
 
 class Core:
     """Core application settings and file paths."""
+    # The line `PROJECT_ROOT_DIR = ...` has been correctly REMOVED from inside this class.
     APP_NAME = "Sentinel Health Co-Pilot"
-    APP_VERSION = "5.1.1" # Patch version for final bug fix
+    APP_VERSION = "5.1.2" # Patch version for final bug fix
     ORGANIZATION_NAME = "LMIC Health Futures Initiative"
     APP_FOOTER_TEXT = f"© {datetime.now().year} {ORGANIZATION_NAME}. | v{APP_VERSION}"
     LOG_LEVEL = _get_env("SENTINEL_LOG_LEVEL", "INFO")
