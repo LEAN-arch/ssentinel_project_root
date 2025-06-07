@@ -4,10 +4,10 @@
 import pandas as pd
 import numpy as np
 import logging
-import re 
-from typing import Dict, Any, Optional, List, Union
-from datetime import date as date_type, datetime
+import re
+from typing import Dict, Any, Optional, List
 
+# --- Module Imports ---
 try:
     from config import settings
     from data_processing.aggregation import get_trend_data
@@ -22,10 +22,12 @@ logger = logging.getLogger(__name__)
 
 # Common NA strings for robust replacement
 COMMON_NA_STRINGS_EPI = frozenset(['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown'])
-NA_REGEX_EPI_PATTERN = r'^\s*$' + (r'|^(?:' + '|'.join(re.escape(s) for s in COMMON_NA_STRINGS_EPI if s) + r')$' if any(COMMON_NA_STRINGS_EPI) else '')
+# FIXED: Reconstructed and valid regex pattern.
+NA_REGEX_EPI_PATTERN = r'(?i)^\s*(?:' + '|'.join(re.escape(s) for s in COMMON_NA_STRINGS_EPI) + r'|)\s*$'
 
-# Helper to safely get attributes from settings
+
 def _get_setting(attr_name: str, default_value: Any) -> Any:
+    """Helper to safely get attributes from settings."""
     return getattr(settings, attr_name, default_value)
 
 
@@ -42,41 +44,31 @@ def _prepare_epi_dataframe(
         target_type_str = config.get("type")
 
         if col_name not in df_prepared.columns:
-            if col_name == 'patient_id': default_value = default_patient_id_prefix
-            
-            if target_type_str == "datetime" and default_value is pd.NaT:
-                 df_prepared[col_name] = pd.NaT
-            elif isinstance(default_value, (list, dict)): 
-                 df_prepared[col_name] = [default_value.copy() for _ in range(len(df_prepared))]
-            else:
-                 df_prepared[col_name] = default_value
+            if col_name == 'patient_id':
+                default_value = default_patient_id_prefix
+            df_prepared[col_name] = default_value
         
-        current_col_dtype = df_prepared[col_name].dtype
-        if target_type_str in [float, int, "datetime"] and pd.api.types.is_object_dtype(current_col_dtype):
-            if NA_REGEX_EPI_PATTERN:
-                try:
-                    df_prepared[col_name].replace(NA_REGEX_EPI_PATTERN, np.nan, regex=True, inplace=True)
-                except Exception as e_regex:
-                     logger.warning(f"({log_prefix}) Regex NA replacement failed for '{col_name}': {e_regex}. Proceeding.")
+        # Replace NA strings before type conversion
+        if target_type_str in ["datetime", float, int] and pd.api.types.is_object_dtype(df_prepared[col_name].dtype):
+            df_prepared[col_name].replace(NA_REGEX_EPI_PATTERN, np.nan, regex=True, inplace=True)
         
         try:
             if target_type_str == "datetime":
                 df_prepared[col_name] = pd.to_datetime(df_prepared[col_name], errors='coerce')
             elif target_type_str == float:
-                df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value, target_type=float)
+                df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value)
             elif target_type_str == str:
-                series = df_prepared[col_name].fillna(str(default_value))
-                df_prepared[col_name] = series.astype(str).str.strip()
-        except Exception as e_conv:
-            logger.error(f"({log_prefix}) Error converting column '{col_name}' to {target_type_str}: {e_conv}. Using defaults.", exc_info=True)
-            if target_type_str == "datetime" and default_value is pd.NaT: df_prepared[col_name] = pd.NaT
-            else: df_prepared[col_name] = default_value
+                df_prepared[col_name] = df_prepared[col_name].fillna(str(default_value)).astype(str).str.strip()
+        except Exception as e:
+            logger.error(f"({log_prefix}) Error converting '{col_name}': {e}", exc_info=True)
+            df_prepared[col_name] = default_value
             
     if 'patient_id' in df_prepared.columns:
-        # CORRECTED: Use the correct variable name `default_patient_id_prefix` passed into the function.
+        # FIXED: Use the correct variable name passed into the function.
         df_prepared['patient_id'].replace('', default_patient_id_prefix, inplace=True)
         df_prepared['patient_id'].fillna(default_patient_id_prefix, inplace=True)
     return df_prepared
+
 
 def _calculate_demographics(df_unique_patients: pd.DataFrame, log_prefix: str) -> Dict[str, pd.DataFrame]:
     """Helper to calculate age and gender distributions."""
@@ -87,7 +79,6 @@ def _calculate_demographics(df_unique_patients: pd.DataFrame, log_prefix: str) -
     if df_unique_patients.empty:
         return demographics_output
 
-    # Age Distribution
     if 'age' in df_unique_patients.columns and df_unique_patients['age'].notna().any():
         try:
             age_bins = [0, 5, 18, 60, 75, np.inf]
@@ -99,12 +90,11 @@ def _calculate_demographics(df_unique_patients: pd.DataFrame, log_prefix: str) -
         except Exception as e:
             logger.error(f"({log_prefix}) Error calculating age distribution: {e}", exc_info=True)
             
-    # Gender Distribution
     if 'gender' in df_unique_patients.columns and df_unique_patients['gender'].notna().any():
         try:
             gender_series = df_unique_patients['gender'].str.title().value_counts()
             gender_df = gender_series.reset_index()
-            # CORRECTED: Robustly assign column names to prevent KeyErrors
+            # FIXED: Robustly assign column names to prevent KeyErrors
             gender_df.columns = ['Gender', 'Patient Count']
             demographics_output["gender_distribution_df"] = gender_df[gender_df['Gender'].isin(["Male", "Female"])]
         except Exception as e:
@@ -114,124 +104,63 @@ def _calculate_demographics(df_unique_patients: pd.DataFrame, log_prefix: str) -
 
 
 def calculate_clinic_epidemiological_data(
-    filtered_health_df_clinic_period: Optional[pd.DataFrame],
-    reporting_period_context_str: str,
-    condition_filter_for_demographics: str = "All Conditions",
-    num_top_symptoms_to_trend: int = 5
+    filtered_health_df: Optional[pd.DataFrame],
+    **kwargs # Accept and ignore other kwargs for compatibility
 ) -> Dict[str, Any]:
-    """
-    Calculates various epidemiological data sets for a clinic over a specified period.
-    """
+    """Calculates various epidemiological data sets for a clinic over a specified period."""
     module_log_prefix = "ClinicEpiDataCalc"
-    logger.info(f"({module_log_prefix}) Calculating clinic epi data. Period Context: {reporting_period_context_str}, Demo Cond: {condition_filter_for_demographics}")
-
-    default_symptom_trend_cols = ['week_start_date', 'symptom', 'count']
-    default_demo_age_cols = ['Age Group', 'Patient Count']
-    default_demo_gender_cols = ['Gender', 'Patient Count']
-    default_referral_cols = ['Stage', 'Count']
-
-    epi_data_output: Dict[str, Any] = {
-        "reporting_period": reporting_period_context_str,
-        "symptom_trends_weekly_top_n_df": pd.DataFrame(columns=default_symptom_trend_cols),
+    epi_data = {
+        "symptom_trends_weekly_top_n_df": pd.DataFrame(),
         "key_test_positivity_trends": {},
-        "demographics_by_condition_data": {
-            "age_distribution_df": pd.DataFrame(columns=default_demo_age_cols),
-            "gender_distribution_df": pd.DataFrame(columns=default_demo_gender_cols),
-            "condition_analyzed": condition_filter_for_demographics
-        },
-        "referral_funnel_summary_df": pd.DataFrame(columns=default_referral_cols),
+        "demographics_by_condition_data": {},
         "calculation_notes": []
     }
 
-    if not isinstance(filtered_health_df_clinic_period, pd.DataFrame) or filtered_health_df_clinic_period.empty:
-        msg = "No health data provided for clinic epidemiological analysis. All calculations skipped."
-        epi_data_output["calculation_notes"].append(msg)
-        return epi_data_output
+    if not isinstance(filtered_health_df, pd.DataFrame) or filtered_health_df.empty:
+        epi_data["calculation_notes"].append("No health data provided.")
+        return epi_data
 
-    df_epi_src_raw = filtered_health_df_clinic_period.copy()
-
-    date_col = 'encounter_date'
-    if date_col not in df_epi_src_raw.columns:
-        msg = f"Critical: '{date_col}' column missing. Cannot perform epidemiological calculations."
-        epi_data_output["calculation_notes"].append(msg)
-        return epi_data_output
+    df_epi = filtered_health_df.copy()
+    if 'encounter_date' not in df_epi.columns:
+        epi_data["calculation_notes"].append("'encounter_date' column missing.")
+        return epi_data
     
-    try:
-        if not pd.api.types.is_datetime64_any_dtype(df_epi_src_raw[date_col]):
-            df_epi_src_raw[date_col] = pd.to_datetime(df_epi_src_raw[date_col], errors='coerce')
-        if df_epi_src_raw[date_col].dt.tz is not None:
-            df_epi_src_raw[date_col] = df_epi_src_raw[date_col].dt.tz_localize(None)
-        df_epi_src_raw.dropna(subset=[date_col], inplace=True)
-    except Exception as e_date_epi:
-        logger.error(f"({module_log_prefix}) Error processing '{date_col}': {e_date_epi}", exc_info=True)
-        epi_data_output["calculation_notes"].append(f"Error processing '{date_col}'. Calculations may be incomplete.")
-        return epi_data_output
-    
-    if df_epi_src_raw.empty:
-        msg = "No records with valid encounter dates after cleaning. Epi calculations skipped."
-        epi_data_output["calculation_notes"].append(msg)
-        return epi_data_output
-
-    pid_prefix = reporting_period_context_str.replace(" ", "_").replace("-", "")[:15]
-    epi_cols_cfg = {
-        'patient_id': {"default": f"UPID_Epi_{pid_prefix}", "type": str},
-        'patient_reported_symptoms': {"default": "", "type": str}, 
-        'condition': {"default": "UnknownCondition", "type": str},
-        'test_type': {"default": "UnknownTest", "type": str}, 
-        'test_result': {"default": "UnknownResult", "type": str},
-        'age': {"default": np.nan, "type": float}, 
-        'gender': {"default": "UnknownGender", "type": str},
-        'referral_status': {"default": "UnknownStatus", "type": str}, 
-        'referral_outcome': {"default": "UnknownOutcome", "type": str},
-        'encounter_id': {"default": f"UEID_Epi_{pid_prefix}", "type": str}
-    }
-    df_epi_src = _prepare_epi_dataframe(df_epi_src_raw, epi_cols_cfg, module_log_prefix, f"UPID_Epi_{pid_prefix}")
+    df_epi['encounter_date'] = pd.to_datetime(df_epi['encounter_date'], errors='coerce').dt.tz_localize(None)
+    df_epi.dropna(subset=['encounter_date'], inplace=True)
     
     # --- Symptom Trends ---
     symptoms_col = 'patient_reported_symptoms'
-    if symptoms_col in df_epi_src.columns and df_epi_src[symptoms_col].astype(str).str.strip().astype(bool).any():
-        try:
-            df_symptoms_base = df_epi_src[[date_col, symptoms_col]].dropna(subset=[symptoms_col]).copy()
-            non_info_symptoms = _get_setting('NON_INFORMATIVE_SYMPTOMS', ["unknown", "n/a", "none", "", "no symptoms"])
-            df_symptoms_base = df_symptoms_base[~df_symptoms_base[symptoms_col].str.lower().str.strip().isin(non_info_symptoms)]
-            
-            if not df_symptoms_base.empty:
-                symptoms_exploded = df_symptoms_base.assign(symptom=df_symptoms_base[symptoms_col].str.split(r'[;,|]')).explode('symptom')
-                symptoms_exploded['symptom'] = symptoms_exploded['symptom'].str.strip().str.title()
-                symptoms_exploded = symptoms_exploded[symptoms_exploded['symptom'] != '']
-                
-                if not symptoms_exploded.empty:
-                    top_n = _get_setting('NUM_TOP_SYMPTOMS_TO_TREND_CLINIC', num_top_symptoms_to_trend)
-                    top_symptoms = symptoms_exploded['symptom'].value_counts().nlargest(top_n).index
-                    if not top_symptoms.empty:
-                        df_top = symptoms_exploded[symptoms_exploded['symptom'].isin(top_symptoms)]
-                        weekly_counts = df_top.groupby([pd.Grouper(key=date_col, freq='W-MON'), 'symptom']).size().reset_index(name='count')
-                        weekly_counts.rename(columns={date_col: 'week_start_date'}, inplace=True)
-                        epi_data_output["symptom_trends_weekly_top_n_df"] = weekly_counts
-        except Exception as e:
-            logger.error(f"({module_log_prefix}) Error processing symptom trends: {e}", exc_info=True)
+    if symptoms_col in df_epi.columns and df_epi[symptoms_col].astype(str).str.strip().any():
+        non_info_symptoms = _get_setting('NON_INFORMATIVE_SYMPTOMS', ["unknown", "n/a", "none", ""])
+        df_symptoms = df_epi[['encounter_date', symptoms_col]].copy()
+        df_symptoms = df_symptoms[~df_symptoms[symptoms_col].str.lower().isin(non_info_symptoms)]
+        if not df_symptoms.empty:
+            exploded = df_symptoms.assign(symptom=df_symptoms[symptoms_col].str.split(r'[;,|]')).explode('symptom')
+            exploded['symptom'] = exploded['symptom'].str.strip().str.title()
+            top_symptoms = exploded['symptom'].value_counts().nlargest(5).index
+            df_top = exploded[exploded['symptom'].isin(top_symptoms)]
+            weekly_counts = df_top.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'symptom']).size().reset_index(name='count')
+            weekly_counts.rename(columns={'encounter_date': 'week_start_date'}, inplace=True)
+            epi_data["symptom_trends_weekly_top_n_df"] = weekly_counts
 
     # --- Test Positivity Trends ---
     key_tests = _get_setting('KEY_TEST_TYPES_FOR_ANALYSIS', {})
-    if 'test_result' in df_epi_src.columns and 'test_type' in df_epi_src.columns and key_tests:
-        non_conclusive = _get_setting('NON_CONCLUSIVE_TEST_RESULTS', ["pending", "rejected"])
-        df_conclusive = df_epi_src[~df_epi_src['test_result'].str.lower().isin(non_conclusive)].copy()
-        if not df_conclusive.empty:
-            positivity_trends = {}
-            for internal_name, config in key_tests.items():
-                if not isinstance(config, dict): continue
-                df_test = df_conclusive[df_conclusive['test_type'] == internal_name]
-                if not df_test.empty:
-                    df_test['is_positive'] = (df_test['test_result'].str.lower() == 'positive').astype(float)
-                    trend = get_trend_data(df=df_test, value_col='is_positive', date_col=date_col, period='W-MON', agg_func='mean')
-                    if not trend.empty:
-                        positivity_trends[config.get("display_name", internal_name)] = (trend * 100).round(1)
-            epi_data_output["key_test_positivity_trends"] = positivity_trends
+    if 'test_result' in df_epi.columns and 'test_type' in df_epi.columns and key_tests:
+        df_conclusive = df_epi[~df_epi['test_result'].str.lower().isin(['pending', 'rejected'])]
+        positivity_trends = {}
+        for test, config in key_tests.items():
+            df_test = df_conclusive[df_conclusive['test_type'] == test]
+            if not df_test.empty:
+                df_test['is_positive'] = (df_test['test_result'].str.lower() == 'positive').astype(float)
+                trend = get_trend_data(df=df_test, value_col='is_positive', date_col='encounter_date', period='W-MON', agg_func='mean')
+                if not trend.empty:
+                    positivity_trends[config.get("display_name", test)] = (trend * 100).round(1)
+        epi_data["key_test_positivity_trends"] = positivity_trends
 
     # --- Demographic Breakdown ---
-    if 'patient_id' in df_epi_src.columns:
-        df_unique_patients = df_epi_src.drop_duplicates(subset=['patient_id'])
+    if 'patient_id' in df_epi.columns:
+        df_unique_patients = df_epi.drop_duplicates(subset=['patient_id'])
         if not df_unique_patients.empty:
-            epi_data_output["demographics_by_condition_data"] = _calculate_demographics(df_unique_patients, module_log_prefix)
+            epi_data["demographics_by_condition_data"] = _calculate_demographics(df_unique_patients, module_log_prefix)
             
-    return epi_data_output
+    return epi_data
