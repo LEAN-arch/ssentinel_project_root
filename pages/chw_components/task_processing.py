@@ -34,7 +34,7 @@ def _prepare_task_dataframe(
         'age': np.nan, 'ai_risk_score': 0.0, 'ai_followup_priority_score': 0.0,
         'min_spo2_pct': np.nan, 'vital_signs_temperature_celsius': np.nan,
         'max_skin_temp_celsius': np.nan, 'fall_detected_today': 0,
-        'tb_contact_tracing_completed': 0, 'priority_score': 0.0, # for existing tasks
+        'tb_contact_tracing_completed': 0, 'priority_score': 0.0,
     }
     string_defaults = {
         'patient_id': f"UPID_Task_{processing_date_str}", 'zone_id': "GeneralArea",
@@ -82,27 +82,20 @@ def generate_chw_tasks(
         logger.info(f"({log_prefix}) No data for task generation on {target_date_iso} after date filtering.")
         return []
 
-    # Sort by a composite score to process highest-risk patients first
     df_today['sort_priority'] = df_today['ai_followup_priority_score'].fillna(0) + (df_today['ai_risk_score'].fillna(0) * 0.5)
     df_sorted = df_today.sort_values(by='sort_priority', ascending=False).drop(columns=['sort_priority'])
 
-    # --- Task Generation Rule Engine ---
     temp_col = next((tc for tc in ['vital_signs_temperature_celsius', 'max_skin_temp_celsius'] if tc in df_sorted and df_sorted[tc].notna().any()), None)
-    key_conds = getattr(settings, 'KEY_CONDITIONS_FOR_ACTION', [])
 
     TASK_RULES = [
-        # Highest priority: Critical vitals
-        {"type": "URGENT_SPO2", "desc": "URGENT: Assess Critical Low SpO2 ({value:.0f}%)", "field": "min_spo2_pct", "condition": lambda v: v < getattr(settings, 'ALERT_SPO2_CRITICAL_LOW_PCT', 90), "base_prio": 98.0, "prio_factor": -1.0, "due_days": 0},
-        {"type": "URGENT_TEMP", "desc": "URGENT: Assess High Fever ({value:.1f}°C)", "field": temp_col, "condition": lambda v: v >= getattr(settings, 'ALERT_BODY_TEMP_HIGH_FEVER_C', 39.5), "base_prio": 95.0, "prio_factor": 2.0, "due_days": 0},
-        {"type": "FALL_ASSESS", "desc": "Assess After Fall Detection", "field": "fall_detected_today", "condition": lambda v: v > 0, "base_prio": 92.0, "prio_factor": 0.0, "due_days": 0},
-        # Next priority: System-generated tasks
-        {"type": "REFERRAL_TRACK", "desc": "Follow-up: Critical Referral for {row[condition]}", "field": "referral_status", "condition": lambda v, row: str(v).lower() == 'pending' and any(kc.lower() in str(row.get('condition')).lower() for kc in key_conds), "base_prio": 88.0, "prio_factor": 0.0, "due_days": 1},
-        {"type": "TB_TRACE", "desc": "Initiate/Continue TB Contact Tracing", "field": "condition", "condition": lambda v, row: re.search(r'\btb\b|tuberculosis', str(v), re.I) and not row.get('tb_contact_tracing_completed'), "base_prio": 85.0, "prio_factor": 0.0, "due_days": 1},
-        # AI and behavioral flags
-        {"type": "AI_PRIO_FOLLOWUP", "desc": "Priority Follow-up (AI Prio Score: {value:.0f})", "field": "ai_followup_priority_score", "condition": lambda v: v >= getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 80), "base_prio": 78.0, "prio_factor": 0.15, "due_days": 1},
-        {"type": "ADHERENCE_SUPPORT", "desc": "Support Medication Adherence (Reported Poor)", "field": "medication_adherence_self_report", "condition": lambda v: str(v).lower() == 'poor', "base_prio": 75.0, "prio_factor": 0.0, "due_days": 2},
-        # Routine checks based on moderate AI priority
-        {"type": "ROUTINE_CHECK", "desc": "Routine Health Check (AI Prio: {value:.0f})", "field": "ai_followup_priority_score", "condition": lambda v: v >= getattr(settings, 'FATIGUE_INDEX_MODERATE_THRESHOLD', 60), "base_prio": 60.0, "prio_factor": 0.1, "due_days": 3},
+        {"type": "URGENT_SPO2", "desc": "URGENT: Assess Critical Low SpO2 ({value:.0f}%)", "field": "min_spo2_pct", "condition": lambda v, r: v < settings.ALERT_SPO2_CRITICAL_LOW_PCT, "base_prio": 98.0, "prio_factor": -1.0, "due_days": 0},
+        {"type": "URGENT_TEMP", "desc": "URGENT: Assess High Fever ({value:.1f}°C)", "field": temp_col, "condition": lambda v, r: v >= settings.ALERT_BODY_TEMP_HIGH_FEVER_C, "base_prio": 95.0, "prio_factor": 2.0, "due_days": 0},
+        {"type": "FALL_ASSESS", "desc": "Assess After Fall Detection", "field": "fall_detected_today", "condition": lambda v, r: v > 0, "base_prio": 92.0, "prio_factor": 0.0, "due_days": 0},
+        {"type": "REFERRAL_TRACK", "desc": "Follow-up: Critical Referral for {row[condition]}", "field": "referral_status", "condition": lambda v, r: str(v).lower() == 'pending' and any(kc.lower() in str(r.get('condition')).lower() for kc in settings.KEY_CONDITIONS_FOR_ACTION), "base_prio": 88.0, "prio_factor": 0.0, "due_days": 1},
+        {"type": "TB_TRACE", "desc": "Initiate/Continue TB Contact Tracing", "field": "condition", "condition": lambda v, r: re.search(r'\btb\b|tuberculosis', str(v), re.I) and not r.get('tb_contact_tracing_completed'), "base_prio": 85.0, "prio_factor": 0.0, "due_days": 1},
+        {"type": "AI_PRIO_FOLLOWUP", "desc": "Priority Follow-up (AI Prio Score: {value:.0f})", "field": "ai_followup_priority_score", "condition": lambda v, r: v >= settings.FATIGUE_INDEX_HIGH_THRESHOLD, "base_prio": 78.0, "prio_factor": 0.15, "due_days": 1},
+        {"type": "ADHERENCE_SUPPORT", "desc": "Support Medication Adherence (Reported Poor)", "field": "medication_adherence_self_report", "condition": lambda v, r: str(v).lower() == 'poor', "base_prio": 75.0, "prio_factor": 0.0, "due_days": 2},
+        {"type": "ROUTINE_CHECK", "desc": "Routine Health Check (AI Prio: {value:.0f})", "field": "ai_followup_priority_score", "condition": lambda v, r: v >= settings.FATIGUE_INDEX_MODERATE_THRESHOLD, "base_prio": 60.0, "prio_factor": 0.1, "due_days": 3},
     ]
 
     generated_tasks: List[Dict[str, Any]] = []
@@ -119,11 +112,7 @@ def generate_chw_tasks(
                 if pd.isna(value): continue
                 
                 try:
-                    # Pass the whole row for complex conditions
-                    if "row" in rule["condition"].__code__.co_varnames:
-                        is_triggered = rule["condition"](value, row)
-                    else:
-                        is_triggered = rule["condition"](value)
+                    is_triggered = rule["condition"](value, row)
                 except Exception:
                     continue
 
@@ -131,28 +120,22 @@ def generate_chw_tasks(
                     priority = np.clip(rule["base_prio"] + (float(value) * rule["prio_factor"]), 0, 100)
                     due_date = target_date + timedelta(days=rule["due_days"])
                     
-                    # Construct rich context string
                     context_parts = [f"Cond: {row['condition']}"]
                     if pd.notna(row.get('age')): context_parts.append(f"Age: {row['age']:.0f}")
                     if pd.notna(row.get('ai_risk_score')): context_parts.append(f"AI Risk: {row['ai_risk_score']:.0f}")
-                    if rule['field'] != 'condition' and pd.notna(value):
-                        context_parts.append(f"Trigger: {value:.1f}" if isinstance(value, float) else f"Trigger: {value}")
+                    if rule['field'] != 'condition' and isinstance(value, (int, float)):
+                        context_parts.append(f"Trigger: {value:.1f}")
                     
                     generated_tasks.append({
                         "task_id": f"TSK_{patient_id}_{target_date_iso.replace('-', '')}_{len(generated_tasks)+1:03d}",
-                        "patient_id": patient_id,
-                        "assigned_chw_id": str(row.get('chw_id', chw_id_context or 'TeamDefaultCHW')),
-                        "zone_id": str(row.get('zone_id', zone_context_str or 'GeneralArea')),
-                        "task_type_code": rule["type"],
-                        "task_description": rule["desc"].format(value=value, row=row),
-                        "priority_score": round(priority, 1),
-                        "due_date": due_date.isoformat(),
-                        "status": "PENDING",
-                        "key_patient_context": " | ".join(context_parts),
+                        "patient_id": patient_id, "assigned_chw_id": str(row.get('chw_id', chw_id_context or 'TeamDefaultCHW')),
+                        "zone_id": str(row.get('zone_id', zone_context_str or 'GeneralArea')), "task_type_code": rule["type"],
+                        "task_description": rule["desc"].format(value=value, row=row), "priority_score": round(priority, 1),
+                        "due_date": due_date.isoformat(), "status": "PENDING", "key_patient_context": " | ".join(context_parts),
                         "alert_source_info": f"Data from {target_date_iso}"
                     })
                     processed_patient_task_types.add((patient_id, rule["type"]))
-                    break # Move to next patient after finding the first matching task
+                    break
 
     if not generated_tasks:
         logger.info(f"({log_prefix}) No tasks generated for {target_date_iso}.")
