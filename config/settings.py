@@ -31,7 +31,7 @@ def _get_env(var_name: str, default: Any, var_type: type = str) -> Any:
 def _validate_path(path_str: str, is_dir: bool = False) -> Path:
     """Helper to validate a path relative to the project root."""
     path_obj = Path(path_str)
-    # The helper now uses the module-level PROJECT_ROOT_DIR constant.
+    # The helper now correctly uses the module-level PROJECT_ROOT_DIR constant.
     if not path_obj.is_absolute():
         path_obj = PROJECT_ROOT_DIR / path_obj
     
@@ -49,12 +49,12 @@ def _validate_path(path_str: str, is_dir: bool = False) -> Path:
 class Core:
     """Core application settings and file paths."""
     APP_NAME = "Sentinel Health Co-Pilot"
-    APP_VERSION = "5.1.0" # Version bump for corrected architecture
+    APP_VERSION = "5.1.1" # Patch version for final bug fix
     ORGANIZATION_NAME = "LMIC Health Futures Initiative"
     APP_FOOTER_TEXT = f"© {datetime.now().year} {ORGANIZATION_NAME}. | v{APP_VERSION}"
     LOG_LEVEL = _get_env("SENTINEL_LOG_LEVEL", "INFO")
     
-    # Paths now correctly use the module-level helper.
+    # Paths now correctly use the module-level helper, which has no circular dependencies.
     ASSETS_DIR = _validate_path("assets", is_dir=True)
     DATA_SOURCES_DIR = _validate_path("data_sources", is_dir=True)
     
@@ -133,7 +133,7 @@ class Settings:
         self.Semantics = Semantics()
         self.WebUI = WebUI()
         self.ColorPalette = ColorPalette()
-        self.PROJECT_ROOT_DIR = PROJECT_ROOT_DIR # Add the global constant here for easy access.
+        self.PROJECT_ROOT_DIR = PROJECT_ROOT_DIR
         
         # --- Create flattened aliases for backward compatibility ---
         all_attrs = {}
@@ -147,6 +147,13 @@ class Settings:
         self.CACHE_TTL_SECONDS_WEB_REPORTS = self.WebUI.CACHE_TTL_SECONDS
         self.WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND = self.WebUI.DEFAULT_DATE_RANGE_DAYS
         self.APP_LAYOUT = "wide"
+        
+    def __getattr__(self, name: str) -> Any:
+        # This makes settings.RISK_SCORE_HIGH work as a fallback if the direct attribute doesn't exist.
+        for section in [self.Core, self.Thresholds, self.Semantics, self.WebUI, self.ColorPalette]:
+            if hasattr(section, name):
+                return getattr(section, name)
+        raise AttributeError(f"'Settings' object has no attribute '{name}'")
 
 
 settings = Settings()
