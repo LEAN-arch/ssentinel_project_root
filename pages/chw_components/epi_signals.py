@@ -1,3 +1,5 @@
+# sentinel_project_root/pages/chw_components/epi_signals.py
+"""Extracts epidemiological signals from CHW daily data for Sentinel Health Co-Pilot."""
 import pandas as pd
 import numpy as np
 import logging
@@ -5,30 +7,26 @@ import re
 from typing import Dict, Any, Optional, List, Union
 from datetime import date as date_type, datetime
 
-# --- Logger Setup ---
-# Configure logger for this module
-logger = logging.getLogger(__name__)
-
-# --- Module Imports ---
 try:
     from config import settings
     from data_processing.helpers import convert_to_numeric
 except ImportError as e:
-    # Log a critical error if essential modules cannot be imported
-    logger.error(f"Critical import error in epi_signals.py: {e}. Ensure paths/dependencies are correct.", exc_info=True)
+    logging.basicConfig(level=logging.ERROR)
+    # FIX: Use the special __name__ variable for the logger
+    logger_init = logging.getLogger(__name__)
+    logger_init.error(f"Critical import error in epi_signals.py: {e}. Ensure paths/dependencies are correct.")
     raise
 
-# --- Constants ---
+# FIX: Use the special __name__ variable for the logger
+logger = logging.getLogger(__name__)
+
 # Common NA strings for robust replacement
 COMMON_NA_STRINGS_EPI = frozenset(['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown'])
 
-# FIXED: Reconstructed and valid regex pattern from the corrupted original.
-_pattern_parts_epi = [re.escape(s) for s in COMMON_NA_STRINGS_EPI if s]
-NA_REGEX_EPI_PATTERN = (
-    r'^\s*(?:' + '|'.join(_pattern_parts_epi) + r')\s*$'
-    if _pattern_parts_epi
-    else ''
-)
+# FIX: Reconstructed the corrupted regex pattern.
+_na_pattern_core_epi = '|'.join(re.escape(s) for s in COMMON_NA_STRINGS_EPI if s)
+NA_REGEX_EPI_PATTERN = fr'(?i)(^\s*$|^\s*(?:{_na_pattern_core_epi})\s*$)' if _na_pattern_core_epi else r'^\s*$'
+
 
 # Pre-compile common regex patterns
 SYMPTOM_KEYWORDS_PATTERN_EPI = re.compile(
@@ -38,7 +36,6 @@ SYMPTOM_KEYWORDS_PATTERN_EPI = re.compile(
 MALARIA_PATTERN_EPI = re.compile(r"\bmalaria\b", re.IGNORECASE)
 TB_PATTERN_EPI = re.compile(r"\btb\b|tuberculosis", re.IGNORECASE)
 
-
 def _prepare_epi_dataframe(
     df: pd.DataFrame,
     cols_config: Dict[str, Dict[str, Any]],
@@ -46,13 +43,13 @@ def _prepare_epi_dataframe(
 ) -> pd.DataFrame:
     """Prepares the DataFrame for epi signal extraction: ensures columns exist, correct types, and handles NAs."""
     df_prepared = df.copy()
+    # FIX: The entire for loop was missing its indentation.
     for col_name, config in cols_config.items():
-        # FIXED: Corrected IndentationError for the entire block below
         default_value = config["default"]
         target_type_str = config["type"]
-
         if col_name not in df_prepared.columns:
-            if target_type_str == "datetime" and default_value is pd.NaT:
+            # FIX: Use pd.isna() for robust NaT check
+            if target_type_str == "datetime" and pd.isna(default_value):
                  df_prepared[col_name] = pd.NaT
             elif isinstance(default_value, (list, dict)):
                  df_prepared[col_name] = [default_value.copy() for _ in range(len(df_prepared))]
@@ -78,13 +75,13 @@ def _prepare_epi_dataframe(
                 df_prepared[col_name] = series.astype(str).str.strip()
         except Exception as e_conv:
             logger.error(f"({log_prefix}) Error converting column '{col_name}' to {target_type_str}: {e_conv}. Using defaults.", exc_info=True)
-            if target_type_str == "datetime" and default_value is pd.NaT:
+            # FIX: Use pd.isna() for robust NaT check
+            if target_type_str == "datetime" and pd.isna(default_value):
                 df_prepared[col_name] = pd.NaT
-            else:
+            else: 
                 df_prepared[col_name] = default_value
-            
+        
     return df_prepared
-
 
 def _calculate_demographics_high_risk(
     df_high_risk: pd.DataFrame,
@@ -98,29 +95,28 @@ def _calculate_demographics_high_risk(
     }
     if df_high_risk.empty:
         return demographics
-
+    
     if 'age' in df_high_risk.columns and df_high_risk['age'].notna().any():
         age_bins = [
-            0,
-            getattr(settings, 'AGE_THRESHOLD_LOW', 5),
-            getattr(settings, 'AGE_THRESHOLD_MODERATE', 18),
-            getattr(settings, 'AGE_THRESHOLD_HIGH', 60),
-            getattr(settings, 'AGE_THRESHOLD_VERY_HIGH', 75),
+            0, 
+            getattr(settings, 'AGE_THRESHOLD_LOW', 5), 
+            getattr(settings, 'AGE_THRESHOLD_MODERATE', 18), 
+            getattr(settings, 'AGE_THRESHOLD_HIGH', 60), 
+            getattr(settings, 'AGE_THRESHOLD_VERY_HIGH', 75), 
             np.inf
         ]
-        # Explicitly cast settings values to int to ensure clean labels (e.g., "5-17" not "5.0-17.0").
         age_labels = [
-            f'0-{int(age_bins[1]) - 1}',
-            f'{int(age_bins[1])}-{int(age_bins[2]) - 1}',
-            f'{int(age_bins[2])}-{int(age_bins[3]) - 1}',
-            f'{int(age_bins[3])}-{int(age_bins[4]) - 1}',
+            f'0-{int(age_bins[1]) - 1}', 
+            f'{int(age_bins[1])}-{int(age_bins[2]) - 1}', 
+            f'{int(age_bins[2])}-{int(age_bins[3]) - 1}', 
+            f'{int(age_bins[3])}-{int(age_bins[4]) - 1}', 
             f'{int(age_bins[4])}+'
         ]
         age_series_for_cut = convert_to_numeric(df_high_risk['age'], default_value=np.nan).dropna()
         if not age_series_for_cut.empty:
             try:
                 demographics["age_group_distribution"] = pd.cut(
-                    age_series_for_cut,
+                    age_series_for_cut, 
                     bins=age_bins, labels=age_labels, right=False, include_lowest=True
                 ).value_counts().sort_index().to_dict()
             except Exception as e_age_cut:
@@ -139,7 +135,6 @@ def _calculate_demographics_high_risk(
         }
     return demographics
 
-
 def _detect_symptom_clusters(
     df_symptoms: pd.DataFrame,
     symptom_clusters_config: Dict[str, List[str]],
@@ -151,7 +146,7 @@ def _detect_symptom_clusters(
     """Detects symptom clusters based on configuration."""
     if df_symptoms.empty or 'patient_reported_symptoms' not in df_symptoms or 'patient_id' not in df_symptoms:
         return []
-    
+        
     symptoms_lower_series = df_symptoms['patient_reported_symptoms'].astype(str).str.lower()
     detected_clusters_list: List[Dict[str, Any]] = []
 
@@ -175,15 +170,14 @@ def _detect_symptom_clusters(
             patients_in_cluster_count = df_symptoms.loc[current_cluster_series_mask, 'patient_id'].nunique()
             if patients_in_cluster_count >= min_patients_for_cluster:
                 detected_clusters_list.append({
-                    "symptoms_pattern": cluster_name,
-                    "patient_count": int(patients_in_cluster_count),
+                    "symptoms_pattern": cluster_name, 
+                    "patient_count": int(patients_in_cluster_count), 
                     "location_hint": chw_zone_context
                 })
 
     if detected_clusters_list:
         return sorted(detected_clusters_list, key=lambda x: x['patient_count'], reverse=True)[:max_clusters_to_report]
     return []
-
 
 def extract_chw_epi_signals(
     for_date: Union[str, pd.Timestamp, date_type, datetime],
@@ -198,7 +192,7 @@ def extract_chw_epi_signals(
     module_log_prefix = "CHWEpiSignalExtract"
     try:
         processing_date_dt = pd.to_datetime(for_date, errors='coerce')
-        # FIXED: Use robust pd.isna() for NaT checking
+        # FIX: Use pd.isna() for robust NaT check
         if pd.isna(processing_date_dt):
             raise ValueError(f"Invalid 'for_date' ({for_date}) for epi signals.")
         processing_date = processing_date_dt.date()
@@ -210,11 +204,11 @@ def extract_chw_epi_signals(
     logger.info(f"({module_log_prefix}) Extracting CHW local epi signals for date: {processing_date_str}, context: {chw_zone_context}")
 
     epi_signals_output: Dict[str, Any] = {
-        "date_of_activity": processing_date_str,
+        "date_of_activity": processing_date_str, 
         "operational_context": chw_zone_context,
-        "symptomatic_patients_key_conditions_count": 0,
+        "symptomatic_patients_key_conditions_count": 0, 
         "symptom_keywords_for_monitoring": SYMPTOM_KEYWORDS_PATTERN_EPI.pattern.replace(r"\b", "").replace(r"\s+", " ").replace("|", ", "),
-        "newly_identified_malaria_patients_count": 0,
+        "newly_identified_malaria_patients_count": 0, 
         "newly_identified_tb_patients_count": 0,
         "pending_tb_contact_tracing_tasks_count": 0,
         "demographics_of_high_ai_risk_patients_today": {
@@ -254,7 +248,7 @@ def extract_chw_epi_signals(
     if df_epi_src.empty:
         logger.info(f"({module_log_prefix}) No CHW data for {processing_date_str} after date filtering. Signals based on pre_calculated_kpis or defaults only.")
         return epi_signals_output
-    
+        
     key_symptomatic_conditions = getattr(settings, 'KEY_CONDITIONS_FOR_ACTION', [])
 
     if 'patient_reported_symptoms' in df_epi_src.columns and 'condition' in df_epi_src.columns and 'patient_id' in df_epi_src.columns:
