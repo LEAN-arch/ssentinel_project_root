@@ -160,12 +160,18 @@ with tabs[1]: # Testing
             insights = prepare_clinic_lab_testing_insights_data(kpis_summary=kpis, filtered_health_df=health_df_period)
             plot_col1, plot_col2 = st.columns(2)
             with plot_col1:
-                fig_tat = plot_bar_chart(insights.get("avg_tat_by_test_df"), x_col='Average TAT (Days)', y_col='Test Type', title='Average Turnaround Time (TAT) by Test', orientation='h', y_axis_title="Test Type")
+                fig_tat = plot_bar_chart(
+                    insights.get("avg_tat_by_test_df"), x_col='Average TAT (Days)', y_col='Test Type',
+                    title='Average Turnaround Time (TAT) by Test', orientation='h', y_axis_title="Test Type"
+                )
                 target_tat_val = _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2)
                 fig_tat.add_vline(x=target_tat_val, line_width=2, line_dash="dash", line_color="red", annotation_text="Target TAT")
                 st.plotly_chart(fig_tat, use_container_width=True)
             with plot_col2:
-                fig_reject = plot_donut_chart(insights.get("rejection_reasons_df"), labels_col='Reason', values_col='Count', title='Top Sample Rejection Reasons')
+                fig_reject = plot_donut_chart(
+                    insights.get("rejection_reasons_df"), labels_col='Reason', values_col='Count',
+                    title='Top Sample Rejection Reasons'
+                )
                 st.plotly_chart(fig_reject, use_container_width=True)
             st.markdown("###### **Overdue Pending Tests:**")
             st.dataframe(insights.get("overdue_pending_tests_list_df"), use_container_width=True, hide_index=True)
@@ -219,14 +225,16 @@ with tabs[4]: # Environment
         try:
             env_data = prepare_clinic_environmental_detail_data(filtered_iot_df=iot_df_period, reporting_period_context_str=current_period_str)
             st.markdown("###### **Current Environmental Alerts (Latest Readings):**")
-            non_acceptable_alerts = [a for a in env_data.get("current_environmental_alerts_list", []) if a.get("status_level") != "ACCEPTABLE"]
+            alerts = env_data.get("current_environmental_alerts_list", [])
+            non_acceptable_alerts = [a for a in alerts if a.get("level") != "ACCEPTABLE"]
             if not non_acceptable_alerts:
                 st.success("✅ All monitored environmental parameters appear within acceptable limits.")
             else:
                 for alert in non_acceptable_alerts: 
-                    if alert.get("status_level") != "ACCEPTABLE":
-                        render_traffic_light_indicator(message=alert.get("message", "Alert"), status_level=alert.get("level", "NO_DATA"))
+                    render_traffic_light_indicator(message=alert.get("message", "Alert"), status_level=alert.get("level", "NO_DATA"))
             st.plotly_chart(plot_annotated_line_chart(env_data.get("hourly_avg_co2_trend"), "Hourly Avg. CO₂ Levels", "CO₂ (ppm)"), use_container_width=True)
+            st.markdown("###### **Latest Sensor Readings by Room:**")
+            st.dataframe(env_data.get("latest_room_sensor_readings_df"), use_container_width=True, hide_index=True)
         except Exception as e:
             logger.error(f"Error in 'Environment' tab: {e}", exc_info=True)
             st.error(f"⚠️ Could not generate environmental details: {e}")
