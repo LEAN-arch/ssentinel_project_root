@@ -91,7 +91,7 @@ def _prepare_alert_dataframe(
             else:
                 df_prepared[col_name] = default_value
     
-    # FIXED INDENTATION: This logic belongs inside the function.
+    # This logic is correctly indented and placed.
     placeholder_pid = f"UnknownPID_CHWAlert_{processing_date_str}"
     if 'patient_id' in df_prepared.columns:
         df_prepared['patient_id'].replace('', placeholder_pid, inplace=True)
@@ -114,7 +114,7 @@ def generate_chw_alerts(
     module_log_prefix = "CHWAlertGeneration"
     try:
         processing_date_dt = pd.to_datetime(for_date, errors='coerce')
-        # FIXED: Use pd.isna() for robust NaT checking
+        # Using robust pd.isna() for NaT checking.
         if pd.isna(processing_date_dt):
              raise ValueError(f"'for_date' ({for_date}) could not be parsed to a valid date object.")
         processing_date = processing_date_dt.date()
@@ -135,7 +135,6 @@ def generate_chw_alerts(
         'zone_id': {"default": chw_zone_context_str if chw_zone_context_str else "UnknownZone", "type": str},
         'condition': {"default": "N/A", "type": str},
         'age': {"default": np.nan, "type": float},
-        # FIXED: Use float type object for consistency
         'ai_risk_score': {"default": np.nan, "type": float},
         'ai_followup_priority_score': {"default": np.nan, "type": float},
         'min_spo2_pct': {"default": np.nan, "type": float},
@@ -231,7 +230,7 @@ def generate_chw_alerts(
                 "triggering_value": f"Fall(s) = {fall_detected_val}", "encounter_date": processing_date_str
             })
             execute_escalation_protocol("PATIENT_FALL_DETECTED", encounter_row.to_dict())
-            continue # FIXED: Added for consistency with other critical alerts
+            continue
 
         ai_followup_score = encounter_row.get('ai_followup_priority_score', np.nan)
         prio_score_high_thresh = getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 80.0)
@@ -297,6 +296,11 @@ def generate_chw_alerts(
             -x_alert.get('raw_priority_score', 0.0)
         )
     )
+
+    num_final_alerts = len(final_alerts_sorted_list)
+    logger.info(f"({module_log_prefix}) Generated {num_final_alerts} unique CHW patient alerts after deduplication for {processing_date_str}.")
+
+    return final_alerts_sorted_list[:max_alerts_to_return]
 
     num_final_alerts = len(final_alerts_sorted_list)
     logger.info(f"({module_log_prefix}) Generated {num_final_alerts} unique CHW patient alerts after deduplication for {processing_date_str}.")
