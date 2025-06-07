@@ -1,3 +1,5 @@
+# sentinel_project_root/visualization/plots.py
+# Plotting functions for Sentinel Health Co-Pilot Web Dashboards using Plotly.
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
@@ -16,7 +18,6 @@ try:
     from .ui_elements import get_theme_color
 except ImportError as e:
     logging.basicConfig(level=logging.INFO)
-    # FIXED: Use the correct `__name__` magic variable.
     logger_init = logging.getLogger(__name__)
     logger_init.error(f"CRITICAL IMPORT ERROR in plots.py: {e}. Using fallback settings/colors.")
     
@@ -25,6 +26,9 @@ except ImportError as e:
         COLOR_ACTION_PRIMARY = "#007BFF"; MAPBOX_STYLE_WEB = "carto-positron"; MAP_DEFAULT_CENTER_LAT = 0.0;
         MAP_DEFAULT_CENTER_LON = 0.0; MAP_DEFAULT_ZOOM_LEVEL = 1; WEB_PLOT_DEFAULT_HEIGHT = 400;
         WEB_PLOT_COMPACT_HEIGHT = 350; WEB_MAP_DEFAULT_HEIGHT = 600; COLOR_TEXT_MUTED = '#757575';
+        THEME_FONT_FAMILY = 'sans-serif'; COLOR_TEXT_HEADINGS_MAIN = "#111111";
+        COLOR_BACKGROUND_CONTENT_TRANSPARENT = "rgba(255,255,255,0.8)"; COLOR_BORDER_LIGHT = "#E0E0E0";
+        COLOR_BORDER_MEDIUM = "#BDBDBD";
     
     settings = FallbackPlotSettings()
     
@@ -32,7 +36,6 @@ except ImportError as e:
         def get_theme_color(name_or_idx, category="general", fallback_color_hex=None):
             return fallback_color_hex or "#CCCCCC"
 
-# FIXED: Use the correct `__name__` magic variable.
 logger = logging.getLogger(__name__)
 
 
@@ -97,16 +100,15 @@ def create_empty_figure(chart_title: str, height: Optional[int] = None, message_
     final_height = height or _get_setting_or_default('WEB_PLOT_DEFAULT_HEIGHT', 400)
     fig = go.Figure()
     fig.update_layout(
-        title_text=html.escape(chart_title), height=final_height,
+        title_text=f'<b>{html.escape(chart_title)}</b>', height=final_height,
         xaxis=dict(visible=False), yaxis=dict(visible=False),
-        annotations=[dict(text=html.escape(message_text), xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font_size=12)]
+        annotations=[dict(text=html.escape(message_text), xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font_size=12, font_color=_get_setting_or_default('COLOR_TEXT_MUTED', '#757575'))]
     )
     return fig
 
 
 def plot_annotated_line_chart(
-    data_series: Optional[pd.Series], chart_title: str, y_axis_label: str = "Value",
-    y_values_are_counts: bool = False, **kwargs
+    data_series: Optional[pd.Series], chart_title: str, y_axis_label: str = "Value", **kwargs
 ) -> go.Figure:
     """Generates an annotated line chart from a pandas Series."""
     height = kwargs.get('chart_height') or _get_setting_or_default('WEB_PLOT_COMPACT_HEIGHT', 350)
@@ -125,45 +127,61 @@ def plot_annotated_line_chart(
 
 
 def plot_bar_chart(
-    df_input: Optional[pd.DataFrame], x_col: str, y_col: str, title: str,
-    color_col: Optional[str] = None, y_is_count: bool = False, **kwargs
+    df_input: Optional[pd.DataFrame],
+    x_col: str,
+    y_col: str,
+    title: str,
+    color_col: Optional[str] = None,
+    barmode: str = 'group',
+    y_values_are_counts: bool = False,
+    y_axis_title: Optional[str] = None  # FIXED: Added parameter for custom y-axis title
 ) -> go.Figure:
-    """Generates a flexible bar chart."""
+    """Creates a flexible bar chart from a DataFrame."""
     if not isinstance(df_input, pd.DataFrame) or df_input.empty:
         return create_empty_figure(title)
         
-    fig = px.bar(df_input, x=x_col, y=y_col, color=color_col, text_auto=True)
-    if y_is_count:
-        fig.update_traces(texttemplate='%{y:,d}', hovertemplate=f'<b>%{{x}}</b><br>Count: %{{y:,d}}<extra></extra>')
-        fig.update_yaxes(tickformat='d', rangemode='tozero')
+    fig = px.bar(df_input, x=x_col, y=y_col, color=color_col, barmode=barmode, text_auto=True)
     
-    fig.update_layout(title_text=f'<b>{html.escape(title)}</b>')
+    if y_values_are_counts:
+        fig.update_traces(texttemplate='%{y:,.0f}', hovertemplate=f'<b>%{{x}}</b><br>Count: %{{y:,d}}<extra></extra>')
+        fig.update_yaxes(tickformat='d')
+    else:
+        fig.update_traces(texttemplate='%{y:,.1f}', hovertemplate=f'<b>%{{x}}</b><br>Value: %{{y:,.1f}}<extra></extra>')
+
+    fig.update_layout(
+        title_text=f'<b>{html.escape(title)}</b>',
+        xaxis_title=x_col.replace('_', ' ').title(),
+        # FIXED: Use the new parameter if provided, otherwise generate from column name.
+        yaxis_title=y_axis_title if y_axis_title is not None else y_col.replace('_', ' ').title(),
+        legend_title=color_col.replace('_', ' ').title() if color_col else None,
+        height=_get_setting_or_default('WEB_PLOT_DEFAULT_HEIGHT', 450)
+    )
+    
     return fig
 
 
 def plot_donut_chart(
-    df_input: Optional[pd.DataFrame], labels_col: str, values_col: str, title: str,
-    height: Optional[int] = None, **kwargs
+    df_input: Optional[pd.DataFrame], labels_col: str, values_col: str, title: str, **kwargs
 ) -> go.Figure:
     """Generates a donut chart."""
-    final_height = height or (_get_setting_or_default('WEB_PLOT_COMPACT_HEIGHT', 350) + 50)
+    height = kwargs.get('height') or (_get_setting_or_default('WEB_PLOT_COMPACT_HEIGHT', 350) + 50)
     if not isinstance(df_input, pd.DataFrame) or df_input.empty:
-        return create_empty_figure(title, final_height)
+        return create_empty_figure(title, height)
 
-    fig = px.pie(df_input, names=labels_col, values=values_col, title=f'<b>{html.escape(title)}</b>', hole=0.6, height=final_height)
+    fig = px.pie(df_input, names=labels_col, values=values_col, title=f'<b>{html.escape(title)}</b>', hole=0.6, height=height)
     fig.update_traces(textinfo='label+percent', insidetextorientation='radial')
     return fig
 
 
 def plot_heatmap(
-    matrix_df: Optional[pd.DataFrame], title: str, height: Optional[int] = None, **kwargs
+    matrix_df: Optional[pd.DataFrame], title: str, **kwargs
 ) -> go.Figure:
     """Generates a heatmap from a matrix-like DataFrame."""
-    final_height = height or _get_setting_or_default('WEB_PLOT_DEFAULT_HEIGHT', 450)
+    height = kwargs.get('height') or _get_setting_or_default('WEB_PLOT_DEFAULT_HEIGHT', 450)
     if not isinstance(matrix_df, pd.DataFrame) or matrix_df.empty:
-        return create_empty_figure(title, final_height)
+        return create_empty_figure(title, height)
     
-    fig = px.imshow(matrix_df, text_auto=True, title=f'<b>{html.escape(title)}</b>', height=final_height)
+    fig = px.imshow(matrix_df, text_auto=True, title=f'<b>{html.escape(title)}</b>', height=height)
     return fig
 
 
@@ -179,21 +197,15 @@ def plot_choropleth_map(
     if not geojson_features:
         return create_empty_figure(map_title, height, "Geographic boundary data unavailable.")
 
-    # FIXED: The duplicated and malformed try/except block has been removed.
     try:
         geojson = geojson_features if isinstance(geojson_features, dict) else {"type": "FeatureCollection", "features": geojson_features}
         
         fig = px.choropleth_mapbox(
-            map_data_df,
-            geojson=geojson,
-            locations=zone_id_df_col,
-            featureidkey=f"properties.{zone_id_geojson_prop}",
-            color=value_col,
-            hover_name=kwargs.get('hover_name_col', 'name'),
-            opacity=0.75,
-            height=height
+            map_data_df, geojson=geojson, locations=zone_id_df_col,
+            featureidkey=f"properties.{zone_id_geojson_prop}", color=value_col,
+            hover_name=kwargs.get('hover_name_col', 'name'), opacity=0.75, height=height
         )
-        fig.update_layout(title_text=f"<b>{html.escape(map_title)}</b>", margin={"r": 0, "t": 40, "l": 0, "b": 0})
+        fig.update_layout(title_text=f"<b>{html.escape(map_title)}</b>", margin={"r":0,"t":40,"l":0,"b":0})
         return fig
     except Exception as e:
         logger.error(f"Error creating map '{map_title}': {e}", exc_info=True)
