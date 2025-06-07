@@ -45,7 +45,7 @@ def _format_kpi_value(
 
 def structure_main_clinic_kpis(
     kpis_summary: Optional[Dict[str, Any]],
-    **kwargs
+    **kwargs 
 ) -> List[Dict[str, Any]]:
     """
     Structures main clinic performance KPIs into a list formatted for display.
@@ -105,7 +105,7 @@ def structure_main_clinic_kpis(
 
 def structure_disease_specific_clinic_kpis(
     kpis_summary: Optional[Dict[str, Any]],
-    **kwargs
+    **kwargs 
 ) -> List[Dict[str, Any]]:
     """
     Structures disease-specific and supply-chain KPIs.
@@ -113,7 +113,7 @@ def structure_disease_specific_clinic_kpis(
     structured_kpis = []
     if not isinstance(kpis_summary, dict): return structured_kpis
 
-    # FIXED: Use .get() with a default empty dict to prevent crash if test_summary_details is missing.
+    # FIXED: Use .get() with a default empty dict to prevent crash if 'test_summary_details' is missing
     test_details = kpis_summary.get("test_summary_details", {})
     key_tests = _get_setting('KEY_TEST_TYPES_FOR_ANALYSIS', {})
     
@@ -122,7 +122,7 @@ def structure_disease_specific_clinic_kpis(
 
         display_name = config.get("display_name", test_name)
         target_positivity = float(config.get("target_max_positivity_pct", 10.0))
-        # FIXED: Use .get() with a default empty dict to prevent crash if a specific test has no data.
+        # FIXED: Use .get() with a default empty dict to prevent crash if a specific test has no data
         stats = test_details.get(test_name, {})
         pos_rate = stats.get("positive_rate_perc")
         
@@ -143,7 +143,9 @@ def structure_disease_specific_clinic_kpis(
     stockouts = kpis_summary.get('key_drug_stockouts_count')
     stockout_status = "NO_DATA"
     if pd.notna(stockouts):
-        stockout_status = "GOOD_PERFORMANCE" if stockouts == 0 else "MODERATE_CONCERN" if stockouts <= 2 else "HIGH_CONCERN"
+        stockouts_num = pd.to_numeric(stockouts, errors='coerce')
+        if pd.notna(stockouts_num):
+            stockout_status = "GOOD_PERFORMANCE" if stockouts_num == 0 else "MODERATE_CONCERN" if stockouts_num <= 2 else "HIGH_CONCERN"
             
     structured_kpis.append({
         "title": "Key Drug Stockouts",
