@@ -5,9 +5,9 @@ import pandas as pd
 import numpy as np
 import logging
 import re
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
+from datetime import date as date_type, datetime
 
-# --- Module Imports ---
 try:
     from config import settings
     from data_processing.aggregation import get_trend_data
@@ -20,54 +20,10 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
-# Common NA strings for robust replacement
-COMMON_NA_STRINGS_EPI = frozenset(['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown'])
-# FIXED: Reconstructed and valid regex pattern.
-NA_REGEX_EPI_PATTERN = r'(?i)^\s*(?:' + '|'.join(re.escape(s) for s in COMMON_NA_STRINGS_EPI) + r'|)\s*$'
-
 
 def _get_setting(attr_name: str, default_value: Any) -> Any:
     """Helper to safely get attributes from settings."""
     return getattr(settings, attr_name, default_value)
-
-
-def _prepare_epi_dataframe(
-    df: pd.DataFrame,
-    cols_config: Dict[str, Dict[str, Any]],
-    log_prefix: str,
-    default_patient_id_prefix: str
-) -> pd.DataFrame:
-    """Prepares the DataFrame for epi signal extraction."""
-    df_prepared = df.copy()
-    for col_name, config in cols_config.items():
-        default_value = config.get("default")
-        target_type_str = config.get("type")
-
-        if col_name not in df_prepared.columns:
-            if col_name == 'patient_id':
-                default_value = default_patient_id_prefix
-            df_prepared[col_name] = default_value
-        
-        # Replace NA strings before type conversion
-        if target_type_str in ["datetime", float, int] and pd.api.types.is_object_dtype(df_prepared[col_name].dtype):
-            df_prepared[col_name].replace(NA_REGEX_EPI_PATTERN, np.nan, regex=True, inplace=True)
-        
-        try:
-            if target_type_str == "datetime":
-                df_prepared[col_name] = pd.to_datetime(df_prepared[col_name], errors='coerce')
-            elif target_type_str == float:
-                df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value)
-            elif target_type_str == str:
-                df_prepared[col_name] = df_prepared[col_name].fillna(str(default_value)).astype(str).str.strip()
-        except Exception as e:
-            logger.error(f"({log_prefix}) Error converting '{col_name}': {e}", exc_info=True)
-            df_prepared[col_name] = default_value
-            
-    if 'patient_id' in df_prepared.columns:
-        # FIXED: Use the correct variable name passed into the function.
-        df_prepared['patient_id'].replace('', default_patient_id_prefix, inplace=True)
-        df_prepared['patient_id'].fillna(default_patient_id_prefix, inplace=True)
-    return df_prepared
 
 
 def _calculate_demographics(df_unique_patients: pd.DataFrame, log_prefix: str) -> Dict[str, pd.DataFrame]:
@@ -94,7 +50,6 @@ def _calculate_demographics(df_unique_patients: pd.DataFrame, log_prefix: str) -
         try:
             gender_series = df_unique_patients['gender'].str.title().value_counts()
             gender_df = gender_series.reset_index()
-            # FIXED: Robustly assign column names to prevent KeyErrors
             gender_df.columns = ['Gender', 'Patient Count']
             demographics_output["gender_distribution_df"] = gender_df[gender_df['Gender'].isin(["Male", "Female"])]
         except Exception as e:
@@ -105,7 +60,7 @@ def _calculate_demographics(df_unique_patients: pd.DataFrame, log_prefix: str) -
 
 def calculate_clinic_epidemiological_data(
     filtered_health_df: Optional[pd.DataFrame],
-    **kwargs # Accept and ignore other kwargs for compatibility
+    **kwargs 
 ) -> Dict[str, Any]:
     """Calculates various epidemiological data sets for a clinic over a specified period."""
     module_log_prefix = "ClinicEpiDataCalc"
@@ -146,16 +101,19 @@ def calculate_clinic_epidemiological_data(
     # --- Test Positivity Trends ---
     key_tests = _get_setting('KEY_TEST_TYPES_FOR_ANALYSIS', {})
     if 'test_result' in df_epi.columns and 'test_type' in df_epi.columns and key_tests:
-        df_conclusive = df_epi[~df_epi['test_result'].str.lower().isin(['pending', 'rejected'])]
+        df_conclusive = df_epi[~df_epi['test_result'].str.lower().isin(['pending', 'rejected'])].copy()
         positivity_trends = {}
-        for test, config in key_tests.items():
-            df_test = df_conclusive[df_conclusive['test_type'] == test]
-            if not df_test.empty:
-                df_test['is_positive'] = (df_test['test_result'].str.lower() == 'positive').astype(float)
-                trend = get_trend_data(df=df_test, value_col='is_positive', date_col='encounter_date', period='W-MON', agg_func='mean')
-                if not trend.empty:
-                    positivity_trends[config.get("display_name", test)] = (trend * 100).round(1)
-        epi_data["key_test_positivity_trends"] = positivity_trends
+        if not df_conclusive.empty:
+            for test, config in key_tests.items():
+                if not isinstance(config, dict): continue
+                # FIXED: Create an explicit copy of the slice to avoid the SettingWithCopyWarning
+                df_test = df_conclusive[df_conclusive['test_type'] == test].copy()
+                if not df_test.empty:
+                    df_test['is_positive'] = (df_test['test_result'].str.lower() == 'positive').astype(float)
+                    trend = get_trend_data(df=df_test, value_col='is_positive', date_col='encounter_date', period='W-MON', agg_func='mean')
+                    if not trend.empty:
+                        positivity_trends[config.get("display_name", test)] = (trend * 100).round(1)
+            epi_data["key_test_positivity_trends"] = positivity_trends
 
     # --- Demographic Breakdown ---
     if 'patient_id' in df_epi.columns:
