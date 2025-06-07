@@ -27,7 +27,7 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 
 def prepare_clinic_patient_focus_overview_data(
-    # FIXED: Renamed parameter to `filtered_health_df` to match its usage within the function and the calling context.
+    # FIXED: Renamed the parameter to a simpler, consistent `filtered_health_df` to fix the NameError.
     filtered_health_df: Optional[pd.DataFrame],
     **kwargs
 ) -> Dict[str, Any]:
@@ -55,7 +55,6 @@ def prepare_clinic_patient_focus_overview_data(
     if not all(col in df_load_analysis.columns for col in required_cols):
         missing_cols = list(set(required_cols) - set(df_load_analysis.columns))
         output_data["processing_notes"].append(f"Required columns for patient load analysis are missing: {missing_cols}")
-        # Proceed to flagged patients even if load analysis fails
     else:
         df_load_analysis['encounter_date'] = pd.to_datetime(df_load_analysis['encounter_date'], errors='coerce')
         df_load_analysis.dropna(subset=required_cols, inplace=True)
@@ -79,7 +78,7 @@ def prepare_clinic_patient_focus_overview_data(
                 
                 if aggregated_summaries:
                     final_load_df = pd.concat(aggregated_summaries, ignore_index=True)
-                    output_data["patient_load_by_key_condition_df"] = final_load_df[default_load_cols]
+                    output_data["patient_load_by_key_condition_df"] = final_load_df.reindex(columns=default_load_cols)
     
     # --- Flagged Patients for Review ---
     try:
