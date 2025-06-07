@@ -27,13 +27,13 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 
 def prepare_clinic_lab_testing_insights_data(
-    filtered_health_df: Optional[pd.DataFrame],
     kpis_summary: Optional[Dict[str, Any]],
-    **kwargs # Accept and ignore other kwargs for compatibility
+    filtered_health_df: Optional[pd.DataFrame] = None,
+    **kwargs 
 ) -> Dict[str, Any]:
     """
     Prepares structured data for detailed testing insights, including summaries, trends,
-    and lists of overdue tests.
+    overdue tests, and rejection reasons for plotting.
     """
     module_log_prefix = "ClinicTestInsightsPrep"
     
@@ -43,14 +43,11 @@ def prepare_clinic_lab_testing_insights_data(
     insights: Dict[str, Any] = {
         "all_critical_tests_summary_table_df": pd.DataFrame(columns=default_summary_cols),
         "overdue_pending_tests_list_df": pd.DataFrame(columns=default_overdue_cols),
+        "avg_tat_by_test_df": pd.DataFrame(),
+        "rejection_reasons_df": pd.DataFrame(),
         "processing_notes": []
     }
 
-    if not isinstance(filtered_health_df, pd.DataFrame) or filtered_health_df.empty:
-        insights["processing_notes"].append("No health data provided for testing insights.")
-        return insights
-    
-    # FIXED: Use .get() for safe nested dictionary access.
     test_summary_details = kpis_summary.get("test_summary_details", {}) if isinstance(kpis_summary, dict) else {}
     key_test_configs = _get_setting('KEY_TEST_TYPES_FOR_ANALYSIS', {})
 
@@ -70,34 +67,44 @@ def prepare_clinic_lab_testing_insights_data(
         if summary_list:
             insights["all_critical_tests_summary_table_df"] = pd.DataFrame(summary_list)
 
-    # --- Overdue Pending Tests List ---
-    date_col = 'sample_collection_date' if 'sample_collection_date' in filtered_health_df and filtered_health_df['sample_collection_date'].notna().any() else 'encounter_date'
-    
-    df_pending = filtered_health_df[
-        (filtered_health_df.get('test_result', pd.Series(dtype=str)).astype(str).str.lower() == 'pending') &
-        (filtered_health_df[date_col].notna())
-    ].copy()
+    # Return early if no detailed health data is provided for the period
+    if not isinstance(filtered_health_df, pd.DataFrame) or filtered_health_df.empty:
+        insights["processing_notes"].append("Health data not provided for detailed insights (overdue tests, rejection reasons).")
+        return insights
+        
+    df_tests = filtered_health_df.copy()
 
+    # --- Overdue Pending Tests List ---
+    date_col = 'sample_collection_date' if 'sample_collection_date' in df_tests and df_tests['sample_collection_date'].notna().any() else 'encounter_date'
+    df_pending = df_tests[(df_tests.get('test_result', pd.Series(dtype=str)).astype(str).str.lower() == 'pending') & (df_tests[date_col].notna())].copy()
     if not df_pending.empty:
         df_pending[date_col] = pd.to_datetime(df_pending[date_col], errors='coerce').dt.tz_localize(None)
-        df_pending.dropna(subset=[date_col], inplace=True)
-        
-        if not df_pending.empty:
-            df_pending['days_pending'] = (pd.Timestamp('now').normalize() - df_pending[date_col]).dt.days
-            
-            def get_overdue_threshold(test_type: str) -> int:
-                config = key_test_configs.get(test_type, {})
-                tat_target = config.get('target_tat_days', _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2))
-                buffer = _get_setting('OVERDUE_TEST_BUFFER_DAYS', 2)
-                return int(pd.to_numeric(tat_target, errors='coerce').fillna(2)) + buffer
+        df_pending['days_pending'] = (pd.Timestamp('now').normalize() - df_pending[date_col]).dt.days
+        def get_overdue_threshold(test_type: str) -> int:
+            config = key_test_configs.get(test_type, {})
+            tat = config.get('target_tat_days', _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2))
+            return int(pd.to_numeric(tat, errors='coerce').fillna(2)) + _get_setting('OVERDUE_TEST_BUFFER_DAYS', 2)
+        df_pending['overdue_threshold_days'] = df_pending['test_type'].apply(get_overdue_threshold)
+        df_overdue = df_pending[df_pending['days_pending'] > df_pending['overdue_threshold_days']]
+        if not df_overdue.empty:
+            df_display = df_overdue.rename(columns={date_col: "Sample Collection/Registered Date"})
+            insights["overdue_pending_tests_list_df"] = df_display.reindex(columns=default_overdue_cols).sort_values('days_pending', ascending=False)
 
-            df_pending['overdue_threshold_days'] = df_pending['test_type'].apply(get_overdue_threshold)
-            
-            df_overdue = df_pending[df_pending['days_pending'] > df_pending['overdue_threshold_days']]
-            
-            if not df_overdue.empty:
-                df_display = df_overdue.rename(columns={date_col: "Sample Collection/Registered Date"})
-                insights["overdue_pending_tests_list_df"] = df_display.reindex(columns=default_overdue_cols).sort_values('days_pending', ascending=False).reset_index(drop=True)
+    # --- Average TAT by Test Type (for new plot) ---
+    if 'test_turnaround_days' in df_tests.columns and 'test_type' in df_tests.columns:
+        df_tat = df_tests[['test_type', 'test_turnaround_days']].dropna()
+        if not df_tat.empty:
+            avg_tat_by_test = df_tat.groupby('test_type')['test_turnaround_days'].mean().round(1).sort_values(ascending=False).reset_index()
+            avg_tat_by_test.rename(columns={'test_type': 'Test Type', 'test_turnaround_days': 'Average TAT (Days)'}, inplace=True)
+            insights['avg_tat_by_test_df'] = avg_tat_by_test
+
+    # --- Sample Rejection Reasons (for new plot) ---
+    if 'sample_status' in df_tests.columns and 'rejection_reason' in df_tests.columns:
+        df_rejected = df_tests[df_tests['sample_status'].str.lower() == 'rejected by lab'].copy()
+        if not df_rejected.empty:
+            rejection_counts = df_rejected['rejection_reason'].value_counts().reset_index()
+            rejection_counts.columns = ['Reason', 'Count']
+            insights['rejection_reasons_df'] = rejection_counts
 
     logger.info(f"({module_log_prefix}) Testing insights preparation complete.")
     return insights
