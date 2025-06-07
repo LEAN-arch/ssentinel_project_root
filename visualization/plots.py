@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 import plotly.express as px
 import plotly.io as pio
 import logging
-import os
 import html
 from typing import Optional, List, Dict, Any
 
@@ -20,11 +19,8 @@ except ImportError:
         COLOR_TEXT_DARK = "#333333"
         COLOR_BACKGROUND_CONTENT = "#FFFFFF"
         COLOR_TEXT_HEADINGS_MAIN = "#111111"
-        WEB_PLOT_DEFAULT_HEIGHT = 400
-        WEB_PLOT_COMPACT_HEIGHT = 350
-        WEB_MAP_DEFAULT_HEIGHT = 600
     settings = FallbackSettings()
-    def get_theme_color(key: str) -> str: return {"risk_high": "red", "risk_moderate": "orange"}.get(key, "grey")
+    def get_theme_color(key: str) -> str: return {"risk_high": "red"}.get(key, "grey")
 
 logger = logging.getLogger(__name__)
 
@@ -54,17 +50,18 @@ except Exception as e:
 
 
 # --- Base Plotting Utilities ---
-def _create_base_figure(df: Optional[pd.DataFrame], title: str, required_cols: List[str]) -> Optional[go.Figure]:
+def _create_base_figure(df: Optional[pd.DataFrame], title: str, required_cols: Optional[List[str]] = None) -> Optional[go.Figure]:
     """
-    Handles common validation for all plot types. Returns a figure on success, or an empty placeholder on failure.
+    Handles common validation. Returns a figure on success, or an empty placeholder on failure.
     """
     if not isinstance(df, pd.DataFrame) or df.empty:
         return create_empty_figure(title, message="No data available.")
     
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        logger.error(f"Plot '{title}': Missing required columns: {missing_cols}")
-        return create_empty_figure(title, message=f"Data is missing required columns: {', '.join(missing_cols)}")
+    if required_cols:
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            logger.error(f"Plot '{title}': Missing required columns: {missing_cols}")
+            return create_empty_figure(title, message=f"Data is missing required columns: {', '.join(missing_cols)}")
         
     return None # Indicates validation passed
 
@@ -95,8 +92,7 @@ def plot_bar_chart(
             x_col: x_axis_title or x_col.replace('_', ' ').title(),
             y_col: y_axis_title or y_col.replace('_', ' ').title(),
         }
-        if color_col:
-            labels[color_col] = color_col.replace('_', ' ').title()
+        if color_col: labels[color_col] = color_col.replace('_', ' ').title()
 
         fig = px.bar(df_input, x=x_col, y=y_col, color=color_col, orientation=orientation, labels=labels, text_auto=True, **kwargs)
         fig.update_layout(title_text=f'<b>{html.escape(title)}</b>')
@@ -111,13 +107,7 @@ def plot_donut_chart(df_input: pd.DataFrame, labels_col: str, values_col: str, t
     base_fig = _create_base_figure(df_input, title, [labels_col, values_col])
     if base_fig: return base_fig
 
-    fig = go.Figure(data=[go.Pie(
-        labels=df_input[labels_col],
-        values=df_input[values_col],
-        hole=.5,
-        textinfo='label+percent',
-        insidetextorientation='radial'
-    )])
+    fig = go.Figure(data=[go.Pie(labels=df_input[labels_col], values=df_input[values_col], hole=.5, textinfo='label+percent', insidetextorientation='radial')])
     fig.update_layout(title_text=f'<b>{html.escape(title)}</b>')
     return fig
 
@@ -135,3 +125,23 @@ def plot_annotated_line_chart(series_input: pd.Series, title: str, y_axis_title:
         fig.add_annotation(x=max_idx, y=max_val, text=f"Max: {max_val:.1f}", showarrow=True, arrowhead=2, ax=0, ay=-40)
         fig.add_annotation(x=min_idx, y=min_val, text=f"Min: {min_val:.1f}", showarrow=True, arrowhead=2, ax=0, ay=40)
     return fig
+
+# FIX: Restored the plot_heatmap function to resolve the ImportError.
+def plot_heatmap(matrix_df: Optional[pd.DataFrame], title: str, **kwargs) -> go.Figure:
+    """Generates a heatmap from a matrix-like DataFrame."""
+    # The base figure check for heatmaps doesn't need to check columns, as the whole DF is used.
+    base_fig = _create_base_figure(matrix_df, title, required_cols=None)
+    if base_fig: return base_fig
+
+    try:
+        fig = px.imshow(
+            matrix_df,
+            text_auto=kwargs.get('text_auto', True),
+            aspect=kwargs.get('aspect', "auto"),
+            **kwargs
+        )
+        fig.update_layout(title_text=f'<b>{html.escape(title)}</b>')
+        return fig
+    except Exception as e:
+        logger.error(f"Failed to create heatmap '{title}': {e}", exc_info=True)
+        return create_empty_figure(title, message=f"Chart Error: {e}")
