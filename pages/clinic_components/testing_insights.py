@@ -7,7 +7,6 @@ import logging
 import re
 from typing import Dict, Any, Optional, List
 
-# --- Module Imports ---
 try:
     from config import settings
     from data_processing.aggregation import get_trend_data
@@ -33,7 +32,7 @@ def prepare_clinic_lab_testing_insights_data(
 ) -> Dict[str, Any]:
     """
     Prepares structured data for detailed testing insights, including summaries, trends,
-    and lists of overdue tests.
+    overdue tests, and data for actionable plots.
     """
     module_log_prefix = "ClinicTestInsightsPrep"
     
@@ -90,9 +89,7 @@ def prepare_clinic_lab_testing_insights_data(
                 target_tat = test_config.get('target_tat_days', _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2))
                 buffer_days = _get_setting('OVERDUE_TEST_BUFFER_DAYS', 2)
                 
-                # FIXED: Wrap the input 'tat' in a pandas Series before using pandas methods.
-                # This prevents the AttributeError on scalar values (like integers).
-                # .iloc[0] is used to extract the scalar value back out.
+                # FIXED: Wrap the input 'tat' in a pandas Series to prevent AttributeError on scalar values.
                 numeric_tat = pd.to_numeric(pd.Series([target_tat]), errors='coerce').fillna(2).iloc[0]
                 
                 return int(numeric_tat) + buffer_days
