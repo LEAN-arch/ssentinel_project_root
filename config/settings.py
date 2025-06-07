@@ -9,7 +9,10 @@ from typing import Any, Dict, List, Union
 
 settings_logger = logging.getLogger(__name__)
 
-# --- Helper to get settings from environment with type casting and defaults ---
+# --- Foundational Constants & Helpers (Module-Level) ---
+# PROJECT_ROOT_DIR must be defined at the module level so it's available when classes are defined.
+PROJECT_ROOT_DIR = Path(__file__).resolve().parent.parent
+
 def _get_env(var_name: str, default: Any, var_type: type = str) -> Any:
     """Gets an environment variable, casts it to a type, and provides a default."""
     value = os.getenv(var_name, str(default))
@@ -22,32 +25,30 @@ def _get_env(var_name: str, default: Any, var_type: type = str) -> Any:
         )
         return default
 
+def _validate_path(path_str: str, is_dir: bool = False) -> Path:
+    """Helper to validate a path relative to the project root."""
+    path_obj = Path(path_str)
+    if not path_obj.is_absolute():
+        path_obj = PROJECT_ROOT_DIR / path_obj
+    
+    if not path_obj.exists():
+        settings_logger.warning(f"Config path check: '{path_obj.name}' not found at: {path_obj.resolve()}")
+    elif is_dir and not path_obj.is_dir():
+        settings_logger.warning(f"Config path error: '{path_obj.resolve()}' is not a directory.")
+    elif not is_dir and not path_obj.is_file():
+        settings_logger.warning(f"Config path error: '{path_obj.resolve()}' is not a file.")
+    return path_obj
+
 # --- Core System & Directory Configuration ---
 class Core:
     """Core application settings and file paths."""
-    PROJECT_ROOT_DIR = Path(__file__).resolve().parent.parent
     APP_NAME = "Sentinel Health Co-Pilot"
-    APP_VERSION = "5.0.0" # Major version increment for new architecture
+    APP_VERSION = "5.0.1" # Patch version for bug fix
     ORGANIZATION_NAME = "LMIC Health Futures Initiative"
     APP_FOOTER_TEXT = f"© {datetime.now().year} {ORGANIZATION_NAME}. | v{APP_VERSION}"
     
     LOG_LEVEL = _get_env("SENTINEL_LOG_LEVEL", "INFO")
     
-    # --- Path Validation ---
-    @staticmethod
-    def _validate_path(path_str: str, is_dir: bool = False) -> Path:
-        path_obj = Path(path_str)
-        if not path_obj.is_absolute():
-            path_obj = Core.PROJECT_ROOT_DIR / path_obj
-        
-        if not path_obj.exists():
-            settings_logger.warning(f"Config path check: '{path_obj.name}' not found at: {path_obj.resolve()}")
-        elif is_dir and not path_obj.is_dir():
-            settings_logger.warning(f"Config path error: '{path_obj.resolve()}' is not a directory.")
-        elif not is_dir and not path_obj.is_file():
-            settings_logger.warning(f"Config path error: '{path_obj.resolve()}' is not a file.")
-        return path_obj
-
     # --- Directory and File Paths ---
     ASSETS_DIR = _validate_path("assets", is_dir=True)
     DATA_SOURCES_DIR = _validate_path("data_sources", is_dir=True)
@@ -165,44 +166,23 @@ class Settings:
         self.WebUI = WebUI()
         self.ColorPalette = ColorPalette()
         
-        # Make top-level attributes accessible for convenience (legacy support)
-        # Core
-        self.PROJECT_ROOT_DIR = self.Core.PROJECT_ROOT_DIR
-        self.APP_NAME = self.Core.APP_NAME
-        self.APP_VERSION = self.Core.APP_VERSION
-        self.ORGANIZATION_NAME = self.Core.ORGANIZATION_NAME
-        self.APP_FOOTER_TEXT = self.Core.APP_FOOTER_TEXT
-        self.LOG_LEVEL = self.Core.LOG_LEVEL
-        self.APP_LOGO_SMALL_PATH = self.Core.APP_LOGO_SMALL_PATH
-        self.HEALTH_RECORDS_CSV_PATH = self.Core.HEALTH_RECORDS_CSV_PATH
-        self.ESCALATION_PROTOCOLS_JSON_PATH = self.Core.ESCALATION_PROTOCOLS_JSON_PATH
+        # --- Create flattened aliases for backward compatibility ---
+        # This makes settings.ALERT_SPO2_CRITICAL_LOW_PCT work alongside settings.Thresholds.SPO2_CRITICAL_LOW
+        all_attrs = {}
+        for section in [self.Core, self.Thresholds, self.Semantics, self.WebUI, self.ColorPalette]:
+            for attr_name in dir(section):
+                if not attr_name.startswith('_') and attr_name.isupper():
+                     all_attrs[attr_name] = getattr(section, attr_name)
         
-        # Thresholds
-        self.ALERT_SPO2_CRITICAL_LOW_PCT = self.Thresholds.SPO2_CRITICAL_LOW
-        self.ALERT_SPO2_WARNING_LOW_PCT = self.Thresholds.SPO2_WARNING_LOW
-        self.ALERT_BODY_TEMP_FEVER_C = self.Thresholds.BODY_TEMP_FEVER
-        self.ALERT_BODY_TEMP_HIGH_FEVER_C = self.Thresholds.BODY_TEMP_HIGH_FEVER
-        self.RISK_SCORE_HIGH_THRESHOLD = self.Thresholds.RISK_SCORE_HIGH
-        self.FATIGUE_INDEX_HIGH_THRESHOLD = self.Thresholds.FOLLOWUP_PRIORITY_HIGH
-        self.FATIGUE_INDEX_MODERATE_THRESHOLD = self.Thresholds.FOLLOWUP_PRIORITY_MODERATE
-        self.TASK_PRIORITY_HIGH_THRESHOLD = self.Thresholds.TASK_PRIORITY_HIGH
-
-        # Semantics
-        self.KEY_CONDITIONS_FOR_ACTION = self.Semantics.KEY_CONDITIONS_FOR_ACTION
-        self.SYMPTOM_CLUSTERS_CONFIG = self.Semantics.SYMPTOM_CLUSTERS_CONFIG
-        self.MIN_PATIENTS_FOR_SYMPTOM_CLUSTER = self.Semantics.MIN_PATIENTS_FOR_SYMPTOM_CLUSTER
-
-        # WebUI
-        self.CACHE_TTL_SECONDS_WEB_REPORTS = self.WebUI.CACHE_TTL_SECONDS
-        self.WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND = self.WebUI.DEFAULT_DATE_RANGE_DAYS
-        self.APP_LAYOUT = "wide"
+        self.__dict__.update(all_attrs)
         
-        # Add a convenience method to get any attribute
-        def __getattr__(self, name: str) -> Any:
-            for section in [self.Core, self.Thresholds, self.Semantics, self.WebUI, self.ColorPalette]:
-                if hasattr(section, name):
-                    return getattr(section, name)
-            raise AttributeError(f"'Settings' object has no attribute '{name}'")
+    # Optional: A getter for dynamic access if needed, though direct access is now flatter.
+    def __getattr__(self, name: str) -> Any:
+        for section in [self.Core, self.Thresholds, self.Semantics, self.WebUI, self.ColorPalette]:
+            if hasattr(section, name):
+                return getattr(section, name)
+        # This will only be reached if the attribute truly doesn't exist anywhere.
+        raise AttributeError(f"'Settings' object has no attribute '{name}'")
 
 settings = Settings()
 
