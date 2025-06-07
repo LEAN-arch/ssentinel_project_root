@@ -6,18 +6,18 @@ import pandas as pd
 import numpy as np
 import logging
 from datetime import date, timedelta
-from typing import Optional, Dict, Any, Tuple, List, Union
+from typing import Optional, Dict, Any, Tuple
 from pathlib import Path
 
 # --- Sentinel System Imports (Absolute Imports from Project Root) ---
 try:
     from config import settings
     from data_processing.loaders import load_health_records, load_iot_clinic_environment_data
-    from data_processing.aggregation import get_clinic_summary_kpis, get_clinic_environmental_summary_kpis
+    from data_processing.aggregation import get_clinic_summary_kpis
     from data_processing.helpers import hash_dataframe_safe
     from analytics.orchestrator import apply_ai_models
-    from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator, get_theme_color
-    from visualization.plots import plot_annotated_line_chart, plot_bar_chart, plot_donut_chart
+    from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator
+    from visualization.plots import plot_bar_chart, plot_donut_chart
 
     from pages.clinic_components.env_details import prepare_clinic_environmental_detail_data
     from pages.clinic_components.kpi_structuring import structure_main_clinic_kpis, structure_disease_specific_clinic_kpis
@@ -77,6 +77,7 @@ def prepare_dashboard_data(
     current_period_str: str,
     use_ai_supply_forecast: bool
 ) -> Dict[str, Any]:
+    """Performs all heavy computations for the dashboard in a single, cached function."""
     results = {}
     if not _health_df_period.empty:
         kpis_summary = get_clinic_summary_kpis(_health_df_period)
@@ -89,13 +90,14 @@ def prepare_dashboard_data(
             full_historical_health_df=_full_health_df, current_period_context_str=current_period_str, use_ai_supply_forecasting_model=use_ai_supply_forecast
         )
     if not _iot_df_period.empty:
-        results['env_kpis'] = get_clinic_environmental_summary_kpis(_iot_df_period)
+        # env_details now prepares all necessary data AND plots for its section
         results['env_details'] = prepare_clinic_environmental_detail_data(filtered_iot_df=_iot_df_period, reporting_period_context_str=current_period_str)
     return results
 
 # --- UI Rendering Functions (Modular & Clean) ---
 
 def render_sidebar(full_health_df: pd.DataFrame, full_iot_df: pd.DataFrame) -> Tuple[date, date, bool]:
+    """Configures and renders the sidebar filters."""
     st.sidebar.image(str(Path(_get_setting('APP_LOGO_SMALL_PATH', 'assets/logo_small.png'))), width=230)
     st.sidebar.header("Console Filters")
     min_dates = [df[col].min().date() for df, col in [(full_health_df, COL_ENCOUNTER_DATE), (full_iot_df, COL_TIMESTAMP)] if not df.empty]
@@ -116,12 +118,8 @@ def render_kpi_snapshot(dashboard_data: Dict[str, Any]):
     st.header("🚀 Clinic Performance & Environment Snapshot")
     kpis = dashboard_data.get('kpis_summary')
     if kpis:
-        # === FIX APPLIED HERE ===
-        # The TypeError indicates these functions now only take one argument (the kpis dictionary).
-        # The context string is no longer passed.
         main_kpis = structure_main_clinic_kpis(kpis)
         disease_kpis = structure_disease_specific_clinic_kpis(kpis)
-        
         if main_kpis:
             st.markdown("##### **Overall Service Performance:**")
             cols = st.columns(len(main_kpis))
@@ -133,21 +131,22 @@ def render_kpi_snapshot(dashboard_data: Dict[str, Any]):
             for i, kpi_data in enumerate(disease_kpis):
                 with cols[i]: render_kpi_card(**kpi_data)
 
-    env_kpis = dashboard_data.get('env_kpis')
-    if env_kpis:
+    env_details = dashboard_data.get('env_details')
+    if env_details and 'current_environmental_alerts_list' in env_details:
         st.markdown("##### **Clinic Environment Quick Check:**")
-        cols = st.columns(4)
-        with cols[0]: render_kpi_card(title="Avg. CO₂", value_str=f"{env_kpis.get('avg_co2_overall_ppm', 0):.0f}", units="ppm", icon="💨")
-        with cols[1]: render_kpi_card(title="Avg. PM2.5", value_str=f"{env_kpis.get('avg_pm25_overall_ugm3', 0):.1f}", units="µg/m³", icon="🌫️")
-        with cols[2]: render_kpi_card(title="Avg. Occupancy", value_str=f"{env_kpis.get('avg_waiting_room_occupancy_overall_persons', 0):.1f}", units="persons", icon="👨‍👩‍👧‍👦")
-        with cols[3]: render_kpi_card(title="High Noise Alerts", value_str=str(env_kpis.get('rooms_noise_high_alert_latest_count', 0)), units="areas", icon="🔊")
+        # For simplicity, snapshot KPIs for environment can be derived from alerts if needed, or kept static
+        # This example keeps them static for clarity
+        cols = st.columns(len(env_details.get('current_environmental_alerts_list', [])) or 1)
+        for i, alert in enumerate(env_details['current_environmental_alerts_list']):
+            with cols[i]:
+                render_traffic_light_indicator(message=alert.get("message", "Alert"), status_level=alert.get("level", "NO_DATA"))
     st.divider()
 
 def render_deep_dive_tabs(dashboard_data: Dict[str, Any]):
     """Renders the main content tabs with robust checks for data existence."""
     st.header("🛠️ Operational Areas Deep Dive")
     tabs = st.tabs(["📈 Local Epi", "🔬 Testing", "💊 Supply Chain", "🧍 Patient Focus", "🌿 Environment"])
-    
+
     with tabs[0]: # Local Epi
         epi_data = dashboard_data.get('epi_data')
         symptom_df = epi_data.get("symptom_trends_weekly_top_n_df") if epi_data else None
@@ -160,12 +159,9 @@ def render_deep_dive_tabs(dashboard_data: Dict[str, Any]):
     with tabs[1]: # Testing
         st.subheader("Laboratory and Testing Performance")
         insights = dashboard_data.get('testing_insights')
-        tat_df = insights.get("avg_tat_by_test_df") if insights else None
-        rejection_df = insights.get("rejection_reasons_df") if insights else None
-        overdue_df = insights.get("overdue_pending_tests_list_df") if insights else None
-
-        if not any([isinstance(df, pd.DataFrame) and not df.empty for df in [tat_df, rejection_df, overdue_df]]):
-             st.info("ℹ️ No testing data (turnaround, rejections, or overdue) available for this period.")
+        tat_df, rejection_df, overdue_df = (insights.get(k) if insights else None for k in ["avg_tat_by_test_df", "rejection_reasons_df", "overdue_pending_tests_list_df"])
+        if not any(isinstance(df, pd.DataFrame) and not df.empty for df in [tat_df, rejection_df, overdue_df]):
+            st.info("ℹ️ No testing data (turnaround, rejections, or overdue) available for this period.")
         else:
             col1, col2 = st.columns(2)
             with col1:
@@ -174,76 +170,52 @@ def render_deep_dive_tabs(dashboard_data: Dict[str, Any]):
                     target_tat = _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2)
                     fig_tat.add_vline(x=target_tat, line_width=2, line_dash="dash", line_color="red", annotation_text=f"Target ({target_tat} days)")
                     st.plotly_chart(fig_tat, use_container_width=True)
-                else:
-                    st.write("No turnaround time data.")
+                else: st.write("No turnaround time data.")
             with col2:
                 if isinstance(rejection_df, pd.DataFrame) and not rejection_df.empty:
                     fig_reject = plot_donut_chart(rejection_df, labels_col='Reason', values_col='Count', title='Top Sample Rejection Reasons')
                     st.plotly_chart(fig_reject, use_container_width=True)
-                else:
-                    st.write("No sample rejection data.")
-            
+                else: st.write("No sample rejection data.")
             st.markdown("###### **Overdue Pending Tests:**")
             if isinstance(overdue_df, pd.DataFrame) and not overdue_df.empty:
-                 st.dataframe(overdue_df, use_container_width=True, hide_index=True)
-            else:
-                st.write("No overdue tests found.")
+                st.dataframe(overdue_df, use_container_width=True, hide_index=True)
+            else: st.write("No overdue tests found.")
 
     with tabs[2]: # Supply Chain
         st.subheader("Supply Chain Forecast & Status")
         forecast_data = dashboard_data.get('supply_forecast_data')
         forecast_list = forecast_data.get("forecast_items_overview_list", []) if forecast_data else []
-        
         if forecast_list:
             forecast_df = pd.DataFrame(forecast_list)
-            forecast_df['days_of_supply_remaining'] = pd.to_numeric(forecast_df['days_of_supply_remaining'], errors='coerce')
-            forecast_df.sort_values('days_of_supply_remaining', ascending=True, inplace=True)
-            color_map = {"Critical Low": get_theme_color("risk_high"), "Warning Low": get_theme_color("risk_moderate"), "Sufficient": get_theme_color("risk_low")}
-            fig_supply = plot_bar_chart(forecast_df, x_col='days_of_supply_remaining', y_col='item', title='Estimated Days of Supply Remaining', color_col='stock_status', orientation='h', color_discrete_map=color_map, y_axis_title='Supply Item', x_axis_title='Days Remaining')
+            fig_supply = plot_bar_chart(forecast_df.sort_values('days_of_supply_remaining', ascending=True), x_col='days_of_supply_remaining', y_col='item', title='Estimated Days of Supply Remaining', color_col='stock_status', orientation='h', y_axis_title='Supply Item', x_axis_title='Days Remaining')
             st.plotly_chart(fig_supply, use_container_width=True)
             st.markdown(f"**Forecast Model Used:** `{forecast_data.get('forecast_model_type_used', 'N/A')}`")
             st.dataframe(forecast_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("ℹ️ No supply chain forecast data could be generated.")
+        else: st.info("ℹ️ No supply chain forecast data could be generated.")
 
     with tabs[3]: # Patient Focus
         focus_data = dashboard_data.get('patient_focus_data')
-        patient_load_df = focus_data.get("patient_load_by_key_condition_df") if focus_data else None
-        flagged_patients_df = focus_data.get("flagged_patients_for_review_df") if focus_data else None
-
+        patient_load_df, flagged_patients_df = (focus_data.get(k) if focus_data else None for k in ["patient_load_by_key_condition_df", "flagged_patients_for_review_df"])
         if isinstance(patient_load_df, pd.DataFrame) and not patient_load_df.empty:
             fig_load = plot_bar_chart(patient_load_df, x_col='period_start_date', y_col='unique_patients_count', title="Patient Load by Key Condition", color_col='condition', y_axis_title="Number of Unique Patients", barmode='stack')
             st.plotly_chart(fig_load, use_container_width=True)
-        else:
-            st.info("ℹ️ No patient load data available for this period.")
-        
+        else: st.info("ℹ️ No patient load data available for this period.")
         st.markdown("###### **Flagged Patients for Clinical Review:**")
         if isinstance(flagged_patients_df, pd.DataFrame) and not flagged_patients_df.empty:
             st.dataframe(flagged_patients_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("ℹ️ No patients were flagged for review in this period.")
+        else: st.info("ℹ️ No patients were flagged for review in this period.")
 
     with tabs[4]: # Environment
         env_details = dashboard_data.get('env_details')
         if env_details:
-            st.markdown("###### **Environmental Alerts (Latest Readings):**")
-            alerts = [a for a in env_details.get("current_environmental_alerts_list", []) if a.get("level") != "ACCEPTABLE"]
-            if not alerts:
-                st.success("✅ All monitored environmental parameters are within acceptable limits.")
-            else:
-                for alert in alerts:
-                    render_traffic_light_indicator(message=alert.get("message", "Alert"), status_level=alert.get("level", "NO_DATA"))
-            
-            co2_trend_df = env_details.get("hourly_avg_co2_trend")
-            if isinstance(co2_trend_df, pd.DataFrame) and not co2_trend_df.empty:
-                st.plotly_chart(plot_annotated_line_chart(co2_trend_df, "Hourly Avg. CO₂ Levels", "CO₂ (ppm)"), use_container_width=True)
-            
+            co2_fig = env_details.get("co2_trend_plot")
+            if co2_fig:
+                st.plotly_chart(co2_fig, use_container_width=True)
             sensor_readings_df = env_details.get("latest_room_sensor_readings_df")
             if isinstance(sensor_readings_df, pd.DataFrame) and not sensor_readings_df.empty:
                 st.markdown("###### **Latest Sensor Readings by Room:**")
                 st.dataframe(sensor_readings_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("ℹ️ No environmental data was recorded in this period.")
+        else: st.info("ℹ️ No environmental data was recorded in this period.")
 
 def main():
     """Main function to orchestrate the dashboard page."""
@@ -269,7 +241,6 @@ def main():
         st.stop()
         
     try:
-        # Pass only dashboard_data, as render_kpi_snapshot no longer needs the context string directly
         render_kpi_snapshot(dashboard_data)
         render_deep_dive_tabs(dashboard_data)
     except Exception as e:
