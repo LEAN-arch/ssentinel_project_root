@@ -1,216 +1,253 @@
-# sentinel_project_root/analytics/risk_prediction.py
-Contains the RiskPredictionModel class for Sentinel.
+:# sentinel_project_root/analytics/supply_forecasting.py
+Contains supply forecasting models (AI-simulated and simple linear) for Sentinel.
 import pandas as pd
 import numpy as np
 import logging
-import re  # Added this import
-from typing import Optional, Dict, Any
+from typing import Optional, List, Dict, Any
+from datetime import date, timedelta
 from config import settings
-from .protocol_executor import execute_escalation_protocol
+from data_processing.helpers import convert_to_numeric
 logger = logging.getLogger(name)
-class RiskPredictionModel:
+class SupplyForecastingModel:
 """
-Simulates a pre-trained patient/worker risk prediction model.
-Uses rule-based logic with weights for core features.
-The risk score is intended to be a general indicator, potentially triggering
-further assessment or specific protocols.
+Simulates an AI-driven supply forecasting model that might incorporate factors like
+seasonality, trends, and stochastic noise for more "realistic" (though still simulated) forecasts.
 """
 def init(self):
-self.base_risk_factors: Dict[str, Dict[str, Any]] = {
-'age': {
-'weight': 0.6, 'threshold_low': settings.AGE_THRESHOLD_MODERATE, 'factor_low': -5,
-'threshold_high': settings.AGE_THRESHOLD_HIGH, 'factor_high': 10,
-'threshold_very_high': settings.AGE_THRESHOLD_VERY_HIGH, 'factor_very_high': 20
-},
-'min_spo2_pct': {
-'weight': 2.8, 'threshold_low': settings.ALERT_SPO2_CRITICAL_LOW_PCT, 'factor_low': 35,
-'mid_threshold_low': settings.ALERT_SPO2_WARNING_LOW_PCT, 'factor_mid_low': 20
-},
-'vital_signs_temperature_celsius': {
-'weight': 2.2, 'threshold_high': settings.ALERT_BODY_TEMP_FEVER_C, 'factor_high': 15,
-'super_high_threshold': settings.ALERT_BODY_TEMP_HIGH_FEVER_C, 'factor_super_high': 28
-},
-'max_skin_temp_celsius': { # Alternative temperature, slightly less weight
-'weight': 1.8, 'threshold_high': settings.HEAT_STRESS_RISK_BODY_TEMP_C, 'factor_high': 10,
-'super_high_threshold': settings.ALERT_BODY_TEMP_FEVER_C - 0.2, 'factor_super_high': 20
-},
-'stress_level_score': { # Assumes a 0-100 score from another model/input
-'weight': 0.9, 'threshold_high': settings.FATIGUE_INDEX_MODERATE_THRESHOLD, 'factor_high': 8,
-'super_high_threshold': settings.FATIGUE_INDEX_HIGH_THRESHOLD, 'factor_super_high': 15
-},
-'hrv_rmssd_ms': { # Lower HRV indicates higher stress/risk
-'weight': 1.3, 'threshold_low': settings.STRESS_HRV_LOW_THRESHOLD_MS, 'factor_low': 18
-},
-'tb_contact_traced': { # Being a TB contact increases risk
-'weight': 1.5, 'is_flag': True, 'flag_value': '1', 'factor_true': 15 # Match string '1' after conversion
-},
-'fall_detected_today': { # A fall is a significant risk event
-'weight': 2.5, 'is_flag': True, 'flag_value': '1', 'factor_true': 30 # Match string '1'
-},
-'ambient_heat_index_c': { # High ambient heat poses risk
-'weight': 0.8, 'threshold_high': settings.ALERT_AMBIENT_HEAT_INDEX_RISK_C, 'factor_high': 10,
-'super_high_threshold': settings.ALERT_AMBIENT_HEAT_INDEX_DANGER_C, 'factor_super_high': 18
-},
-'ppe_compliant_flag': { # Non-compliance increases risk
-'weight': 1.2, 'is_flag': True, 'flag_value': '0', 'factor_true': 12 # Match string '0'
-}
-}
-self.condition_base_scores: Dict[str, float] = {
-cond.lower(): 25.0 for cond in settings.KEY_CONDITIONS_FOR_ACTION
-}
-self.condition_base_scores.update({ # More specific scores
-"sepsis": 50.0, "severe dehydration": 45.0, "heat stroke": 48.0,
-"tb": 35.0, "hiv-positive": 28.0, "pneumonia": 40.0, "malaria": 22.0,
-"wellness visit": -20.0, "routine follow-up": -10.0,
-"minor cold": -8.0, "injury": 15.0
-})
-self.CHRONIC_CONDITION_FLAG_RISK_POINTS: float = 20.0
-logger.info("RiskPredictionModel initialized with configured base scores and factors.")
-def _get_condition_base_score(self, condition_str: Optional[str]) -> float:
-    """
-    Determines a base risk score from a condition string.
-    Handles single conditions, delimited lists (';' or ','), and partial matches.
-    Returns the score of the highest-risk condition found.
-    """
-    if pd.isna(condition_str) or not isinstance(condition_str, str) or \
-       condition_str.strip().lower() in ["unknown", "none", "n/a", "", "unknowncondition"]: # Added unknowncondition
-        return 0.0
-
-    max_base_score = 0.0
-    condition_input_lower = condition_str.lower()
+# Use a fixed seed based on settings.RANDOM_SEED for consistent pseudo-random parameter generation
+self._rng_params_init = np.random.RandomState(settings.RANDOM_SEED)
+self.item_specific_params: Dict[str, Dict[str, Any]] = {}
+    base_monthly_coeffs = np.array([1.0] * 12) # Base: no seasonality
     
-    # Split if delimiters are present, otherwise treat as single condition
-    potential_conditions = [condition_input_lower] # Default if no delimiters
-    # Robust splitting for various delimiters
-    if any(d in condition_input_lower for d in [';', ',']):
-        # Use regex to split by multiple delimiters and handle spaces around them
-        potential_conditions = [c.strip() for c in re.split(r'[;,]\s*', condition_input_lower) if c.strip()]
-
-
-    for part_cond_clean in potential_conditions:
-        if not part_cond_clean:
-            continue
-
-        # Check for exact match (case-insensitive) first for performance
-        current_best_score_for_part = self.condition_base_scores.get(part_cond_clean, 0.0)
-        
-        if current_best_score_for_part == 0.0: # If no exact match, check for partial matches
-            for known_cond_key, score_val in self.condition_base_scores.items():
-                if known_cond_key in part_cond_clean: # known_cond_key is already lower
-                    current_best_score_for_part = max(current_best_score_for_part, score_val)
-        max_base_score = max(max_base_score, current_best_score_for_part)
-        
-    return max_base_score
-
-def predict_risk_score(self, features: pd.Series) -> float:
-    """
-    Predicts a risk score for a single individual based on a Series of features.
-    """
-    if not isinstance(features, pd.Series):
-        logger.error("RiskPredictionModel.predict_risk_score expects a pandas Series for features.")
-        return 0.0
-
-    current_features = features.copy() # Work on a copy
-
-    # Ensure all expected base_risk_factors columns exist with a benign default
-    # String '0' for flags (as they are compared as strings), np.nan for numeric
-    for key_feature, params_feature in self.base_risk_factors.items():
-        if key_feature not in current_features:
-            current_features[key_feature] = '0' if params_feature.get('is_flag') else np.nan
-    # Ensure other specific columns used are present
-    if 'condition' not in current_features: current_features['condition'] = "UnknownCondition"
-    if 'chronic_condition_flag' not in current_features: current_features['chronic_condition_flag'] = '0' # String '0' for flag
-    if 'medication_adherence_self_report' not in current_features: current_features['medication_adherence_self_report'] = 'Unknown'
-    if 'rapid_psychometric_distress_score' not in current_features: current_features['rapid_psychometric_distress_score'] = 0.0
-    if 'signs_of_fatigue_observed_flag' not in current_features: current_features['signs_of_fatigue_observed_flag'] = '0' # String '0' for flag
-
-
-    calculated_risk = self._get_condition_base_score(str(current_features.get('condition', '')))
-
-    # Chronic condition flag check (value can be 0, 1, '0', '1', 'true', 'yes', etc.)
-    chronic_flag_val = str(current_features.get('chronic_condition_flag', '0')).strip().lower()
-    if chronic_flag_val in ['1', 'true', 'yes']:
-        calculated_risk += self.CHRONIC_CONDITION_FLAG_RISK_POINTS
-
-    # Iterate through other base risk factors
-    for feature_key_loop, params_loop in self.base_risk_factors.items():
-        value_feat_raw = current_features.get(feature_key_loop)
-        weight_factor = params_loop.get('weight', 1.0)
-        
-        if params_loop.get('is_flag'): # Handle boolean/flag features
-            flag_trigger_value = str(params_loop.get('flag_value', '1')).lower() # Default trigger is '1'
-            # Ensure value_feat_raw is string for comparison
-            if str(value_feat_raw).strip().lower() == flag_trigger_value:
-                calculated_risk += params_loop.get('factor_true', 0) * weight_factor
-                # Specific protocol triggers for certain flags
-                if feature_key_loop == 'fall_detected_today' and str(value_feat_raw).strip().lower() == '1':
-                     execute_escalation_protocol("PATIENT_FALL_DETECTED", current_features.to_dict())
-        
-        else: # Handle numeric features with thresholds
-            if pd.notna(value_feat_raw): # Only process if value is not NaN initially
-                try:
-                    # Convert to float for comparisons, handling potential conversion errors
-                    numeric_value_feat = float(value_feat_raw)
-                    # Order of checks matters for overlapping thresholds (e.g., high vs super_high)
-                    if 'super_high_threshold' in params_loop and numeric_value_feat >= params_loop['super_high_threshold']:
-                        calculated_risk += params_loop.get('factor_super_high', 0) * weight_factor
-                    elif 'threshold_very_high' in params_loop and numeric_value_feat >= params_loop['threshold_very_high']:
-                        calculated_risk += params_loop.get('factor_very_high', 0) * weight_factor
-                    elif 'threshold_high' in params_loop and numeric_value_feat >= params_loop['threshold_high']:
-                        calculated_risk += params_loop.get('factor_high', 0) * weight_factor
-                    
-                    # For low thresholds (e.g., SpO2, HRV)
-                    if 'threshold_low' in params_loop and numeric_value_feat < params_loop['threshold_low']:
-                        calculated_risk += params_loop.get('factor_low', 0) * weight_factor
-                        if feature_key_loop == 'min_spo2_pct' and numeric_value_feat < settings.ALERT_SPO2_CRITICAL_LOW_PCT:
-                            execute_escalation_protocol("PATIENT_CRITICAL_SPO2_LOW", current_features.to_dict(), {"SPO2_VALUE": numeric_value_feat})
-                    elif 'mid_threshold_low' in params_loop and numeric_value_feat < params_loop['mid_threshold_low']: # e.g., SpO2 warning
-                        calculated_risk += params_loop.get('factor_mid_low', 0) * weight_factor
-                except (ValueError, TypeError):
-                    logger.debug(f"Could not convert feature '{feature_key_loop}' value '{value_feat_raw}' to float for risk calc.")
-                    # Skip this factor if value is not convertible to float
-
-    # Additional adjustments based on other features
-    med_adherence_val = str(current_features.get('medication_adherence_self_report', 'Unknown')).lower()
-    if med_adherence_val == 'poor': calculated_risk += 12.0
-    elif med_adherence_val == 'fair': calculated_risk += 6.0
-
-    # Use pd.to_numeric for robust conversion before multiplication
-    psych_distress_score_val = pd.to_numeric(current_features.get('rapid_psychometric_distress_score'), errors='coerce')
-    if pd.notna(psych_distress_score_val):
-        calculated_risk += psych_distress_score_val * 1.5 # Simple multiplier
-
-    fatigue_flag_input_val = str(current_features.get('signs_of_fatigue_observed_flag', '0')).strip().lower()
-    if fatigue_flag_input_val in ['1', 'true', 'yes']:
-        calculated_risk += 10.0
-        
-    return float(np.clip(calculated_risk, 0, 100))
-
-def predict_bulk_risk_scores(self, data_df: pd.DataFrame) -> pd.Series:
-    """
-    Predicts risk scores for all rows in a DataFrame.
-    Uses .apply() for row-wise prediction with the single-prediction logic.
-    """
-    if not isinstance(data_df, pd.DataFrame) or data_df.empty:
-        logger.warning("predict_bulk_risk_scores received an empty or invalid DataFrame.")
-        return pd.Series(dtype='float64')
+    for item_key_config in settings.KEY_DRUG_SUBSTRINGS_SUPPLY:
+        item_key_lower = item_key_config.lower() # Store and match keys in lower case
+        # Use the instance-level RNG for consistent item parameter generation
+        self.item_specific_params[item_key_lower] = {
+            "monthly_coeffs": (base_monthly_coeffs * self._rng_params_init.uniform(0.80, 1.20, 12)).round(3).tolist(),
+            "annual_trend_factor": self._rng_params_init.uniform(0.0005, 0.005),
+            "random_noise_std_dev": self._rng_params_init.uniform(0.03, 0.10)
+        }
     
-    df_to_process = data_df.copy() # Work on a copy
+    act_key_lower = "act" # Example: Specific parameters for a known seasonal item like "ACT"
+    if act_key_lower in self.item_specific_params: # Check if "act" is part of configured drugs
+        # Simulate higher consumption during typical malaria seasons
+        self.item_specific_params[act_key_lower]["monthly_coeffs"] = [0.7,0.7,0.8,1.0,1.4,1.7,1.8,1.6,1.2,0.9,0.8,0.7]
+        self.item_specific_params[act_key_lower]["annual_trend_factor"] = 0.0020 # Slightly higher trend for ACT
     
-    # `predict_risk_score` handles internal defaults, so extensive pre-filling isn't strictly needed here,
-    # but ensuring 'condition' is present with a default fill helps.
-    if 'condition' not in df_to_process.columns:
-        df_to_process['condition'] = "UnknownCondition" # Default if column entirely missing
-    else:
-        # Fill NaNs in existing 'condition' column if any
-        df_to_process['condition'] = df_to_process['condition'].fillna("UnknownCondition")
+    logger.info(f"AI-Simulated SupplyForecastingModel initialized with pseudo-params for {len(self.item_specific_params)} item types.")
 
-    try:
-        risk_scores_series = df_to_process.apply(self.predict_risk_score, axis=1)
-    except Exception as e_apply:
-        logger.error(f"Error during bulk application of predict_risk_score: {e_apply}", exc_info=True)
-        # Return a series of NaNs or default risk if bulk apply fails
-        return pd.Series([np.nan] * len(df_to_process), index=df_to_process.index, dtype='float64')
+def _get_simulated_item_params(self, item_name_input: str) -> Dict[str, Any]:
+    """Retrieves simulated parameters for an item, with a fallback to defaults."""
+    item_name_lower_case = str(item_name_input).strip().lower()
+    
+    # Try direct match first
+    if item_name_lower_case in self.item_specific_params:
+        return self.item_specific_params[item_name_lower_case]
+        
+    # Try partial match using substrings
+    for key_drug_substr_lower, params_val in self.item_specific_params.items():
+        if key_drug_substr_lower in item_name_lower_case:
+            return params_val
+    
+    logger.debug(f"No specific AI sim params for item '{item_name_input}', using generic defaults.")
+    return {
+        "monthly_coeffs": [1.0] * 12, "annual_trend_factor": 0.0001,
+        "random_noise_std_dev": 0.05
+    }
 
-    logger.info(f"Bulk risk scores calculated for {len(risk_scores_series)} records.")
-    return risk_scores_series
+def _predict_daily_consumption_ai_sim(
+    self, base_avg_daily_consumption_hist: float, item_name: str,
+    forecast_target_date: pd.Timestamp, day_number_in_forecast: int
+) -> float:
+    """Simulates predicting daily consumption using 'AI' factors."""
+    if pd.isna(base_avg_daily_consumption_hist) or base_avg_daily_consumption_hist <= 1e-7:
+        return 1e-7 # Return a tiny positive consumption
+
+    item_sim_params = self._get_simulated_item_params(item_name)
+    
+    month_idx = forecast_target_date.month - 1 # 0-indexed for list
+    seasonality_multiplier = item_sim_params["monthly_coeffs"][month_idx]
+    trend_multiplier = (1 + item_sim_params["annual_trend_factor"]) ** day_number_in_forecast
+    
+    # Create a new RNG instance for noise for each prediction to ensure variability,
+    # but seed it consistently for reproducibility across runs of the same forecast.
+    # Hash incorporates item_name, target_date, and day_number to make seed unique per prediction point.
+    noise_seed = (settings.RANDOM_SEED + 
+                  hash(item_name) + 
+                  forecast_target_date.toordinal() + 
+                  day_number_in_forecast) % (2**32) # Keep seed within valid range
+    rng_noise_predict = np.random.RandomState(noise_seed)
+    noise_multiplier = rng_noise_predict.normal(loc=1.0, scale=item_sim_params["random_noise_std_dev"])
+    noise_multiplier = np.clip(noise_multiplier, 0.5, 1.5) # Cap noise effect
+
+    predicted_cons = base_avg_daily_consumption_hist * seasonality_multiplier * trend_multiplier * noise_multiplier
+    return max(1e-7, predicted_cons) # Ensure consumption is non-negative
+
+def forecast_supply_levels_advanced(
+    self, current_supply_levels_df: pd.DataFrame, 
+    forecast_days_out: int = 30,
+    item_filter_list_optional: Optional[List[str]] = None
+) -> pd.DataFrame:
+    module_log_prefix = "AISupplyForecastAdvanced"
+    output_df_columns = ['item', 'forecast_date', 'forecasted_stock_level',
+                         'forecasted_days_of_supply', 'predicted_daily_consumption',
+                         'estimated_stockout_date_ai']
+
+    if not isinstance(current_supply_levels_df, pd.DataFrame) or current_supply_levels_df.empty:
+        logger.warning(f"({module_log_prefix}) Input current_supply_levels_df is empty or invalid.")
+        return pd.DataFrame(columns=output_df_columns)
+
+    required_input_cols = ['item', 'current_stock', 'avg_daily_consumption_historical', 'last_stock_update_date']
+    missing_cols_input = [col for col in required_input_cols if col not in current_supply_levels_df.columns]
+    if missing_cols_input:
+        logger.error(f"({module_log_prefix}) Missing required columns in current_supply_levels_df: {missing_cols_input}.")
+        return pd.DataFrame(columns=output_df_columns)
+
+    df_input_cleaned = current_supply_levels_df.copy()
+    if item_filter_list_optional: # Apply item filter if provided
+        df_input_cleaned = df_input_cleaned[df_input_cleaned['item'].isin(item_filter_list_optional)]
+        if df_input_cleaned.empty:
+             logger.warning(f"({module_log_prefix}) No items remaining after applying item_filter_list. Forecast aborted.")
+             return pd.DataFrame(columns=output_df_columns)
+
+    df_input_cleaned['last_stock_update_date'] = pd.to_datetime(df_input_cleaned['last_stock_update_date'], errors='coerce')
+    df_input_cleaned['current_stock'] = convert_to_numeric(df_input_cleaned['current_stock'], default_value=0.0)
+    df_input_cleaned['avg_daily_consumption_historical'] = convert_to_numeric(df_input_cleaned['avg_daily_consumption_historical'], default_value=1e-7)
+    df_input_cleaned.loc[df_input_cleaned['avg_daily_consumption_historical'] <= 0, 'avg_daily_consumption_historical'] = 1e-7
+    df_input_cleaned.dropna(subset=['item', 'last_stock_update_date'], inplace=True)
+
+    if df_input_cleaned.empty:
+        logger.warning(f"({module_log_prefix}) No valid data rows remaining after cleaning input for AI forecast.")
+        return pd.DataFrame(columns=output_df_columns)
+
+    all_forecast_records: List[Dict[str, Any]] = []
+    for _, initial_status_row in df_input_cleaned.iterrows():
+        item_name_forecast = initial_status_row['item']
+        current_stock_level = max(0.0, initial_status_row['current_stock'])
+        base_hist_consumption = initial_status_row['avg_daily_consumption_historical']
+        forecast_start_date = initial_status_row['last_stock_update_date']
+
+        running_stock_level = current_stock_level
+        calculated_stockout_date_for_item: Optional[pd.Timestamp] = pd.NaT
+        item_daily_forecasts: List[Dict[str, Any]] = []
+
+        for day_offset in range(forecast_days_out):
+            target_forecast_date = forecast_start_date + pd.Timedelta(days=day_offset + 1)
+            predicted_consumption_today = self._predict_daily_consumption_ai_sim(
+                base_hist_consumption, item_name_forecast, target_forecast_date, day_offset + 1
+            )
+            stock_before_consumption_today = running_stock_level
+            running_stock_level = max(0.0, running_stock_level - predicted_consumption_today)
+            days_of_supply_remaining = (running_stock_level / predicted_consumption_today) if predicted_consumption_today > 1e-8 else np.inf
+            
+            if pd.isna(calculated_stockout_date_for_item) and stock_before_consumption_today > 0 and running_stock_level <= 0:
+                fraction_of_day_to_stockout = (stock_before_consumption_today / predicted_consumption_today) if predicted_consumption_today > 1e-8 else 0.0
+                calculated_stockout_date_for_item = forecast_start_date + pd.Timedelta(days=day_offset + fraction_of_day_to_stockout)
+
+            item_daily_forecasts.append({
+                'item': item_name_forecast, 'forecast_date': target_forecast_date,
+                'forecasted_stock_level': running_stock_level,
+                'forecasted_days_of_supply': days_of_supply_remaining,
+                'predicted_daily_consumption': predicted_consumption_today,
+                'estimated_stockout_date_ai': calculated_stockout_date_for_item
+            })
+        
+        if pd.isna(calculated_stockout_date_for_item) and current_stock_level > 0 and item_daily_forecasts:
+            avg_predicted_consumption_in_period = pd.Series([d['predicted_daily_consumption'] for d in item_daily_forecasts]).mean()
+            if avg_predicted_consumption_in_period > 1e-8:
+                estimated_days_to_stockout_beyond = current_stock_level / avg_predicted_consumption_in_period
+                calculated_stockout_date_for_item = forecast_start_date + pd.to_timedelta(estimated_days_to_stockout_beyond, unit='D')
+            for record in item_daily_forecasts: # Update NaT stockout dates
+                if pd.isna(record['estimated_stockout_date_ai']):
+                    record['estimated_stockout_date_ai'] = calculated_stockout_date_for_item
+        all_forecast_records.extend(item_daily_forecasts)
+
+    if not all_forecast_records:
+        logger.warning(f"({module_log_prefix}) No forecast records generated after processing all items.")
+        return pd.DataFrame(columns=output_df_columns)
+
+    final_forecast_df = pd.DataFrame(all_forecast_records)
+    final_forecast_df['estimated_stockout_date_ai'] = pd.to_datetime(final_forecast_df['estimated_stockout_date_ai'], errors='coerce')
+    logger.info(f"({module_log_prefix}) AI-simulated supply forecast complete: {len(final_forecast_df)} records for {df_input_cleaned['item'].nunique()} items.")
+    return final_forecast_df[output_df_columns]
+Use code with caution.
+def generate_simple_supply_forecast(
+health_df_for_supply: Optional[pd.DataFrame],
+forecast_days_out: int = 30,
+item_filter_list: Optional[List[str]] = None,
+source_context: str = "SimpleSupplyForecast"
+) -> pd.DataFrame:
+logger.info(f"({source_context}) Generating simple linear supply forecast. Horizon: {forecast_days_out} days.")
+output_cols_simple = ['item', 'forecast_date', 'forecasted_stock_level', 'forecasted_days_of_supply',
+'estimated_stockout_date_linear', 'initial_stock_at_forecast_start',
+'base_consumption_rate_per_day']
+if not isinstance(health_df_for_supply, pd.DataFrame) or health_df_for_supply.empty:
+    logger.warning(f"({source_context}) Input health_df_for_supply is empty or invalid.")
+    return pd.DataFrame(columns=output_cols_simple)
+
+required_cols_simple = ['item', 'encounter_date', 'item_stock_agg_zone', 'consumption_rate_per_day']
+missing_cols = [col for col in required_cols_simple if col not in health_df_for_supply.columns]
+if missing_cols:
+    logger.error(f"({source_context}) Missing required columns in health_df_for_supply: {missing_cols}.")
+    return pd.DataFrame(columns=output_cols_simple)
+
+df_supply_src = health_df_for_supply[required_cols_simple].copy()
+df_supply_src['encounter_date'] = pd.to_datetime(df_supply_src['encounter_date'], errors='coerce')
+df_supply_src.dropna(subset=['encounter_date', 'item'], inplace=True)
+df_supply_src['item_stock_agg_zone'] = convert_to_numeric(df_supply_src['item_stock_agg_zone'], default_value=0.0)
+df_supply_src['consumption_rate_per_day'] = convert_to_numeric(df_supply_src['consumption_rate_per_day'], default_value=1e-7)
+df_supply_src.loc[df_supply_src['consumption_rate_per_day'] <= 0, 'consumption_rate_per_day'] = 1e-7
+
+if item_filter_list:
+    df_supply_src = df_supply_src[df_supply_src['item'].isin(item_filter_list)]
+if df_supply_src.empty:
+    logger.info(f"({source_context}) No valid data rows after cleaning/filtering for simple forecast.")
+    return pd.DataFrame(columns=output_cols_simple)
+
+latest_item_status_df = df_supply_src.sort_values('encounter_date', na_position='first').drop_duplicates(subset=['item'], keep='last')
+all_forecast_records_simple: List[Dict[str, Any]] = []
+effective_forecast_start_date = pd.Timestamp(date.today()) # Forecast from "today"
+
+for _, item_row in latest_item_status_df.iterrows():
+    item_name_simple = item_row['item']
+    base_daily_consumption_rate = item_row['consumption_rate_per_day']
+    
+    # CORRECTED: Adjust the starting stock level to account for consumption since the last data point.
+    last_update_date = item_row['encounter_date']
+    latest_recorded_stock = max(0.0, item_row['item_stock_agg_zone'])
+
+    days_since_update = (effective_forecast_start_date - last_update_date).days if pd.notna(last_update_date) else 0
+    days_since_update = max(0, days_since_update) # Prevent issues if data is from the future.
+    
+    consumption_since_update = base_daily_consumption_rate * days_since_update
+    initial_stock_level = max(0.0, latest_recorded_stock - consumption_since_update)
+    
+    initial_dos_at_start = (initial_stock_level / base_daily_consumption_rate) if base_daily_consumption_rate > 1e-8 else np.inf
+    estimated_stockout_dt_linear: Optional[pd.Timestamp] = pd.NaT
+    if np.isfinite(initial_dos_at_start):
+        estimated_stockout_dt_linear = effective_forecast_start_date + pd.to_timedelta(initial_dos_at_start, unit='D')
+
+    for day_idx in range(forecast_days_out):
+        current_forecast_date = effective_forecast_start_date + pd.Timedelta(days=day_idx)
+        # This calculation is now correct, as it projects from the adjusted initial_stock_level.
+        # It represents the stock at the *start* of the current_forecast_date.
+        running_stock_level_simple = max(0.0, initial_stock_level - (base_daily_consumption_rate * day_idx))
+        current_dos = (running_stock_level_simple / base_daily_consumption_rate) if base_daily_consumption_rate > 1e-8 else np.inf
+        
+        all_forecast_records_simple.append({
+            'item': item_name_simple, 'forecast_date': current_forecast_date,
+            'forecasted_stock_level': running_stock_level_simple,
+            'forecasted_days_of_supply': current_dos,
+            'estimated_stockout_date_linear': estimated_stockout_dt_linear,
+            'initial_stock_at_forecast_start': initial_stock_level,
+            'base_consumption_rate_per_day': base_daily_consumption_rate
+        })
+
+if not all_forecast_records_simple:
+    logger.warning(f"({source_context}) No simple forecast records generated.")
+    return pd.DataFrame(columns=output_cols_simple)
+
+final_simple_forecast_df = pd.DataFrame(all_forecast_records_simple)
+final_simple_forecast_df['estimated_stockout_date_linear'] = pd.to_datetime(final_simple_forecast_df['estimated_stockout_date_linear'], errors='coerce')
+logger.info(f"({source_context}) Simple linear supply forecast complete: {len(final_simple_forecast_df)} records for {latest_item_status_df['item'].nunique()} items.")
+return final_simple_forecast_df[output_cols_simple]
