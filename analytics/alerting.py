@@ -1,304 +1,238 @@
+# sentinel_project_root/analytics/alerting.py
+# Provides robust, data-driven alert generation for CHW and Clinic dashboards.
+
 import pandas as pd
 import numpy as np
 import logging
 import re
-from typing import List, Dict, Any, Optional, Tuple, Union
-from datetime import date as date_type, datetime
+from typing import List, Dict, Any, Optional, Union, Callable
+from datetime import date, datetime
 
-# --- Module Imports ---
 try:
     from config import settings
     from data_processing.helpers import convert_to_numeric
     from .protocol_executor import execute_escalation_protocol
 except ImportError as e:
-    # This setup is for standalone execution or if imports fail.
     logging.basicConfig(level=logging.ERROR)
     logger_init = logging.getLogger(__name__)
-    logger_init.error(f"Critical import error in alerting.py: {e}. Ensure paths are correct.", exc_info=True)
+    logger_init.error(f"Critical import error in alerting.py: {e}", exc_info=True)
     raise
 
-# FIXED: Use the correct `__name__` magic variable.
 logger = logging.getLogger(__name__)
 
+# --- Base Class for Alert Generation (Rules Engine) ---
 
-def generate_chw_patient_alerts(
-    patient_encounter_data_df: Optional[pd.DataFrame],
-    for_date: Union[str, pd.Timestamp, date_type, datetime],
-    chw_zone_context_str: str,  # Zone context for these alerts
-    max_alerts_to_return: int = 15
-) -> List[Dict[str, Any]]:
-    """
-    Processes CHW daily data to generate a list of structured patient alerts.
-    Prioritizes critical alerts and then sorts by a raw priority score.
-    Integrates escalation protocol execution for certain critical alerts.
-    """
-    module_log_prefix = "CHWPatientAlertGen"
-    try:
-        # FIXED: More robust date parsing logic.
-        processing_date_dt = pd.to_datetime(for_date, errors='coerce')
-        if pd.isna(processing_date_dt):
-            raise ValueError(f"for_date ('{for_date}') could not be parsed to a valid date.")
-        processing_date = processing_date_dt.date()
-    except Exception as e_date:
-        logger.warning(f"({module_log_prefix}) Invalid 'for_date' ({for_date}): {e_date}. Defaulting to current system date.")
-        processing_date = pd.Timestamp('now').date()
+class BaseAlertGenerator:
+    """A base class for a data-driven alert generation rules engine."""
     
-    processing_date_str = processing_date.isoformat()
-    logger.info(f"({module_log_prefix}) Generating CHW patient alerts for date: {processing_date_str}, zone: {chw_zone_context_str}")
+    def __init__(self, data_df: pd.DataFrame, source_context: str):
+        self.source_context = source_context
+        self.df = self._prepare_dataframe(data_df)
+        self.ALERT_RULES: List[Dict[str, Any]] = []
 
-    if not isinstance(patient_encounter_data_df, pd.DataFrame) or patient_encounter_data_df.empty:
-        logger.warning(f"({module_log_prefix}) No patient encounter data provided for date {processing_date_str}. No alerts generated.")
-        return []
+    def _get_setting(self, attr_name: str, default_value: Any) -> Any:
+        """Safely gets a configuration value from the global settings."""
+        return getattr(settings, attr_name, default_value)
 
-    df_alert_src = patient_encounter_data_df.copy()
-
-    # --- Inline Data Preparation ---
-    # FIXED: Refactored this entire block to be more robust and efficient.
-    alert_cols_config = {
-        'patient_id': {"default": f"UnknownPID_Alert_{processing_date_str}", "type": str},
-        'encounter_date': {"default": pd.NaT, "type": "datetime"},
-        'zone_id': {"default": chw_zone_context_str or "UnknownZone", "type": str},
-        'condition': {"default": "N/A", "type": str},
-        'age': {"default": np.nan, "type": float},
-        'ai_risk_score': {"default": np.nan, "type": float},
-        'ai_followup_priority_score': {"default": np.nan, "type": float},
-        'min_spo2_pct': {"default": np.nan, "type": float},
-        'vital_signs_temperature_celsius': {"default": np.nan, "type": float},
-        'max_skin_temp_celsius': {"default": np.nan, "type": float},
-        'fall_detected_today': {"default": 0, "type": int},
-        'referral_status': {"default": "Unknown", "type": str},
-        'referral_reason': {"default": "N/A", "type": str}
-    }
-    common_na_values = frozenset(['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown'])
-    na_regex = r'^\s*(?:' + '|'.join(re.escape(s) for s in common_na_values if s) + r')\s*$'
-
-    for col_name, config in alert_cols_config.items():
-        default = config['default']
-        target_type = config['type']
+    def _prepare_dataframe(self, df: pd.DataFrame, column_config: Dict[str, Dict]) -> pd.DataFrame:
+        """A robust, reusable method to clean and prepare the source DataFrame."""
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return pd.DataFrame()
         
-        if col_name not in df_alert_src.columns:
-            df_alert_src[col_name] = default
-            continue
+        prepared_df = df.copy()
+        for col, config in column_config.items():
+            if col not in prepared_df.columns:
+                prepared_df[col] = config.get('default')
+            else:
+                # Use vectorized replacement for common NA strings
+                if pd.api.types.is_object_dtype(prepared_df[col].dtype):
+                    na_regex = r'^\s*(?:nan|none|n/a|nat|<na>|null)\s*$'
+                    prepared_df[col].replace(na_regex, np.nan, regex=True, inplace=True)
+                
+                prepared_df[col] = convert_to_numeric(prepared_df[col], default_value=config.get('default'))
+        return prepared_df
 
-        # Handle NA replacement for numeric/datetime columns
-        if target_type in [float, int, 'datetime'] and pd.api.types.is_object_dtype(df_alert_src[col_name].dtype):
-            df_alert_src[col_name].replace(na_regex, np.nan, regex=True, inplace=True)
+    def _evaluate_rules(self, data_row: pd.Series) -> List[Dict[str, Any]]:
+        """Evaluates all configured rules against a single row of data."""
+        triggered_alerts = []
+        for rule in self.ALERT_RULES:
+            metric_val = data_row.get(rule['metric'])
+            if pd.isna(metric_val):
+                continue
+
+            # Evaluate condition
+            threshold = rule['threshold']() if callable(rule['threshold']) else rule['threshold']
+            condition_met = False
+            if rule['condition'] == 'less_than' and metric_val < threshold:
+                condition_met = True
+            elif rule['condition'] == 'greater_than_or_equal' and metric_val >= threshold:
+                condition_met = True
+            
+            if condition_met:
+                alert = rule['alert_details'].copy()
+                alert['raw_priority_score'] = rule['priority_calculator'](metric_val, threshold)
+                alert['patient_id'] = str(data_row.get('patient_id', 'UnknownPID'))
+                alert['triggering_value'] = f"{rule.get('metric_name', rule['metric'])}: {metric_val:.1f}"
+                alert['protocol_to_trigger'] = rule.get('protocol_to_trigger') # Tag for later execution
+                alert['context_data'] = data_row.to_dict() # Pass full context for protocol
+                triggered_alerts.append(alert)
+        return triggered_alerts
+
+    def generate(self, **kwargs) -> Any:
+        """Main orchestration method to generate alerts."""
+        raise NotImplementedError("Subclasses must implement the 'generate' method.")
+
+
+# --- CHW-Specific Alert Generator ---
+
+class CHWAlertGenerator(BaseAlertGenerator):
+    """Generates prioritized alerts for Community Health Workers."""
+
+    def __init__(self, patient_encounter_df: pd.DataFrame, for_date: Union[str, pd.Timestamp], zone_context: str):
+        self.processing_date = pd.to_datetime(for_date).date()
+        self.zone_context = zone_context
         
-        try: # Handle type conversion
-            if target_type == 'datetime':
-                df_alert_src[col_name] = pd.to_datetime(df_alert_src[col_name], errors='coerce')
-            elif target_type == float:
-                df_alert_src[col_name] = convert_to_numeric(df_alert_src[col_name], default_value=default, target_type=float)
-            elif target_type == int:
-                df_alert_src[col_name] = convert_to_numeric(df_alert_src[col_name], default_value=default, target_type=int)
-            elif target_type == str:
-                df_alert_src[col_name] = df_alert_src[col_name].fillna(str(default)).astype(str).str.strip()
-        except Exception as e_conv:
-            logger.error(f"({module_log_prefix}) Error converting '{col_name}': {e_conv}. Using default.")
-            df_alert_src[col_name] = default
-
-    temp_col_to_use = next((tc for tc in ['vital_signs_temperature_celsius', 'max_skin_temp_celsius'] 
-                            if tc in df_alert_src.columns and df_alert_src[tc].notna().any()), None)
-    if temp_col_to_use == 'max_skin_temp_celsius': 
-        logger.debug(f"({module_log_prefix}) Using 'max_skin_temp_celsius' as primary temperature source.")
-
-    alerts_buffer: List[Dict[str, Any]] = []
-    for _, encounter_row in df_alert_src.iterrows():
-        # FIXED: Use .get() for safer dictionary access
-        patient_id_val = str(encounter_row.get('patient_id', alert_cols_config['patient_id']['default']))
+        column_config = {
+            'patient_id': {"default": f"UnknownPID_{self.processing_date.isoformat()}"},
+            'min_spo2_pct': {"default": np.nan},
+            'vital_signs_temperature_celsius': {"default": np.nan},
+            'fall_detected_today': {"default": 0},
+            'ai_followup_priority_score': {"default": 0.0},
+        }
         
-        row_encounter_date = encounter_row.get('encounter_date')
-        if pd.notna(row_encounter_date) and row_encounter_date.date() == processing_date:
-            effective_encounter_date_str = row_encounter_date.strftime('%Y-%m-%d')
-        else:
-            effective_encounter_date_str = processing_date_str
+        super().__init__(data_df=patient_encounter_df, source_context="CHWPatientAlertGen")
+        self.df = self._prepare_dataframe(patient_encounter_df, column_config)
         
-        context_info_str = f"Cond: {encounter_row.get('condition', 'N/A')} | Zone: {encounter_row.get('zone_id', 'N/A')} | Date: {effective_encounter_date_str}"
+        self.ALERT_RULES = [
+            {"metric": "min_spo2_pct", "condition": "less_than", "threshold": self._get_setting('ALERT_SPO2_CRITICAL_LOW_PCT', 88), "metric_name": "SpO2",
+             "alert_details": {"alert_level": "CRITICAL", "primary_reason": "Critical Low SpO2", "suggested_action_code": "ACTION_SPO2_MANAGE_URGENT"},
+             "priority_calculator": lambda v, t: 98.0 + max(0, t - v), "protocol_to_trigger": "PATIENT_CRITICAL_SPO2_LOW"},
+            
+            {"metric": "min_spo2_pct", "condition": "less_than", "threshold": self._get_setting('ALERT_SPO2_WARNING_LOW_PCT', 92), "metric_name": "SpO2",
+             "alert_details": {"alert_level": "WARNING", "primary_reason": "Low SpO2", "suggested_action_code": "ACTION_SPO2_RECHECK_MONITOR"},
+             "priority_calculator": lambda v, t: 75.0 + max(0, t - v)},
+            
+            {"metric": "vital_signs_temperature_celsius", "condition": "greater_than_or_equal", "threshold": self._get_setting('ALERT_BODY_TEMP_HIGH_FEVER_C', 39.0), "metric_name": "Temp",
+             "alert_details": {"alert_level": "CRITICAL", "primary_reason": "High Fever", "suggested_action_code": "ACTION_FEVER_MANAGE_URGENT"},
+             "priority_calculator": lambda v, t: 95.0 + max(0, (v - t) * 2.0)},
+             
+            {"metric": "fall_detected_today", "condition": "greater_than_or_equal", "threshold": 1, "metric_name": "Fall(s)",
+             "alert_details": {"alert_level": "CRITICAL", "primary_reason": "Fall Detected", "suggested_action_code": "ACTION_FALL_ASSESS_URGENT"},
+             "priority_calculator": lambda v, t: 92.0, "protocol_to_trigger": "PATIENT_FALL_DETECTED"},
+        ]
 
-        min_spo2_val = encounter_row.get('min_spo2_pct')
-        if pd.notna(min_spo2_val) and min_spo2_val < settings.ALERT_SPO2_CRITICAL_LOW_PCT:
-            alerts_buffer.append({
-                "alert_level": "CRITICAL", "primary_reason": "Critical Low SpO2", "brief_details": f"SpO2: {min_spo2_val:.0f}%",
-                "suggested_action_code": "ACTION_SPO2_MANAGE_URGENT", "raw_priority_score": 98.0 + max(0, settings.ALERT_SPO2_CRITICAL_LOW_PCT - min_spo2_val),
-                "patient_id": patient_id_val, "context_info": context_info_str, "triggering_value": f"SpO2 {min_spo2_val:.0f}%", "encounter_date": effective_encounter_date_str
-            })
-            execute_escalation_protocol("PATIENT_CRITICAL_SPO2_LOW", encounter_row.to_dict(), additional_context={"SPO2_VALUE": min_spo2_val, "PATIENT_AGE": encounter_row.get('age')})
-            continue
+    def _handle_triggered_protocols(self, alerts: List[Dict]):
+        """Executes escalation protocols for alerts that require them."""
+        for alert in alerts:
+            if alert.get('protocol_to_trigger'):
+                execute_escalation_protocol(alert['protocol_to_trigger'], alert['context_data'])
 
-        if pd.notna(min_spo2_val) and min_spo2_val < settings.ALERT_SPO2_WARNING_LOW_PCT:
-            alerts_buffer.append({
-                "alert_level": "WARNING", "primary_reason": "Low SpO2", "brief_details": f"SpO2: {min_spo2_val:.0f}%",
-                "suggested_action_code": "ACTION_SPO2_RECHECK_MONITOR", "raw_priority_score": 75.0 + max(0, settings.ALERT_SPO2_WARNING_LOW_PCT - min_spo2_val),
-                "patient_id": patient_id_val, "context_info": context_info_str, "triggering_value": f"SpO2 {min_spo2_val:.0f}%", "encounter_date": effective_encounter_date_str
-            })
+    def generate(self, max_alerts_to_return: int = 15) -> List[Dict[str, Any]]:
+        if self.df.empty:
+            logger.warning(f"({self.source_context}) No valid data; no CHW alerts generated for {self.processing_date}.")
+            return []
 
-        current_temp_val = encounter_row.get(temp_col_to_use)
-        if pd.notna(current_temp_val) and current_temp_val >= settings.ALERT_BODY_TEMP_HIGH_FEVER_C:
-            alerts_buffer.append({
-                "alert_level": "CRITICAL", "primary_reason": "High Fever", "brief_details": f"Temp: {current_temp_val:.1f}°C",
-                "suggested_action_code": "ACTION_FEVER_MANAGE_URGENT", "raw_priority_score": 95.0 + max(0, (current_temp_val - settings.ALERT_BODY_TEMP_HIGH_FEVER_C) * 2.0),
-                "patient_id": patient_id_val, "context_info": context_info_str, "triggering_value": f"Temp {current_temp_val:.1f}°C", "encounter_date": effective_encounter_date_str
-            })
-            continue
+        all_alerts = []
+        for _, row in self.df.iterrows():
+            all_alerts.extend(self._evaluate_rules(row))
 
-        if pd.notna(current_temp_val) and current_temp_val >= settings.ALERT_BODY_TEMP_FEVER_C:
-            alerts_buffer.append({
-                "alert_level": "WARNING", "primary_reason": "Fever Present", "brief_details": f"Temp: {current_temp_val:.1f}°C",
-                "suggested_action_code": "ACTION_FEVER_MONITOR", "raw_priority_score": 70.0 + max(0, current_temp_val - settings.ALERT_BODY_TEMP_FEVER_C),
-                "patient_id": patient_id_val, "context_info": context_info_str, "triggering_value": f"Temp {current_temp_val:.1f}°C", "encounter_date": effective_encounter_date_str
-            })
-
-        fall_detected_val = encounter_row.get('fall_detected_today', 0)
-        if pd.notna(fall_detected_val) and fall_detected_val > 0:
-            alerts_buffer.append({
-                "alert_level": "CRITICAL", "primary_reason": "Fall Detected", "brief_details": f"Falls recorded: {int(fall_detected_val)}",
-                "suggested_action_code": "ACTION_FALL_ASSESS_URGENT", "raw_priority_score": 92.0, "patient_id": patient_id_val,
-                "context_info": context_info_str, "triggering_value": f"Fall(s) = {int(fall_detected_val)}", "encounter_date": effective_encounter_date_str
-            })
-            execute_escalation_protocol("PATIENT_FALL_DETECTED", encounter_row.to_dict())
-            continue # FIXED: Added missing continue for critical alert
-
-        ai_followup_score = encounter_row.get('ai_followup_priority_score')
-        if pd.notna(ai_followup_score) and ai_followup_score >= settings.FATIGUE_INDEX_HIGH_THRESHOLD:
-            alerts_buffer.append({
-                "alert_level": "WARNING", "primary_reason": "High AI Follow-up Prio.", "brief_details": f"AI Prio Score: {ai_followup_score:.0f}",
-                "suggested_action_code": "ACTION_AI_REVIEW_FOLLOWUP", "raw_priority_score": min(90.0, ai_followup_score),
-                "patient_id": patient_id_val, "context_info": context_info_str, "triggering_value": f"AI Prio {ai_followup_score:.0f}", "encounter_date": effective_encounter_date_str
-            })
-
-        ai_risk_score_val = encounter_row.get('ai_risk_score')
-        if pd.notna(ai_risk_score_val) and ai_risk_score_val >= settings.RISK_SCORE_HIGH_THRESHOLD:
-            is_more_severe = any(a['patient_id'] == patient_id_val and a['alert_level'] in ["CRITICAL", "WARNING"] for a in alerts_buffer)
-            if not is_more_severe:
-                alerts_buffer.append({
-                    "alert_level": "INFO", "primary_reason": "Elevated AI Risk Score", "brief_details": f"AI Risk: {ai_risk_score_val:.0f}",
-                    "suggested_action_code": "ACTION_MONITOR_RISK_ROUTINE", "raw_priority_score": min(70.0, ai_risk_score_val),
-                    "patient_id": patient_id_val, "context_info": context_info_str, "triggering_value": f"AI Risk {ai_risk_score_val:.0f}", "encounter_date": effective_encounter_date_str
-                })
+        # Deduplicate, keeping the highest priority alert per patient
+        deduped_alerts = {}
+        for alert in all_alerts:
+            pid = alert['patient_id']
+            if pid not in deduped_alerts or alert['raw_priority_score'] > deduped_alerts[pid]['raw_priority_score']:
+                deduped_alerts[pid] = alert
         
-        if str(encounter_row.get('referral_status')).lower() == 'pending' and \
-           any(kc.lower() in str(encounter_row.get('condition')).lower() for kc in settings.KEY_CONDITIONS_FOR_ACTION):
-            alerts_buffer.append({
-                "alert_level": "WARNING", "primary_reason": "Pending Critical Referral", "brief_details": f"For: {encounter_row.get('condition')}",
-                "suggested_action_code": "ACTION_FOLLOWUP_REFERRAL_STATUS", "raw_priority_score": 80.0, "patient_id": patient_id_val,
-                "context_info": context_info_str, "triggering_value": "Pending Critical Referral", "encounter_date": effective_encounter_date_str
-            })
+        final_alerts = list(deduped_alerts.values())
+        self._handle_triggered_protocols(final_alerts)
 
-    if alerts_buffer:
-        alerts_deduplicated_map: Dict[str, Dict[str, Any]] = {}
-        for alert_item in alerts_buffer:
-            patient_key = alert_item['patient_id']
-            if patient_key not in alerts_deduplicated_map or alert_item['raw_priority_score'] > alerts_deduplicated_map[patient_key]['raw_priority_score']:
-                alerts_deduplicated_map[patient_key] = alert_item
+        # Sort by level (Critical > Warning), then by priority score descending
+        final_alerts.sort(key=lambda x: ({"CRITICAL": 0, "WARNING": 1, "INFO": 2}.get(x["alert_level"], 3), -x['raw_priority_score']))
         
-        final_alerts_list = sorted(
-            list(alerts_deduplicated_map.values()), 
-            key=lambda x: ({"CRITICAL": 0, "WARNING": 1, "INFO": 2}.get(x.get("alert_level", "INFO"), 3), -x.get('raw_priority_score', 0.0))
-        )
-        logger.info(f"({module_log_prefix}) Generated {len(final_alerts_list)} unique CHW patient alerts for {processing_date_str}.")
-        return final_alerts_list[:max_alerts_to_return]
-
-    logger.info(f"({module_log_prefix}) No CHW patient alerts generated from the provided data for {processing_date_str}.")
-    return []
+        logger.info(f"({self.source_context}) Generated {len(final_alerts)} unique CHW patient alerts for {self.processing_date}.")
+        return final_alerts[:max_alerts_to_return]
 
 
-def get_patient_alerts_for_clinic(
-    health_df_period: Optional[pd.DataFrame],
-    risk_threshold_moderate: Optional[float] = None,
-    source_context: str = "ClinicPatientAlerts"
-) -> pd.DataFrame:
+# --- Clinic-Specific Alert Generator ---
+
+class ClinicPatientAlerts(BaseAlertGenerator):
     """Generates a DataFrame of patient alerts suitable for a clinic dashboard review."""
-    logger.info(f"({source_context}) Generating patient alerts list for clinic review.")
-    output_columns = ['patient_id', 'encounter_date', 'condition', 'Alert Reason', 'Priority Score',
-                      'ai_risk_score', 'age', 'gender', 'zone_id', 'referred_to_facility_id',
-                      'min_spo2_pct', 'vital_signs_temperature_celsius']
-    empty_alerts_df = pd.DataFrame(columns=output_columns)
-    
-    if not isinstance(health_df_period, pd.DataFrame) or health_df_period.empty:
-        logger.warning(f"({source_context}) Health DataFrame for clinic alerts is empty or invalid.")
-        return empty_alerts_df
 
-    df = health_df_period.copy()
-    cols_to_ensure = {
-        'patient_id': "UnknownPID_ClinicAlert", 'encounter_date': pd.NaT, 'condition': "N/A",
-        'ai_risk_score': np.nan, 'ai_followup_priority_score': np.nan, 'min_spo2_pct': np.nan,
-        'vital_signs_temperature_celsius': np.nan, 'referral_status': "Unknown",
-        'age': np.nan, 'gender': "Unknown", 'zone_id': "UnknownZone",
-        'referred_to_facility_id': "N/A"
-    }
-    
-    for col, default in cols_to_ensure.items():
-        if col not in df.columns:
-            df[col] = default
-        if col == 'encounter_date':
-            df[col] = pd.to_datetime(df[col], errors='coerce')
-        elif isinstance(default, (float, int)) or pd.isna(default):
-            df[col] = convert_to_numeric(df[col], default_value=default)
-        else:
-            df[col] = df[col].fillna(str(default)).astype(str).str.strip()
-
-    if 'encounter_date' in df.columns and df['encounter_date'].notna().any():
-        df_latest_encounters = df.sort_values('encounter_date', na_position='first').drop_duplicates(subset=['patient_id'], keep='last')
-    else:
-        df_latest_encounters = df.drop_duplicates(subset=['patient_id'], keep='last')
-        logger.warning(f"({source_context}) 'encounter_date' missing or all NaT. Using last record per patient_id.")
-
-    alert_list_for_clinic: List[Dict[str, Any]] = []
-    actual_risk_threshold = risk_threshold_moderate if risk_threshold_moderate is not None else settings.RISK_SCORE_MODERATE_THRESHOLD
-
-    for _, row in df_latest_encounters.iterrows():
-        alert_reason_clinic = ""
-        priority_score_clinic = row.get('ai_followup_priority_score', 0.0)
-        if pd.isna(priority_score_clinic): priority_score_clinic = 0.0
-
-        risk_score = row.get('ai_risk_score')
-        if pd.notna(risk_score):
-            if risk_score >= settings.RISK_SCORE_HIGH_THRESHOLD:
-                alert_reason_clinic = f"High AI Risk ({risk_score:.0f})"
-                priority_score_clinic = max(priority_score_clinic, risk_score)
-            elif risk_score >= actual_risk_threshold:
-                alert_reason_clinic = f"Moderate AI Risk ({risk_score:.0f})"
-                priority_score_clinic = max(priority_score_clinic, risk_score * 0.8)
+    def __init__(self, health_data_df: pd.DataFrame, reporting_period_df: pd.DataFrame):
+        # In a real scenario, reporting_period_df might be used for context, but here we focus on the main data.
+        super().__init__(data_df=health_data_df, source_context="ClinicPatientAlerts")
         
-        spo2 = row.get('min_spo2_pct')
-        if pd.notna(spo2) and spo2 < settings.ALERT_SPO2_CRITICAL_LOW_PCT:
-            alert_reason_clinic += ("; " if alert_reason_clinic else "") + f"Critical SpO2 ({spo2:.0f}%)"
-            priority_score_clinic = max(priority_score_clinic, 95.0)
+        column_config = {
+            'patient_id': {"default": "UnknownPID"}, 'encounter_date': {"default": pd.NaT}, 'ai_risk_score': {"default": 0.0},
+            'min_spo2_pct': {"default": np.nan}, 'vital_signs_temperature_celsius': {"default": np.nan},
+            'referral_status': {"default": "Unknown"}, 'condition': {"default": "N/A"}
+        }
+        self.df = self._prepare_dataframe(health_data_df, column_config)
 
-        current_temp = row.get('vital_signs_temperature_celsius')
-        if pd.notna(current_temp) and current_temp >= settings.ALERT_BODY_TEMP_HIGH_FEVER_C:
-            alert_reason_clinic += ("; " if alert_reason_clinic else "") + f"High Fever ({current_temp:.1f}°C)"
-            priority_score_clinic = max(priority_score_clinic, 90.0)
+        self.ALERT_RULES = [
+             {"metric": "ai_risk_score", "condition": "greater_than_or_equal", "threshold": self._get_setting('RISK_SCORE_HIGH_THRESHOLD', 80), "metric_name": "AI Risk",
+             "alert_details": {"Alert Reason": "High AI Risk"}, "priority_calculator": lambda v, t: v},
+             
+             {"metric": "min_spo2_pct", "condition": "less_than", "threshold": self._get_setting('ALERT_SPO2_CRITICAL_LOW_PCT', 88), "metric_name": "SpO2",
+             "alert_details": {"Alert Reason": "Critical SpO2"}, "priority_calculator": lambda v, t: 95.0},
+             
+             {"metric": "vital_signs_temperature_celsius", "condition": "greater_than_or_equal", "threshold": self._get_setting('ALERT_BODY_TEMP_HIGH_FEVER_C', 39.0), "metric_name": "Temp",
+             "alert_details": {"Alert Reason": "High Fever"}, "priority_calculator": lambda v, t: 90.0},
+        ]
+    
+    def _get_latest_encounter_per_patient(self) -> pd.DataFrame:
+        """Gets the most recent record for each patient."""
+        if self.df.empty or 'patient_id' not in self.df.columns:
+            return pd.DataFrame()
+        return self.df.sort_values('encounter_date', na_position='first').drop_duplicates(subset=['patient_id'], keep='last')
 
-        if str(row.get('referral_status')).lower() == 'pending' and \
-           any(kc.lower() in str(row.get('condition')).lower() for kc in settings.KEY_CONDITIONS_FOR_ACTION):
-            alert_reason_clinic += ("; " if alert_reason_clinic else "") + f"Pending Critical Referral ({row.get('condition')})"
-            priority_score_clinic = max(priority_score_clinic, 85.0)
-            
-        followup_score = row.get('ai_followup_priority_score')
-        if not alert_reason_clinic and pd.notna(followup_score) and followup_score >= settings.FATIGUE_INDEX_MODERATE_THRESHOLD:
-            alert_reason_clinic = f"AI Follow-up Prio. ({followup_score:.0f})"
+    def generate_patient_review_list(self) -> pd.DataFrame:
+        """Main method to generate the formatted DataFrame for the clinic dashboard."""
+        latest_encounters_df = self._get_latest_encounter_per_patient()
+        if latest_encounters_df.empty:
+            logger.warning(f"({self.source_context}) No latest encounter data to process.")
+            return pd.DataFrame()
+
+        all_alerts = []
+        for _, row in latest_encounters_df.iterrows():
+            all_alerts.extend(self._evaluate_rules(row))
+
+        if not all_alerts:
+            logger.info(f"({self.source_context}) No patients met criteria for clinic review list.")
+            return pd.DataFrame()
         
-        if alert_reason_clinic:
-            alert_list_for_clinic.append({
-                'patient_id': str(row.get('patient_id')), 'encounter_date': row.get('encounter_date'),
-                'condition': str(row.get('condition')), 'Alert Reason': alert_reason_clinic.strip("; "),
-                'Priority Score': round(min(priority_score_clinic, 100.0), 1),
-                'ai_risk_score': risk_score, 'age': row.get('age'), 'gender': str(row.get('gender')),
-                'zone_id': str(row.get('zone_id')), 'referred_to_facility_id': str(row.get('referred_to_facility_id')),
-                'min_spo2_pct': spo2, 'vital_signs_temperature_celsius': current_temp
-            })
+        alerts_df = pd.DataFrame(all_alerts)
+        
+        # Format for final output: merge alert data with original record context
+        final_df = pd.merge(alerts_df, latest_encounters_df, on='patient_id', how='left')
+        final_df['Priority Score'] = final_df['raw_priority_score'].round(1)
+        
+        # Add the triggering value to the reason
+        final_df['alert_reason'] = final_df.apply(lambda row: f"{row['Alert Reason']} ({row['triggering_value']})", axis=1)
 
-    if not alert_list_for_clinic:
-        logger.info(f"({source_context}) No patients met criteria for clinic alert/review list.")
-        return empty_alerts_df
+        # Deduplicate, keeping only the highest priority reason per patient
+        final_df.sort_values('Priority Score', ascending=False, inplace=True)
+        final_df.drop_duplicates(subset=['patient_id'], keep='first', inplace=True)
+        
+        # Define and format final output columns
+        output_cols_map = {
+            'patient_id': 'patient_id', 'age': 'age', 'gender': 'gender', 'ai_risk_score': 'ai_risk_score',
+            'alert_reason': 'alert_reason', 'encounter_date': 'last_encounter_date',
+            'condition': 'diagnosis', # Assuming condition is the main diagnosis
+        }
+        final_df.rename(columns=output_cols_map, inplace=True)
+        
+        # Ensure all expected columns exist
+        for col in output_cols_map.values():
+            if col not in final_df.columns:
+                final_df[col] = pd.NA
 
-    alerts_df_for_clinic = pd.DataFrame(alert_list_for_clinic)
-    alerts_df_for_clinic.sort_values(by=['Priority Score', 'encounter_date'], ascending=[False, False], inplace=True, na_position='last')
+        logger.info(f"({self.source_context}) Generated {len(final_df)} patient entries for clinic review list.")
+        return final_df[list(output_cols_map.values())].reset_index(drop=True)
 
-    for col in output_columns:
-        if col not in alerts_df_for_clinic.columns:
-            alerts_df_for_clinic[col] = np.nan
-            
-    logger.info(f"({source_context}) Generated {len(alerts_df_for_clinic)} patient entries for clinic review list.")
-    return alerts_df_for_clinic[output_columns].reset_index(drop=True)
+# --- Public Factory Functions (for backward compatibility) ---
+
+def generate_chw_patient_alerts(patient_encounter_data_df: Optional[pd.DataFrame], for_date: Union[str, pd.Timestamp], chw_zone_context_str: str, max_alerts_to_return: int = 15) -> List[Dict[str, Any]]:
+    """Factory function to generate CHW alerts."""
+    generator = CHWAlertGenerator(patient_encounter_data_df or pd.DataFrame(), for_date, chw_zone_context_str)
+    return generator.generate(max_alerts_to_return=max_alerts_to_return)
