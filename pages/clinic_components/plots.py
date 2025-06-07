@@ -43,8 +43,8 @@ class ChartFactory:
             'legend': {'orientation': 'h', 'yanchor': 'bottom', 'y': 1.02, 'xanchor': 'right', 'x': 1, 'traceorder': 'normal'},
             'margin': dict(l=60, r=30, t=80, b=50),
             'hovermode': 'x unified',
-            'xaxis': {'showgrid': False, 'showline': True, 'linecolor': getattr(settings, 'COLOR_GRID', '#EAEAEA')},
-            'yaxis': {'gridcolor': getattr(settings, 'COLOR_GRID', '#EAEAEA')},
+            'xaxis': {'showgrid': False, 'showline': True, 'linecolor': getattr(settings, 'COLOR_GRID', '#EAEAEA'), 'zeroline': False},
+            'yaxis': {'gridcolor': getattr(settings, 'COLOR_GRID', '#EAEAEA'), 'zeroline': False},
         }
 
     def _apply_layout(self, fig: go.Figure, title: str, height: int, overrides: Optional[Dict] = None) -> go.Figure:
@@ -56,17 +56,16 @@ class ChartFactory:
         fig.update_layout(**layout)
         return fig
 
-    def create_empty_figure(self, title: str, message: str = "No data available for this period.") -> go.Figure:
+    def create_empty_figure(self, title: str, message: str) -> go.Figure:
         """Creates a themed, blank Plotly figure with a message."""
         fig = go.Figure()
         fig.add_annotation(text=html.escape(message), xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(size=14, color=get_theme_color('muted')))
-        fig.update_xaxes(visible=False); fig.update_yaxes(visible=False)
         return self._apply_layout(fig, title, getattr(settings, 'WEB_PLOT_COMPACT_HEIGHT', 350), {'xaxis': {'visible': False}, 'yaxis': {'visible': False}})
 
-    def plot_annotated_line_chart(self, data_series: pd.Series, chart_title: str, y_axis_label: str, target_ref_line_val: Optional[float], y_values_are_counts: bool, date_format_hover: str) -> go.Figure:
+    def create_line_chart(self, data_series: pd.Series, chart_title: str, y_axis_label: str, target_ref_line_val: Optional[float], y_values_are_counts: bool, date_format_hover: str) -> go.Figure:
         """Creates a themed, annotated line chart from a pandas Series."""
         df = data_series.reset_index(); df.columns = ['x', 'y']
-        fig = go.Figure(go.Scatter(x=df['x'], y=df['y'], mode='lines+markers', line=dict(color=get_theme_color('primary')), marker=dict(size=6)))
+        fig = go.Figure(go.Scatter(x=df['x'], y=df['y'], mode='lines+markers', line=dict(color=get_theme_color('primary')), marker=dict(size=6, symbol='circle')))
         
         y_format = 'd' if y_values_are_counts else '.1f'
         fig.update_traces(hovertemplate=f'<b>%{{x|{date_format_hover}}}</b><br>{html.escape(y_axis_label)}: %{{y:{y_format}}}<extra></extra>')
@@ -79,40 +78,80 @@ class ChartFactory:
         if y_values_are_counts: fig.update_yaxes(tickformat='d')
         return fig
 
-    def plot_bar_chart(self, df_input: pd.DataFrame, x_col_name: str, y_col_name: str, chart_title: str, color_col_name: Optional[str], bar_mode_style: str, y_values_are_counts_flag: bool, x_axis_label_text: Optional[str], y_axis_label_text: Optional[str]) -> go.Figure:
+    def create_bar_chart(self, df_input: pd.DataFrame, x_col_name: str, y_col_name: str, chart_title: str, color_col_name: Optional[str], bar_mode_style: str, y_values_are_counts: bool, x_axis_label_text: Optional[str], y_axis_label_text: Optional[str]) -> go.Figure:
         """Creates a themed, flexible bar chart from a DataFrame."""
         fig = px.bar(df_input, x=x_col_name, y=y_col_name, color=color_col_name, barmode=bar_mode_style, color_discrete_sequence=get_theme_color(None, category="categorical_sequence"))
         
-        text_template = ',.0f' if y_values_are_counts_flag else ',.1f'
-        fig.update_traces(texttemplate=f'%{{y:{text_template}}}', textposition='outside', cliponaxis=False)
+        y_label = y_axis_label_text or y_col_name.replace('_', ' ').title()
+        y_format = ',.0f' if y_values_are_counts else ',.1f'
+        hover_template = f'<b>%{{x}}</b><br>{html.escape(y_label)}: %{{y:{y_format}}}<extra></extra>'
+        if color_col_name:
+             hover_template = f'<b>%{{x}}</b><br>{html.escape(color_col_name.replace("_", " ").title())}: %{{fullData.name}}<br>{html.escape(y_label)}: %{{y:{y_format}}}<extra></extra>'
+
+        fig.update_traces(texttemplate=f'%{{y:{y_format}}}', textposition='outside', cliponaxis=False, hovertemplate=hover_template)
         
-        fig = self._apply_layout(fig, chart_title, getattr(settings, 'WEB_PLOT_DEFAULT_HEIGHT', 400))
+        hover_override = {'hovermode': 'x'} if bar_mode_style == 'stack' else {}
+        fig = self._apply_layout(fig, chart_title, getattr(settings, 'WEB_PLOT_DEFAULT_HEIGHT', 400), hover_override)
+
+        # Add padding to y-axis to prevent text labels from being clipped
+        if df_input[y_col_name].notna().any():
+            max_y = df_input[y_col_name].sum() if bar_mode_style == 'stack' else df_input[y_col_name].max()
+            fig.update_yaxes(range=[0, max_y * 1.15])
+
         fig.update_layout(
             uniformtext_minsize=8, uniformtext_mode='hide',
             xaxis_title=x_axis_label_text or x_col_name.replace('_', ' ').title(),
-            yaxis_title=y_axis_label_text or y_col_name.replace('_', ' ').title(),
-            legend_title_text=color_col_name.replace('_', ' ').title() if color_col_name else None
+            yaxis_title=y_label,
+            legend_title_text=color_col_name.replace('_', ' ').title() if color_col_name else ""
         )
-        if y_values_are_counts_flag: fig.update_yaxes(tickformat='d')
+        if y_values_are_counts: fig.update_yaxes(tickformat='d')
         return fig
 
-# --- Public Factory Functions ---
-# These functions provide a simple, clean, and developer-friendly interface.
+# --- Singleton Instance and Public Factory Functions ---
+_chart_factory = ChartFactory()
 
 def create_empty_figure(title: str, message: str = "No data to display.") -> go.Figure:
     """Public factory function to create a themed empty figure."""
-    return ChartFactory().create_empty_figure(title, message)
+    return _chart_factory.create_empty_figure(title, message)
 
 def plot_annotated_line_chart(data_series: Optional[pd.Series], chart_title: str, y_axis_label: str, target_ref_line_val: Optional[float] = None, y_values_are_counts: bool = False, date_format_hover: str = '%b %d, %Y') -> go.Figure:
-    """Creates a themed line chart with annotations and a consistent style."""
-    factory = ChartFactory()
-    if not isinstance(data_series, pd.Series) or data_series.empty:
-        return factory.create_empty_figure(chart_title)
-    return factory.plot_annotated_line_chart(data_series, chart_title, y_axis_label, target_ref_line_val, y_values_are_counts, date_format_hover)
+    """
+    Creates a themed line chart with annotations and a consistent style.
 
-def plot_bar_chart(df_input: Optional[pd.DataFrame], x_col_name: str, y_col_name: str, chart_title: str, color_col_name: Optional[str] = None, bar_mode_style: str = 'group', y_values_are_counts_flag: bool = False, x_axis_label_text: Optional[str] = None, y_axis_label_text: Optional[str] = None) -> go.Figure:
-    """Creates a themed bar chart with a consistent style."""
-    factory = ChartFactory()
+    Args:
+        data_series (Optional[pd.Series]): A pandas Series with a DatetimeIndex and numeric values.
+        chart_title (str): The title of the chart.
+        y_axis_label (str): The label for the Y-axis.
+        target_ref_line_val (Optional[float]): If provided, adds a horizontal target line at this value. Defaults to None.
+        y_values_are_counts (bool): If True, formats Y-axis and hover labels as integers. Defaults to False.
+        date_format_hover (str): The strftime format for the date in the hover tooltip. Defaults to '%b %d, %Y'.
+
+    Returns:
+        go.Figure: A Plotly figure object.
+    """
+    if not isinstance(data_series, pd.Series) or data_series.empty:
+        return _chart_factory.create_empty_figure(chart_title)
+    return _chart_factory.create_line_chart(data_series, chart_title, y_axis_label, target_ref_line_val, y_values_are_counts, date_format_hover)
+
+def plot_bar_chart(df_input: Optional[pd.DataFrame], x_col_name: str, y_col_name: str, chart_title: str, color_col_name: Optional[str] = None, bar_mode_style: str = 'group', y_values_are_counts: bool = False, x_axis_label_text: Optional[str] = None, y_axis_label_text: Optional[str] = None) -> go.Figure:
+    """
+    Creates a themed bar chart with a consistent style.
+
+    Args:
+        df_input (Optional[pd.DataFrame]): The input DataFrame.
+        x_col_name (str): The column name for the X-axis.
+        y_col_name (str): The column name for the Y-axis.
+        chart_title (str): The title of the chart.
+        color_col_name (Optional[str]): The column name to use for coloring the bars. Defaults to None.
+        bar_mode_style (str): The bar mode (e.g., 'group', 'stack'). Defaults to 'group'.
+        y_values_are_counts (bool): If True, formats Y-axis and hover labels as integers. Defaults to False.
+        x_axis_label_text (Optional[str]): Optional override for the X-axis label. Defaults to a formatted column name.
+        y_axis_label_text (Optional[str]): Optional override for the Y-axis label. Defaults to a formatted column name.
+
+    Returns:
+        go.Figure: A Plotly figure object.
+    """
+    # Renamed y_values_are_counts_flag to y_values_are_counts for consistency.
     if not isinstance(df_input, pd.DataFrame) or df_input.empty:
-        return factory.create_empty_figure(chart_title)
-    return factory.plot_bar_chart(df_input, x_col_name, y_col_name, chart_title, color_col_name, bar_mode_style, y_values_are_counts_flag, x_axis_label_text, y_axis_label_text)
+        return _chart_factory.create_empty_figure(chart_title)
+    return _chart_factory.create_bar_chart(df_input, x_col_name, y_col_name, chart_title, color_col_name, bar_mode_style, y_values_are_counts, x_axis_label_text, y_axis_label_text)
