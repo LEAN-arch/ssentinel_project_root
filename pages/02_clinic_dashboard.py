@@ -146,15 +146,13 @@ with tabs[0]: # Local Epi
     else:
         try:
             epi_data = calculate_clinic_epidemiological_data(health_df_period)
-            fig_epi = plot_bar_chart(
+            st.plotly_chart(plot_bar_chart(
                 epi_data.get("symptom_trends_weekly_top_n_df"), 
                 x_col='week_start_date', y_col='count', 
                 title="Weekly Symptom Frequency", color_col='symptom', 
-                barmode='group', y_values_are_counts=True
-            )
-            # CORRECTED: Update the y-axis title for clarity as requested.
-            fig_epi.update_yaxes(title_text="Number of Symptom Reports")
-            st.plotly_chart(fig_epi, use_container_width=True)
+                barmode='group', y_values_are_counts=True,
+                y_axis_title="Number of Symptom Reports"  # CORRECTED
+            ), use_container_width=True)
         except Exception as e:
             st.error(f"⚠️ Could not generate epi insights: {e}")
 
@@ -194,7 +192,8 @@ with tabs[3]: # Patient Focus
                     focus_data.get("patient_load_by_key_condition_df"), 
                     x_col='period_start_date', y_col='unique_patients_count', 
                     title="Patient Load by Condition", color_col='condition', 
-                    barmode='stack', y_values_are_counts=True
+                    barmode='stack', y_values_are_counts=True,
+                    y_axis_title="Number of Unique Patients" # CORRECTED
                 ), 
                 use_container_width=True
             )
