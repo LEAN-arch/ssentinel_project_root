@@ -120,9 +120,21 @@ try:
             cols = st.columns(len(disease_kpis))
             for i, kpi_data in enumerate(disease_kpis):
                 with cols[i]: render_kpi_card(**kpi_data)
+
+    st.markdown("##### **Clinic Environment Quick Check:**")
+    if not iot_df_period.empty:
+        env_kpis = get_clinic_environmental_summary_kpis(iot_df_period)
+        cols = st.columns(4)
+        with cols[0]: render_kpi_card(title="Avg. CO₂", value_str=f"{env_kpis.get('avg_co2_overall_ppm', 0):.0f}", units="ppm", icon="💨")
+        with cols[1]: render_kpi_card(title="Avg. PM2.5", value_str=f"{env_kpis.get('avg_pm25_overall_ugm3', 0):.1f}", units="µg/m³", icon="🌫️")
+        with cols[2]: render_kpi_card(title="Avg. Occupancy", value_str=f"{env_kpis.get('avg_waiting_room_occupancy_overall_persons', 0):.1f}", units="persons", icon="👨‍👩‍👧‍👦")
+        with cols[3]: render_kpi_card(title="High Noise Alerts", value_str=str(env_kpis.get('rooms_noise_high_alert_latest_count', 0)), units="areas", icon="🔊")
+    else:
+        st.info("ℹ️ No environmental data in the selected period.")
 except Exception as e:
     logger.error(f"Error rendering KPI snapshot section: {e}", exc_info=True)
-    st.error("⚠️ An error occurred while rendering the KPI snapshot.")
+    # FIXED: Removed the invalid `exc_info=True` from the st.error call.
+    st.error(f"⚠️ An error occurred while rendering the KPI snapshot: {e}")
 st.divider()
 
 # --- Deep Dive Tabs Section ---
@@ -133,8 +145,13 @@ with tabs[0]: # Local Epi
     if health_df_period.empty:
         st.info("ℹ️ No health data in this period for epidemiological analysis.")
     else:
-        epi_data = calculate_clinic_epidemiological_data(filtered_health_df=health_df_period)
-        st.plotly_chart(plot_bar_chart(epi_data.get("symptom_trends_weekly_top_n_df"), x_col='week_start_date', y_col='count', title="Weekly Symptom Frequency", color_col='symptom', y_axis_title="Number of Symptom Reports", y_values_are_counts=True, barmode='group'), use_container_width=True)
+        try:
+            epi_data = calculate_clinic_epidemiological_data(filtered_health_df=health_df_period)
+            fig_epi = plot_bar_chart(epi_data.get("symptom_trends_weekly_top_n_df"), x_col='week_start_date', y_col='count', title="Weekly Symptom Frequency", color_col='symptom', barmode='group', y_values_are_counts=True, y_axis_title="Number of Symptom Reports")
+            st.plotly_chart(fig_epi, use_container_width=True)
+        except Exception as e:
+            logger.error(f"Error in 'Local Epi' tab: {e}", exc_info=True)
+            st.error(f"⚠️ Could not generate epi insights: {e}")
 
 with tabs[1]: # Testing
     st.subheader("Laboratory and Testing Performance")
@@ -143,26 +160,20 @@ with tabs[1]: # Testing
     else:
         try:
             kpis = get_clinic_summary_kpis(health_df_period)
-            # FIXED: Pass all required arguments to the insights function.
             insights = prepare_clinic_lab_testing_insights_data(kpis_summary=kpis, filtered_health_df=health_df_period)
             
             plot_col1, plot_col2 = st.columns(2)
             with plot_col1:
-                # --- ACTIONABLE PLOT 1: Average TAT ---
                 fig_tat = plot_bar_chart(
-                    insights.get("avg_tat_by_test_df"),
-                    x_col='Average TAT (Days)', y_col='Test Type',
-                    title='Average Turnaround Time (TAT) by Test',
-                    orientation='h' # Horizontal is better for long labels
+                    insights.get("avg_tat_by_test_df"), x_col='Average TAT (Days)', y_col='Test Type',
+                    title='Average Turnaround Time (TAT) by Test', orientation='h', y_axis_title="Test Type"
                 )
                 target_tat_val = _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2)
                 fig_tat.add_vline(x=target_tat_val, line_width=2, line_dash="dash", line_color="red", annotation_text="Target TAT")
                 st.plotly_chart(fig_tat, use_container_width=True)
             with plot_col2:
-                # --- ACTIONABLE PLOT 2: Rejection Reasons ---
                 fig_reject = plot_donut_chart(
-                    insights.get("rejection_reasons_df"),
-                    labels_col='Reason', values_col='Count',
+                    insights.get("rejection_reasons_df"), labels_col='Reason', values_col='Count',
                     title='Top Sample Rejection Reasons'
                 )
                 st.plotly_chart(fig_reject, use_container_width=True)
@@ -170,7 +181,8 @@ with tabs[1]: # Testing
             st.markdown("###### **Overdue Pending Tests:**")
             st.dataframe(insights.get("overdue_pending_tests_list_df"), use_container_width=True, hide_index=True)
         except Exception as e:
-            st.error(f"⚠️ Could not generate testing insights: {e}", exc_info=True)
+            logger.error(f"Error in 'Testing' tab: {e}", exc_info=True)
+            st.error(f"⚠️ Could not generate testing insights: {e}")
 
 with tabs[2]: # Supply Chain
     st.subheader("Supply Chain Forecast & Status")
@@ -179,10 +191,9 @@ with tabs[2]: # Supply Chain
     else:
         try:
             use_ai = st.checkbox("Use Advanced AI Forecast", key="supply_ai_toggle", help="Simulates a more complex forecast model.")
-            forecast = prepare_clinic_supply_forecast_overview_data(full_health_df, current_period_str, use_ai)
+            forecast = prepare_clinic_supply_forecast_overview_data(full_historical_health_df=full_health_df, current_period_context_str=current_period_str, use_ai_supply_forecasting_model=use_ai)
             forecast_df = pd.DataFrame(forecast.get("forecast_items_overview_list", []))
             if not forecast_df.empty:
-                # --- ACTIONABLE PLOT 3: Days of Supply Remaining ---
                 forecast_df['Days of Supply Remaining'] = pd.to_numeric(forecast_df['days_of_supply_remaining'], errors='coerce')
                 forecast_df.sort_values('Days of Supply Remaining', ascending=True, inplace=True)
                 color_map = { "Critical Low": get_theme_color("risk_high"), "Warning Low": get_theme_color("risk_moderate"), "Sufficient": get_theme_color("risk_low") }
@@ -192,36 +203,44 @@ with tabs[2]: # Supply Chain
                     orientation='h', color_discrete_map=color_map, y_axis_title='Supply Item'
                 )
                 st.plotly_chart(fig_supply, use_container_width=True)
-            
             st.markdown(f"**Forecast Model Used:** `{forecast.get('forecast_model_type_used', 'N/A')}`")
             st.dataframe(forecast_df, use_container_width=True, hide_index=True)
         except Exception as e:
-            st.error(f"⚠️ Could not generate supply chain insights: {e}", exc_info=True)
+            logger.error(f"Error in 'Supply Chain' tab: {e}", exc_info=True)
+            st.error(f"⚠️ Could not generate supply chain insights: {e}")
 
 with tabs[3]: # Patient Focus
     if health_df_period.empty:
         st.info("ℹ️ No health data for patient focus analysis.")
     else:
-        focus_data = prepare_clinic_patient_focus_overview_data(filtered_health_df=health_df_period)
-        fig = plot_bar_chart(focus_data.get("patient_load_by_key_condition_df"), x_col='period_start_date', y_col='unique_patients_count', title="Patient Load by Condition", color_col='condition', y_axis_title="Number of Unique Patients", y_values_are_counts=True, barmode='stack')
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown("###### **Flagged Patients for Clinical Review:**")
-        st.dataframe(focus_data.get("flagged_patients_for_review_df"), use_container_width=True, hide_index=True)
+        try:
+            focus_data = prepare_clinic_patient_focus_overview_data(filtered_health_df=health_df_period)
+            fig_load = plot_bar_chart(focus_data.get("patient_load_by_key_condition_df"), x_col='period_start_date', y_col='unique_patients_count', title="Patient Load by Condition", color_col='condition', y_axis_title="Number of Unique Patients", y_values_are_counts=True, barmode='stack')
+            st.plotly_chart(fig_load, use_container_width=True)
+            st.markdown("###### **Flagged Patients for Clinical Review:**")
+            st.dataframe(focus_data.get("flagged_patients_for_review_df"), use_container_width=True, hide_index=True)
+        except Exception as e:
+            logger.error(f"Error in 'Patient Focus' tab: {e}", exc_info=True)
+            st.error(f"⚠️ Could not generate patient focus insights: {e}")
 
 with tabs[4]: # Environment
     if iot_df_period.empty:
         st.info("ℹ️ No environmental data was recorded in this period.")
     else:
-        # FIXED: Pass the required reporting_period_context_str argument
-        env_data = prepare_clinic_environmental_detail_data(iot_df_period, reporting_period_context_str=current_period_str)
-        st.markdown("###### **Current Environmental Alerts (Latest Readings):**")
-        non_acceptable_alerts = [a for a in env_data.get("current_environmental_alerts_list", []) if a.get("status_level") != "ACCEPTABLE"]
-        if not non_acceptable_alerts:
-            st.success("✅ All monitored environmental parameters appear within acceptable limits.")
-        else:
-            for alert in non_acceptable_alerts: render_traffic_light_indicator(**alert)
-        st.plotly_chart(plot_annotated_line_chart(env_data.get("hourly_avg_co2_trend"), "Hourly Avg. CO₂ Levels", "CO₂ (ppm)"), use_container_width=True)
-
+        try:
+            env_data = prepare_clinic_environmental_detail_data(filtered_iot_df=iot_df_period, reporting_period_context_str=current_period_str)
+            st.markdown("###### **Current Environmental Alerts (Latest Readings):**")
+            alerts = env_data.get("current_environmental_alerts_list", [])
+            if not any(a.get("level") != "ACCEPTABLE" for a in alerts):
+                st.success("✅ All monitored environmental parameters appear within acceptable limits.")
+            else:
+                for alert in alerts: 
+                    if alert.get("level") != "ACCEPTABLE":
+                        render_traffic_light_indicator(message=alert.get("message", "Alert"), status_level=alert.get("level", "NO_DATA"))
+            st.plotly_chart(plot_annotated_line_chart(env_data.get("hourly_avg_co2_trend"), "Hourly Avg. CO₂ Levels", "CO₂ (ppm)"), use_container_width=True)
+        except Exception as e:
+            logger.error(f"Error in 'Environment' tab: {e}", exc_info=True)
+            st.error(f"⚠️ Could not generate environmental details: {e}")
 
 st.divider()
 st.caption(_get_setting('APP_FOOTER_TEXT', "Sentinel Health Co-Pilot."))
