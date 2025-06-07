@@ -67,7 +67,6 @@ def prepare_clinic_lab_testing_insights_data(
         if summary_list:
             insights["all_critical_tests_summary_table_df"] = pd.DataFrame(summary_list)
 
-    # Return early if no detailed health data is provided for the period
     if not isinstance(filtered_health_df, pd.DataFrame) or filtered_health_df.empty:
         insights["processing_notes"].append("Health data not provided for detailed insights (overdue tests, rejection reasons).")
         return insights
