@@ -404,6 +404,7 @@ with col2_task:
     else: st.markdown(f"**Status:** {status}")
 st.markdown("""<hr style="margin-top:0.5rem; margin-bottom:0.5rem;" />""", unsafe_allow_html=True)
 Use code with caution.
+Use code with caution.
 elif data_load_successful and not daily_activity_df.empty:
 st.info("ℹ️ No high-priority tasks identified based on current data.")
 st.divider()
