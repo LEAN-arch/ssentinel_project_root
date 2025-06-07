@@ -84,9 +84,9 @@ st.sidebar.image(str(Path(_get_setting('APP_LOGO_SMALL_PATH', ''))), width=230)
 st.sidebar.header("Console Filters")
 
 all_dates = []
-if not full_health_df.empty and 'encounter_date' in full_health_df:
+if not full_health_df.empty and 'encounter_date' in full_health_df.columns:
     all_dates.extend([full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()])
-if not full_iot_df.empty and 'timestamp' in full_iot_df:
+if not full_iot_df.empty and 'timestamp' in full_iot_df.columns:
     all_dates.extend([full_iot_df['timestamp'].min().date(), full_iot_df['timestamp'].max().date()])
 
 if all_dates:
@@ -106,9 +106,8 @@ st.header("🚀 Clinic Performance & Environment Snapshot")
 try:
     if not health_df_period.empty:
         kpis = get_clinic_summary_kpis(health_df_period)
-        # FIXED: Pass the required context string to the structuring functions
-        main_kpis = structure_main_clinic_kpis(kpis, reporting_period_context_str=current_period_str)
-        disease_kpis = structure_disease_specific_clinic_kpis(kpis, reporting_period_context_str=current_period_str)
+        main_kpis = structure_main_clinic_kpis(kpis_summary=kpis, reporting_period_context_str=current_period_str)
+        disease_kpis = structure_disease_specific_clinic_kpis(kpis_summary=kpis, reporting_period_context_str=current_period_str)
         
         if main_kpis:
             st.markdown("##### **Overall Service Performance:**")
@@ -121,17 +120,6 @@ try:
             cols = st.columns(len(disease_kpis))
             for i, kpi_data in enumerate(disease_kpis):
                 with cols[i]: render_kpi_card(**kpi_data)
-
-    st.markdown("##### **Clinic Environment Quick Check:**")
-    if not iot_df_period.empty:
-        env_kpis = get_clinic_environmental_summary_kpis(iot_df_period)
-        cols = st.columns(4)
-        with cols[0]: render_kpi_card(title="Avg. CO₂", value_str=f"{env_kpis.get('avg_co2_overall_ppm', 0):.0f}", units="ppm", icon="💨")
-        with cols[1]: render_kpi_card(title="Avg. PM2.5", value_str=f"{env_kpis.get('avg_pm25_overall_ugm3', 0):.1f}", units="µg/m³", icon="🌫️")
-        with cols[2]: render_kpi_card(title="Avg. Occupancy", value_str=f"{env_kpis.get('avg_waiting_room_occupancy_overall_persons', 0):.1f}", units="persons", icon="👨‍👩‍👧‍👦")
-        with cols[3]: render_kpi_card(title="High Noise Alerts", value_str=str(env_kpis.get('rooms_noise_high_alert_latest_count', 0)), units="areas", icon="🔊")
-    else:
-        st.info("ℹ️ No environmental data in the selected period.")
 except Exception as e:
     logger.error(f"Error rendering KPI snapshot section: {e}", exc_info=True)
     st.error("⚠️ An error occurred while rendering the KPI snapshot.")
@@ -142,40 +130,78 @@ st.header("🛠️ Operational Areas Deep Dive")
 tabs = st.tabs(["📈 Local Epi", "🔬 Testing", "💊 Supply Chain", "🧍 Patient Focus", "🌿 Environment"])
 
 with tabs[0]: # Local Epi
-    if health_df_period.empty: st.info("ℹ️ No health data in this period for epidemiological analysis.")
+    if health_df_period.empty:
+        st.info("ℹ️ No health data in this period for epidemiological analysis.")
     else:
-        epi_data = calculate_clinic_epidemiological_data(health_df_period)
+        epi_data = calculate_clinic_epidemiological_data(filtered_health_df=health_df_period)
         st.plotly_chart(plot_bar_chart(epi_data.get("symptom_trends_weekly_top_n_df"), x_col='week_start_date', y_col='count', title="Weekly Symptom Frequency", color_col='symptom', y_axis_title="Number of Symptom Reports", y_values_are_counts=True, barmode='group'), use_container_width=True)
 
 with tabs[1]: # Testing
-    if health_df_period.empty: st.info("ℹ️ No health data in this period for testing insights.")
+    st.subheader("Laboratory and Testing Performance")
+    if health_df_period.empty:
+        st.info("ℹ️ No health data in this period for testing insights.")
     else:
-        kpis = get_clinic_summary_kpis(health_df_period)
-        # FIXED: Pass all required arguments to the insights function.
-        insights = prepare_clinic_lab_testing_insights_data(kpis_summary=kpis, filtered_health_df=health_df_period)
-        plot_col1, plot_col2 = st.columns(2)
-        with plot_col1:
-            #... (Plotting logic for TAT) ...
-            pass
-        with plot_col2:
-            #... (Plotting logic for Rejection Reasons) ...
-            pass
-        st.markdown("###### **Overdue Pending Tests:**")
-        st.dataframe(insights.get("overdue_pending_tests_list_df"), use_container_width=True, hide_index=True)
+        try:
+            kpis = get_clinic_summary_kpis(health_df_period)
+            # FIXED: Pass all required arguments to the insights function.
+            insights = prepare_clinic_lab_testing_insights_data(kpis_summary=kpis, filtered_health_df=health_df_period)
+            
+            plot_col1, plot_col2 = st.columns(2)
+            with plot_col1:
+                # --- ACTIONABLE PLOT 1: Average TAT ---
+                fig_tat = plot_bar_chart(
+                    insights.get("avg_tat_by_test_df"),
+                    x_col='Average TAT (Days)', y_col='Test Type',
+                    title='Average Turnaround Time (TAT) by Test',
+                    orientation='h' # Horizontal is better for long labels
+                )
+                target_tat_val = _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2)
+                fig_tat.add_vline(x=target_tat_val, line_width=2, line_dash="dash", line_color="red", annotation_text="Target TAT")
+                st.plotly_chart(fig_tat, use_container_width=True)
+            with plot_col2:
+                # --- ACTIONABLE PLOT 2: Rejection Reasons ---
+                fig_reject = plot_donut_chart(
+                    insights.get("rejection_reasons_df"),
+                    labels_col='Reason', values_col='Count',
+                    title='Top Sample Rejection Reasons'
+                )
+                st.plotly_chart(fig_reject, use_container_width=True)
+
+            st.markdown("###### **Overdue Pending Tests:**")
+            st.dataframe(insights.get("overdue_pending_tests_list_df"), use_container_width=True, hide_index=True)
+        except Exception as e:
+            st.error(f"⚠️ Could not generate testing insights: {e}", exc_info=True)
 
 with tabs[2]: # Supply Chain
-    if full_health_df.empty: st.info("ℹ️ No historical data available for supply forecasting.")
+    st.subheader("Supply Chain Forecast & Status")
+    if full_health_df.empty:
+        st.info("ℹ️ No historical data available for supply forecasting.")
     else:
-        use_ai = st.checkbox("Use Advanced AI Forecast", key="supply_ai_toggle")
-        # FIXED: Pass all required arguments to the supply forecast function.
-        forecast = prepare_clinic_supply_forecast_overview_data(full_health_df, current_period_str, use_ai)
-        #... (Plotting and table logic for supply chain) ...
-        pass
-        
+        try:
+            use_ai = st.checkbox("Use Advanced AI Forecast", key="supply_ai_toggle", help="Simulates a more complex forecast model.")
+            forecast = prepare_clinic_supply_forecast_overview_data(full_health_df, current_period_str, use_ai)
+            forecast_df = pd.DataFrame(forecast.get("forecast_items_overview_list", []))
+            if not forecast_df.empty:
+                # --- ACTIONABLE PLOT 3: Days of Supply Remaining ---
+                forecast_df['Days of Supply Remaining'] = pd.to_numeric(forecast_df['days_of_supply_remaining'], errors='coerce')
+                forecast_df.sort_values('Days of Supply Remaining', ascending=True, inplace=True)
+                color_map = { "Critical Low": get_theme_color("risk_high"), "Warning Low": get_theme_color("risk_moderate"), "Sufficient": get_theme_color("risk_low") }
+                fig_supply = plot_bar_chart(
+                    forecast_df, x_col='Days of Supply Remaining', y_col='item',
+                    title='Estimated Days of Supply Remaining', color_col='stock_status',
+                    orientation='h', color_discrete_map=color_map, y_axis_title='Supply Item'
+                )
+                st.plotly_chart(fig_supply, use_container_width=True)
+            
+            st.markdown(f"**Forecast Model Used:** `{forecast.get('forecast_model_type_used', 'N/A')}`")
+            st.dataframe(forecast_df, use_container_width=True, hide_index=True)
+        except Exception as e:
+            st.error(f"⚠️ Could not generate supply chain insights: {e}", exc_info=True)
+
 with tabs[3]: # Patient Focus
-    if health_df_period.empty: st.info("ℹ️ No health data for patient focus analysis.")
+    if health_df_period.empty:
+        st.info("ℹ️ No health data for patient focus analysis.")
     else:
-        # FIXED: The function call is now correct.
         focus_data = prepare_clinic_patient_focus_overview_data(filtered_health_df=health_df_period)
         fig = plot_bar_chart(focus_data.get("patient_load_by_key_condition_df"), x_col='period_start_date', y_col='unique_patients_count', title="Patient Load by Condition", color_col='condition', y_axis_title="Number of Unique Patients", y_values_are_counts=True, barmode='stack')
         st.plotly_chart(fig, use_container_width=True)
@@ -183,9 +209,10 @@ with tabs[3]: # Patient Focus
         st.dataframe(focus_data.get("flagged_patients_for_review_df"), use_container_width=True, hide_index=True)
 
 with tabs[4]: # Environment
-    if iot_df_period.empty: st.info("ℹ️ No environmental data was recorded in this period.")
+    if iot_df_period.empty:
+        st.info("ℹ️ No environmental data was recorded in this period.")
     else:
-        # FIXED: Pass the required context string to the details function.
+        # FIXED: Pass the required reporting_period_context_str argument
         env_data = prepare_clinic_environmental_detail_data(iot_df_period, reporting_period_context_str=current_period_str)
         st.markdown("###### **Current Environmental Alerts (Latest Readings):**")
         non_acceptable_alerts = [a for a in env_data.get("current_environmental_alerts_list", []) if a.get("status_level") != "ACCEPTABLE"]
