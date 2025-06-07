@@ -10,7 +10,7 @@ from datetime import date as date_type, datetime
 # --- Core Imports ---
 try:
     from config import settings
-    from data_processing.helpers import convert_to_numeric, standardize_missing_values
+    from data_processing.helpers import standardize_missing_values
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
     logger_init = logging.getLogger(__name__)
@@ -92,18 +92,16 @@ def calculate_chw_daily_summary_metrics(
     if not patient_records_df.empty:
         metrics_summary["visits_count"] = patient_records_df['patient_id'].nunique()
 
-        prio_high_thresh = getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 80)
         metrics_summary["high_ai_prio_followups_count"] = patient_records_df[
-            patient_records_df['ai_followup_priority_score'] >= prio_high_thresh
+            patient_records_df['ai_followup_priority_score'] >= settings.FATIGUE_INDEX_HIGH_THRESHOLD
         ]['patient_id'].nunique()
 
         unique_patient_risks = patient_records_df.drop_duplicates(subset=['patient_id'])['ai_risk_score'].dropna()
         if not unique_patient_risks.empty:
             metrics_summary["avg_risk_of_visited_patients"] = unique_patient_risks.mean()
 
-        spo2_critical_thresh = getattr(settings, 'ALERT_SPO2_CRITICAL_LOW_PCT', 90)
         metrics_summary["critical_spo2_cases_identified_count"] = patient_records_df[
-            patient_records_df['min_spo2_pct'] < spo2_critical_thresh
+            patient_records_df['min_spo2_pct'] < settings.ALERT_SPO2_CRITICAL_LOW_PCT
         ]['patient_id'].nunique()
 
         # Choose the best available temperature source
@@ -111,9 +109,8 @@ def calculate_chw_daily_summary_metrics(
         if df[temp_col].isnull().all() and 'max_skin_temp_celsius' in df.columns:
             temp_col = 'max_skin_temp_celsius'
         
-        high_fever_thresh = getattr(settings, 'ALERT_BODY_TEMP_HIGH_FEVER_C', 39.5)
         metrics_summary["high_fever_cases_identified_count"] = patient_records_df[
-            patient_records_df[temp_col] >= high_fever_thresh
+            patient_records_df[temp_col] >= settings.ALERT_BODY_TEMP_HIGH_FEVER_C
         ]['patient_id'].nunique()
 
     # --- Calculations for CHW-Specific Metrics ---
@@ -123,13 +120,13 @@ def calculate_chw_daily_summary_metrics(
         for col in fatigue_cols:
             if col in worker_self_checks_df.columns and worker_self_checks_df[col].notna().any():
                 metrics_summary["worker_self_fatigue_index_today"] = worker_self_checks_df[col].max()
-                break # Stop after finding the first valid fatigue metric
+                break 
 
         if 'chw_daily_steps' in worker_self_checks_df.columns and worker_self_checks_df['chw_daily_steps'].notna().any():
             metrics_summary["chw_steps_today"] = worker_self_checks_df['chw_daily_steps'].max()
         
         if 'device_battery_level_pct' in worker_self_checks_df.columns and worker_self_checks_df['device_battery_level_pct'].notna().any():
-            metrics_summary["device_battery_pct"] = worker_self_checks_df['device_battery_level_pct'].iloc[-1] # Last reported value
+            metrics_summary["device_battery_pct"] = worker_self_checks_df['device_battery_level_pct'].iloc[-1]
 
         if 'data_sync_latency_hours' in worker_self_checks_df.columns and worker_self_checks_df['data_sync_latency_hours'].notna().any():
             metrics_summary["avg_data_sync_latency_hours"] = worker_self_checks_df['data_sync_latency_hours'].mean()
@@ -143,7 +140,11 @@ def calculate_chw_daily_summary_metrics(
     }
     for metric, places in float_metrics_to_round.items():
         if pd.notna(metrics_summary.get(metric)):
-            metrics_summary[metric] = round(float(metrics_summary[metric]), places)
+            try:
+                metrics_summary[metric] = round(float(metrics_summary[metric]), places)
+            except (ValueError, TypeError):
+                # Keep as NaN if conversion fails
+                metrics_summary[metric] = np.nan
 
     logger.info(f"({source_context}) Daily summary metrics calculated successfully for {target_date_iso}.")
     return metrics_summary
