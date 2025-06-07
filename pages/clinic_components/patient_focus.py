@@ -5,11 +5,12 @@ import pandas as pd
 import numpy as np
 import logging
 import re
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
+from datetime import date as date_type, datetime
 
 try:
     from config import settings
-    from analytics.alerting import get_patient_alerts_for_clinic
+    from analytics.alerting import get_patient_alerts_for_clinic 
     from data_processing.helpers import convert_to_numeric
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
@@ -26,7 +27,7 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 
 def prepare_clinic_patient_focus_overview_data(
-    # FIXED: Renamed the parameter to a simpler, consistent `filtered_health_df` to fix the NameError.
+    # FIXED: Renamed parameter to `filtered_health_df` to match its usage within the function and the calling context.
     filtered_health_df: Optional[pd.DataFrame],
     **kwargs
 ) -> Dict[str, Any]:
