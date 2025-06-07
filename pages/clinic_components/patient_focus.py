@@ -27,8 +27,7 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 
 def prepare_clinic_patient_focus_overview_data(
-    filtered_health_df_for_period: Optional[pd.DataFrame],
-    **kwargs # Accept and ignore other kwargs for compatibility
+    filtered_health_df: Optional[pd.DataFrame]
 ) -> Dict[str, Any]:
     """
     Prepares data for patient load analysis and flagged patient cases.
@@ -44,26 +43,26 @@ def prepare_clinic_patient_focus_overview_data(
         "processing_notes": []
     }
 
-    if not isinstance(filtered_health_df_for_clinic_period, pd.DataFrame) or filtered_health_df_for_clinic_period.empty:
+    if not isinstance(filtered_health_df, pd.DataFrame) or filtered_health_df.empty:
         output_data["processing_notes"].append("No health data provided for patient focus analysis.")
         return output_data
 
-    df_load_analysis = filtered_health_df_for_clinic_period.copy()
+    df_load_analysis = filtered_health_df.copy()
     
-    # Ensure necessary columns are present and correctly typed
-    if 'encounter_date' not in df_load_analysis.columns or 'patient_id' not in df_load_analysis.columns or 'condition' not in df_load_analysis.columns:
-        output_data["processing_notes"].append("Required columns (encounter_date, patient_id, condition) are missing.")
+    required_cols = ['encounter_date', 'patient_id', 'condition']
+    if not all(col in df_load_analysis.columns for col in required_cols):
+        output_data["processing_notes"].append(f"Required columns are missing: {list(set(required_cols) - set(df_load_analysis.columns))}")
         return output_data
         
     df_load_analysis['encounter_date'] = pd.to_datetime(df_load_analysis['encounter_date'], errors='coerce')
-    df_load_analysis.dropna(subset=['encounter_date', 'patient_id', 'condition'], inplace=True)
+    df_load_analysis.dropna(subset=required_cols, inplace=True)
     df_load_analysis = df_load_analysis[df_load_analysis['condition'] != "UnknownCondition"]
 
     # --- Patient Load by Key Condition ---
     if not df_load_analysis.empty:
         key_conditions = _get_setting('KEY_CONDITIONS_FOR_ACTION', [])
         if key_conditions:
-            aggregated_summaries = []
+            summaries = []
             for condition in key_conditions:
                 try:
                     mask = df_load_analysis['condition'].str.contains(re.escape(condition), case=False, na=False)
@@ -72,31 +71,23 @@ def prepare_clinic_patient_focus_overview_data(
                         grouped = df_cond.groupby(pd.Grouper(key='encounter_date', freq='W-MON'))['patient_id'].nunique().reset_index()
                         grouped.rename(columns={'encounter_date': 'period_start_date', 'patient_id': 'unique_patients_count'}, inplace=True)
                         grouped['condition'] = condition
-                        aggregated_summaries.append(grouped)
+                        summaries.append(grouped)
                 except Exception as e:
                     logger.error(f"Error aggregating load for condition '{condition}': {e}", exc_info=True)
             
-            if aggregated_summaries:
-                final_load_df = pd.concat(aggregated_summaries, ignore_index=True)
-                # FIXED: Ensure the final concatenated DataFrame is assigned to the output dictionary.
-                output_data["patient_load_by_key_condition_df"] = final_load_df[default_load_cols]
-    else:
-        output_data["processing_notes"].append("No valid records for patient load analysis after cleaning.")
-
+            if summaries:
+                final_df = pd.concat(summaries, ignore_index=True)
+                output_data["patient_load_by_key_condition_df"] = final_df[default_load_cols]
+    
     # --- Flagged Patients for Review ---
     try:
-        risk_moderate_thresh = float(_get_setting('RISK_SCORE_MODERATE_THRESHOLD', 60))
-        alerts_df = get_patient_alerts_for_clinic(
-            health_df_period=filtered_health_df_for_clinic_period,
-            risk_threshold_moderate=risk_moderate_thresh
-        )
+        risk_thresh = float(_get_setting('RISK_SCORE_MODERATE_THRESHOLD', 60))
+        alerts_df = get_patient_alerts_for_clinic(health_df_period=filtered_health_df, risk_threshold_moderate=risk_thresh)
         if isinstance(alerts_df, pd.DataFrame) and not alerts_df.empty:
             output_data["flagged_patients_for_review_df"] = alerts_df.reindex(columns=default_flagged_cols, fill_value=np.nan)
-        else:
-            output_data["processing_notes"].append("No patients were flagged for review in this period.")
     except Exception as e:
         logger.error(f"Error getting flagged patients: {e}", exc_info=True)
-        output_data["processing_notes"].append("An error occurred while generating the list of flagged patients.")
+        output_data["processing_notes"].append("Error generating list of flagged patients.")
 
     logger.info(f"({module_log_prefix}) Patient focus data preparation complete.")
     return output_data
