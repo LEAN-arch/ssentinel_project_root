@@ -4,288 +4,191 @@
 import pandas as pd
 import numpy as np
 import logging
-import re 
-from typing import List, Dict, Any, Optional, Tuple, Union
+from typing import List, Dict, Any, Optional, Union
 from datetime import date as date_type, datetime
 
+# --- Core Imports ---
 try:
     from config import settings
-    from data_processing.helpers import convert_to_numeric
+    from data_processing.helpers import convert_to_numeric, standardize_missing_values
     from analytics.protocol_executor import execute_escalation_protocol
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
-    logger = logging.getLogger(__name__)
-    logger.error(f"Critical import error in alert_generation.py: {e}. Ensure paths and dependencies are correct.")
+    logger_init = logging.getLogger(__name__)
+    logger_init.error(f"Critical import error in alert_generation.py: {e}. Check project structure.")
     raise
 
 logger = logging.getLogger(__name__)
 
-COMMON_NA_VALUES_ALERTS = frozenset(['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown'])
-NA_REGEX_PATTERN = r'^\s*$' + (r'|^(?:' + '|'.join(re.escape(s) for s in COMMON_NA_VALUES_ALERTS if s) + r')$' if any(COMMON_NA_VALUES_ALERTS) else '')
+# --- Column Configuration ---
+# Centralizes the expected columns and their properties for easier management.
+ALERT_COLS_CONFIG = {
+    'patient_id': {"default": "UnknownPID_Alert", "type": str},
+    'encounter_date': {"default": pd.NaT, "type": "datetime"},
+    'zone_id': {"default": "UnknownZone", "type": str},
+    'condition': {"default": "N/A", "type": str},
+    'age': {"default": np.nan, "type": float},
+    'ai_risk_score': {"default": np.nan, "type": float},
+    'ai_followup_priority_score': {"default": np.nan, "type": float},
+    'min_spo2_pct': {"default": np.nan, "type": float},
+    'vital_signs_temperature_celsius': {"default": np.nan, "type": float},
+    'max_skin_temp_celsius': {"default": np.nan, "type": float},
+    'fall_detected_today': {"default": 0, "type": int},
+    'referral_status': {"default": "Unknown", "type": str},
+    'referral_reason': {"default": "N/A", "type": str},
+    'blood_pressure_systolic': {"default": np.nan, "type": float},
+    'blood_pressure_diastolic': {"default": np.nan, "type": float}
+}
 
 
 def _prepare_alert_dataframe(
     df: pd.DataFrame,
-    alert_cols_config: Dict[str, Dict[str, Any]],
-    chw_zone_context_str: str,
     processing_date_str: str,
     log_prefix: str
 ) -> pd.DataFrame:
     """Prepares the DataFrame by ensuring columns exist and have correct types."""
-    df_prepared = df.copy()
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame(columns=list(ALERT_COLS_CONFIG.keys()))
 
-    for col_name, config in alert_cols_config.items():
-        default_value = config["default"]
-        target_type_str = config["type"]
-        is_mutable_default = isinstance(default_value, (list, dict))
+    # Use the robust standardize_missing_values helper
+    numeric_defaults = {k: v['default'] for k, v in ALERT_COLS_CONFIG.items() if v['type'] in [int, float]}
+    string_defaults = {k: v['default'] for k, v in ALERT_COLS_CONFIG.items() if v['type'] == str}
+    
+    # Dynamically update the default for patient_id with the processing date
+    string_defaults['patient_id'] = f"UnknownPID_Alert_{processing_date_str}"
+    
+    df_prepared = standardize_missing_values(df, string_defaults, numeric_defaults)
 
-        if col_name not in df_prepared.columns:
-            if is_mutable_default:
-                # CORRECTED: Assign a new copy of the mutable default to each row.
-                df_prepared[col_name] = [default_value.copy() for _ in range(len(df_prepared))]
-            elif target_type_str == "datetime" and default_value is pd.NaT:
-                 df_prepared[col_name] = pd.NaT
-            else:
-                 df_prepared[col_name] = default_value
-        elif is_mutable_default:
-            # CORRECTED: Fill NaNs with a new copy of the mutable default for each NaN value.
-            fill_mask = df_prepared[col_name].isnull()
-            if fill_mask.any():
-                df_prepared.loc[fill_mask, col_name] = df_prepared.loc[fill_mask, col_name].apply(
-                    lambda x: default_value.copy() if pd.isna(x) else x
-                )
-
-        # Replace common string NAs with np.nan before type conversion for numeric/datetime
-        if target_type_str in [float, int, "datetime"] and pd.api.types.is_object_dtype(df_prepared[col_name].dtype):
-            if NA_REGEX_PATTERN:
-                try:
-                    df_prepared[col_name].replace(NA_REGEX_PATTERN, np.nan, regex=True, inplace=True)
-                except Exception as e_regex_replace:
-                    logger.warning(f"({log_prefix}) Regex NA replacement failed for column '{col_name}': {e_regex_replace}. Proceeding with original values.")
-
-        # Convert to target type
-        try:
-            if target_type_str == "datetime":
-                df_prepared[col_name] = pd.to_datetime(df_prepared[col_name], errors='coerce')
-            elif target_type_str == float:
-                df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value, target_type=float)
-            elif target_type_str == int:
-                df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value, target_type=int)
-            elif target_type_str == str and not is_mutable_default:
-                # Fill np.nan/pd.NA before converting to string
-                series = df_prepared[col_name].fillna(str(default_value))
-                df_prepared[col_name] = series.astype(str).str.strip()
-
-        except Exception as e_type_conv:
-            logger.error(f"({log_prefix}) Error converting column '{col_name}' to type '{target_type_str}': {e_type_conv}. Using default values.", exc_info=True)
-            if target_type_str == "datetime" and default_value is pd.NaT: df_prepared[col_name] = pd.NaT
-            else: df_prepared[col_name] = default_value
-            
-    placeholder_pid = f"UnknownPID_CHWAlert_{processing_date_str}"
-    if 'patient_id' in df_prepared.columns:
-        df_prepared['patient_id'].replace('', placeholder_pid, inplace=True)
-        df_prepared['patient_id'].fillna(placeholder_pid, inplace=True)
+    # Convert datetime columns
+    date_cols = [k for k, v in ALERT_COLS_CONFIG.items() if v['type'] == 'datetime']
+    for col in date_cols:
+        if col in df_prepared.columns:
+            df_prepared[col] = pd.to_datetime(df_prepared[col], errors='coerce')
 
     return df_prepared
 
 
 def generate_chw_alerts(
     patient_encounter_data_df: Optional[pd.DataFrame],
-    for_date: Union[str, pd.Timestamp, date_type, datetime], 
-    chw_zone_context_str: str, # Used as a fallback if zone_id is missing
+    for_date: Union[str, pd.Timestamp, date_type, datetime],
+    chw_zone_context_str: str,
     max_alerts_to_return: int = 15
 ) -> List[Dict[str, Any]]:
     """
-    Processes CHW daily encounter data to generate structured patient alerts.
-    Prioritizes critical alerts and then sorts by a raw priority score.
-    Integrates escalation protocol execution for certain critical alerts.
+    Processes CHW daily encounter data to generate structured patient alerts
+    using a scalable, rule-based engine.
+
+    This function identifies critical and warning conditions, prioritizes them,
+    and integrates with the escalation protocol system.
     """
-    module_log_prefix = "CHWAlertGeneration"
+    log_prefix = "CHWAlertGeneration"
 
     try:
-        processing_date_dt = pd.to_datetime(for_date, errors='coerce')
-        if pd.NaT is processing_date_dt:
-             raise ValueError(f"'for_date' ({for_date}) could not be parsed to a valid date object.")
-        processing_date = processing_date_dt.date()
-    except Exception as e_date_parse:
-        logger.warning(f"({module_log_prefix}) Invalid 'for_date' ('{for_date}'): {e_date_parse}. Defaulting to current system date.")
+        processing_date = pd.to_datetime(for_date).date()
+    except (ValueError, TypeError):
+        logger.warning(f"({log_prefix}) Invalid 'for_date' ('{for_date}'). Defaulting to current system date.")
         processing_date = pd.Timestamp('now').date()
     
     processing_date_str = processing_date.isoformat()
-    logger.info(f"({module_log_prefix}) Generating CHW patient alerts for date: {processing_date_str}, zone context: {chw_zone_context_str}")
+    logger.info(f"({log_prefix}) Generating CHW patient alerts for date: {processing_date_str}")
 
     if not isinstance(patient_encounter_data_df, pd.DataFrame) or patient_encounter_data_df.empty:
-        logger.warning(f"({module_log_prefix}) No patient encounter data provided for date {processing_date_str}. No alerts will be generated.")
+        logger.warning(f"({log_prefix}) No patient encounter data provided for {processing_date_str}.")
         return []
 
-    alert_cols_config = {
-        'patient_id': {"default": f"UnknownPID_CHWAlert_{processing_date_str}", "type": str},
-        'encounter_date': {"default": pd.NaT, "type": "datetime"},
-        'zone_id': {"default": chw_zone_context_str if chw_zone_context_str else "UnknownZone", "type": str},
-        'condition': {"default": "N/A", "type": str},
-        'age': {"default": np.nan, "type": float},
-        'ai_risk_score': {"default": np.nan, "type": float},
-        'ai_followup_priority_score': {"default": np.nan, "type": float},
-        'min_spo2_pct': {"default": np.nan, "type": float},
-        'vital_signs_temperature_celsius': {"default": np.nan, "type": float},
-        'max_skin_temp_celsius': {"default": np.nan, "type": float},
-        'fall_detected_today': {"default": 0, "type": int}, 
-        'referral_status': {"default": "Unknown", "type": str},
-        'referral_reason': {"default": "N/A", "type": str}
-    }
+    df_alert_src = _prepare_alert_dataframe(patient_encounter_data_df, processing_date_str, log_prefix)
     
-    df_alert_src = _prepare_alert_dataframe(
-        patient_encounter_data_df, alert_cols_config, 
-        chw_zone_context_str, processing_date_str, module_log_prefix
-    )
+    # Determine the best temperature column to use
+    temp_col = 'vital_signs_temperature_celsius'
+    if temp_col not in df_alert_src or df_alert_src[temp_col].isnull().all():
+        temp_col = 'max_skin_temp_celsius'
 
-    temp_col_name_to_use = None
-    if 'vital_signs_temperature_celsius' in df_alert_src and df_alert_src['vital_signs_temperature_celsius'].notna().any():
-        temp_col_name_to_use = 'vital_signs_temperature_celsius'
-    elif 'max_skin_temp_celsius' in df_alert_src and df_alert_src['max_skin_temp_celsius'].notna().any():
-        temp_col_name_to_use = 'max_skin_temp_celsius'
-        logger.debug(f"({module_log_prefix}) Using 'max_skin_temp_celsius' as primary temperature source for alerts.")
+    # --- Rule-Based Alert Engine ---
+    alert_rules = [
+        # Vital Sign Alerts (Highest Priority)
+        {"level": "CRITICAL", "reason": "Critical Low SpO2", "field": "min_spo2_pct", "condition": lambda v: v < getattr(settings, 'ALERT_SPO2_CRITICAL_LOW_PCT', 90), "details": "SpO2: {value:.0f}%", "action": "ACTION_SPO2_MANAGE_URGENT", "base_score": 98.0, "value_factor": -1.0, "protocol": "PATIENT_CRITICAL_SPO2_LOW"},
+        {"level": "CRITICAL", "reason": "High Fever", "field": temp_col, "condition": lambda v: v >= getattr(settings, 'ALERT_BODY_TEMP_HIGH_FEVER_C', 39.5), "details": "Temp: {value:.1f}°C", "action": "ACTION_FEVER_MANAGE_URGENT", "base_score": 95.0, "value_factor": 2.0, "protocol": "PATIENT_CRITICAL_HIGH_FEVER"},
+        {"level": "CRITICAL", "reason": "Fall Detected", "field": "fall_detected_today", "condition": lambda v: v > 0, "details": "Falls recorded: {value:.0f}", "action": "ACTION_FALL_ASSESS_URGENT", "base_score": 92.0, "value_factor": 0.0, "protocol": "PATIENT_FALL_DETECTED"},
+        {"level": "WARNING", "reason": "Low SpO2", "field": "min_spo2_pct", "condition": lambda v: v < getattr(settings, 'ALERT_SPO2_WARNING_LOW_PCT', 94), "details": "SpO2: {value:.0f}%", "action": "ACTION_SPO2_RECHECK_MONITOR", "base_score": 75.0, "value_factor": -1.0},
+        {"level": "WARNING", "reason": "Fever Present", "field": temp_col, "condition": lambda v: v >= getattr(settings, 'ALERT_BODY_TEMP_FEVER_C', 38.0), "details": "Temp: {value:.1f}°C", "action": "ACTION_FEVER_MONITOR", "base_score": 70.0, "value_factor": 1.0},
+        
+        # AI & Contextual Alerts
+        {"level": "WARNING", "reason": "Pending Critical Referral", "field": "referral_status", "condition": lambda v, row: str(v).lower() == 'pending' and any(kc.lower() in str(row.get('condition', '')).lower() for kc in getattr(settings, 'KEY_CONDITIONS_FOR_ACTION', [])), "details": "For: {row[condition]}", "action": "ACTION_FOLLOWUP_REFERRAL_STATUS", "base_score": 80.0, "value_factor": 0.0},
+        {"level": "WARNING", "reason": "High AI Follow-up Prio.", "field": "ai_followup_priority_score", "condition": lambda v: v >= getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 80), "details": "AI Prio Score: {value:.0f}", "action": "ACTION_AI_REVIEW_FOLLOWUP", "base_score": 70.0, "value_factor": 0.2},
+        {"level": "INFO", "reason": "Elevated AI Risk Score", "field": "ai_risk_score", "condition": lambda v: v >= getattr(settings, 'RISK_SCORE_HIGH_THRESHOLD', 75), "details": "AI Risk: {value:.0f}", "action": "ACTION_MONITOR_RISK_ROUTINE", "base_score": 60.0, "value_factor": 0.15},
+    ]
 
-
-    alerts_buffer_list: List[Dict[str, Any]] = []
+    alerts_buffer: List[Dict[str, Any]] = []
     for _, encounter_row in df_alert_src.iterrows():
-        patient_id_val = str(encounter_row.get('patient_id', alert_cols_config['patient_id']['default']))
+        context_info = f"Cond: {encounter_row.get('condition', 'N/A')} | Zone: {encounter_row.get('zone_id', chw_zone_context_str)}"
         
-        row_encounter_date = encounter_row.get('encounter_date')
-        if pd.notna(row_encounter_date) and isinstance(row_encounter_date, pd.Timestamp) and row_encounter_date.date() == processing_date:
-            effective_encounter_date_str_for_context = row_encounter_date.strftime('%Y-%m-%d')
-        else:
-            effective_encounter_date_str_for_context = processing_date_str
+        for rule in alert_rules:
+            if rule['field'] not in encounter_row: continue
+            
+            value = encounter_row[rule['field']]
+            if pd.isna(value): continue
 
-        alert_context_info = (
-            f"Cond: {encounter_row.get('condition', 'N/A')} | "
-            f"Zone: {encounter_row.get('zone_id', 'N/A')} | "
-            f"DataDate: {effective_encounter_date_str_for_context}"
-        )
+            # Check condition
+            try:
+                # Pass the whole row for complex conditions
+                if "row" in rule["condition"].__code__.co_varnames:
+                    triggered = rule["condition"](value, encounter_row)
+                else:
+                    triggered = rule["condition"](value)
+            except Exception:
+                continue # Skip rule if condition lambda fails
 
-        # --- Alert Rules ---
-        min_spo2_val = encounter_row.get('min_spo2_pct', np.nan)
-        spo2_critical_low_thresh = getattr(settings, 'ALERT_SPO2_CRITICAL_LOW_PCT', 90.0)
-        if pd.notna(min_spo2_val) and min_spo2_val < spo2_critical_low_thresh:
-            alerts_buffer_list.append({
-                "alert_level": "CRITICAL", "primary_reason": "Critical Low SpO2",
-                "brief_details": f"SpO2: {min_spo2_val:.0f}%", "suggested_action_code": "ACTION_SPO2_MANAGE_URGENT",
-                "raw_priority_score": 98.0 + max(0, spo2_critical_low_thresh - min_spo2_val),
-                "patient_id": patient_id_val, "context_info": alert_context_info,
-                "triggering_value": f"SpO2 {min_spo2_val:.0f}%", "encounter_date": processing_date_str
-            })
-            execute_escalation_protocol("PATIENT_CRITICAL_SPO2_LOW", encounter_row.to_dict(), 
-                                        additional_context={"SPO2_VALUE": min_spo2_val, "PATIENT_AGE": encounter_row.get('age')})
-            continue 
+            if triggered:
+                # Calculate dynamic priority score
+                priority_score = rule['base_score'] + (value * rule['value_factor'])
+                
+                # Format details string
+                details_str = rule['details'].format(value=value, row=encounter_row)
 
-        spo2_warning_low_thresh = getattr(settings, 'ALERT_SPO2_WARNING_LOW_PCT', 94.0)
-        if pd.notna(min_spo2_val) and min_spo2_val < spo2_warning_low_thresh:
-            alerts_buffer_list.append({
-                "alert_level": "WARNING", "primary_reason": "Low SpO2",
-                "brief_details": f"SpO2: {min_spo2_val:.0f}%", "suggested_action_code": "ACTION_SPO2_RECHECK_MONITOR",
-                "raw_priority_score": 75.0 + max(0, spo2_warning_low_thresh - min_spo2_val),
-                "patient_id": patient_id_val, "context_info": alert_context_info,
-                "triggering_value": f"SpO2 {min_spo2_val:.0f}%", "encounter_date": processing_date_str
-            })
+                alert_record = {
+                    "alert_level": rule["level"],
+                    "primary_reason": rule["reason"],
+                    "brief_details": details_str,
+                    "suggested_action_code": rule["action"],
+                    "raw_priority_score": np.clip(priority_score, 0, 100),
+                    "patient_id": str(encounter_row['patient_id']),
+                    "context_info": context_info,
+                    "triggering_value": f"{rule['field']} = {value}",
+                    "encounter_date": processing_date_str,
+                }
+                alerts_buffer.append(alert_record)
 
-        current_temp_val = encounter_row.get(temp_col_name_to_use, np.nan) if temp_col_name_to_use else np.nan
-        temp_high_fever_thresh = getattr(settings, 'ALERT_BODY_TEMP_HIGH_FEVER_C', 39.5)
-        if pd.notna(current_temp_val) and current_temp_val >= temp_high_fever_thresh:
-            alerts_buffer_list.append({
-                "alert_level": "CRITICAL", "primary_reason": "High Fever",
-                "brief_details": f"Temp: {current_temp_val:.1f}°C", "suggested_action_code": "ACTION_FEVER_MANAGE_URGENT",
-                "raw_priority_score": 95.0 + max(0, (current_temp_val - temp_high_fever_thresh) * 2.0),
-                "patient_id": patient_id_val, "context_info": alert_context_info,
-                "triggering_value": f"Temp {current_temp_val:.1f}°C", "encounter_date": processing_date_str
-            })
-            continue
-
-        temp_fever_thresh = getattr(settings, 'ALERT_BODY_TEMP_FEVER_C', 38.0)
-        if pd.notna(current_temp_val) and current_temp_val >= temp_fever_thresh:
-            alerts_buffer_list.append({
-                "alert_level": "WARNING", "primary_reason": "Fever Present",
-                "brief_details": f"Temp: {current_temp_val:.1f}°C", "suggested_action_code": "ACTION_FEVER_MONITOR",
-                "raw_priority_score": 70.0 + max(0, current_temp_val - temp_fever_thresh),
-                "patient_id": patient_id_val, "context_info": alert_context_info,
-                "triggering_value": f"Temp {current_temp_val:.1f}°C", "encounter_date": processing_date_str
-            })
-
-        fall_detected_val = int(encounter_row.get('fall_detected_today', 0))
-        if fall_detected_val > 0:
-            alerts_buffer_list.append({
-                "alert_level": "CRITICAL", "primary_reason": "Fall Detected",
-                "brief_details": f"Falls recorded: {fall_detected_val}", "suggested_action_code": "ACTION_FALL_ASSESS_URGENT",
-                "raw_priority_score": 92.0, 
-                "patient_id": patient_id_val, "context_info": alert_context_info,
-                "triggering_value": f"Fall(s) = {fall_detected_val}", "encounter_date": processing_date_str
-            })
-            execute_escalation_protocol("PATIENT_FALL_DETECTED", encounter_row.to_dict())
-
-        ai_followup_score = encounter_row.get('ai_followup_priority_score', np.nan)
-        prio_score_high_thresh = getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 80.0)
-        if pd.notna(ai_followup_score) and ai_followup_score >= prio_score_high_thresh:
-            alerts_buffer_list.append({
-                "alert_level": "WARNING", "primary_reason": "High AI Follow-up Prio.",
-                "brief_details": f"AI Prio Score: {ai_followup_score:.0f}", "suggested_action_code": "ACTION_AI_REVIEW_FOLLOWUP",
-                "raw_priority_score": min(90.0, ai_followup_score), 
-                "patient_id": patient_id_val, "context_info": alert_context_info,
-                "triggering_value": f"AI Prio {ai_followup_score:.0f}", "encounter_date": processing_date_str
-            })
-
-        ai_risk_score_val = encounter_row.get('ai_risk_score', np.nan)
-        risk_score_high_thresh = getattr(settings, 'RISK_SCORE_HIGH_THRESHOLD', 75.0)
-        if pd.notna(ai_risk_score_val) and ai_risk_score_val >= risk_score_high_thresh:
-            has_more_severe_alert_for_processing_date = any(
-                a['patient_id'] == patient_id_val and a['encounter_date'] == processing_date_str and \
-                a['alert_level'] in ["CRITICAL", "WARNING"]
-                for a in alerts_buffer_list 
-            )
-            if not has_more_severe_alert_for_processing_date:
-                alerts_buffer_list.append({
-                    "alert_level": "INFO", "primary_reason": "Elevated AI Risk Score",
-                    "brief_details": f"AI Risk: {ai_risk_score_val:.0f}", "suggested_action_code": "ACTION_MONITOR_RISK_ROUTINE",
-                    "raw_priority_score": min(60.0, ai_risk_score_val),
-                    "patient_id": patient_id_val, "context_info": alert_context_info,
-                    "triggering_value": f"AI Risk {ai_risk_score_val:.0f}", "encounter_date": processing_date_str
-                })
-        
-        referral_status_val = str(encounter_row.get('referral_status', 'Unknown')).lower() 
-        if referral_status_val == 'pending':
-            key_conditions_for_action = getattr(settings, 'KEY_CONDITIONS_FOR_ACTION', [])
-            is_key_condition_for_referral = any(
-                key_c.lower() in str(encounter_row.get('condition', '')).lower() for key_c in key_conditions_for_action
-            )
-            if is_key_condition_for_referral:
-                alerts_buffer_list.append({
-                    "alert_level": "WARNING", "primary_reason": "Pending Critical Referral",
-                    "brief_details": f"For: {encounter_row.get('condition', 'N/A')}", "suggested_action_code": "ACTION_FOLLOWUP_REFERRAL_STATUS",
-                    "raw_priority_score": 80.0, 
-                    "patient_id": patient_id_val, "context_info": alert_context_info,
-                    "triggering_value": "Pending Critical Referral", "encounter_date": processing_date_str
-                })
-
-    if not alerts_buffer_list:
-        logger.info(f"({module_log_prefix}) No CHW patient alerts generated from the provided data for {processing_date_str}.")
+                # Execute escalation protocol if defined
+                if rule.get("protocol"):
+                    execute_escalation_protocol(
+                        rule["protocol"],
+                        encounter_row.to_dict(),
+                        additional_context={"TRIGGERING_VALUE": value}
+                    )
+                # Break to ensure only highest-prio rule for a category (e.g., SpO2) triggers
+                break
+    
+    # --- Deduplication & Sorting ---
+    if not alerts_buffer:
+        logger.info(f"({log_prefix}) No alerts generated from the provided data for {processing_date_str}.")
         return []
 
+    # Keep only the highest priority alert for each patient for this date
     alerts_deduplicated_map: Dict[str, Dict[str, Any]] = {}
-    
-    for alert_item_current in alerts_buffer_list:
-        patient_id_key = alert_item_current['patient_id']
-        
+    for alert in alerts_buffer:
+        patient_id_key = alert['patient_id']
         if patient_id_key not in alerts_deduplicated_map or \
-           alert_item_current['raw_priority_score'] > alerts_deduplicated_map[patient_id_key]['raw_priority_score']:
-            alerts_deduplicated_map[patient_id_key] = alert_item_current
+           alert['raw_priority_score'] > alerts_deduplicated_map[patient_id_key]['raw_priority_score']:
+            alerts_deduplicated_map[patient_id_key] = alert
     
-    final_alerts_sorted_list = sorted(
-        list(alerts_deduplicated_map.values()), 
-        key=lambda x_alert: (
-            {"CRITICAL": 0, "WARNING": 1, "INFO": 2}.get(x_alert.get("alert_level", "INFO"), 3),
-            -x_alert.get('raw_priority_score', 0.0)
+    # Sort final list by level (Critical > Warning > Info) then by priority score descending
+    final_alerts = sorted(
+        list(alerts_deduplicated_map.values()),
+        key=lambda x: (
+            {"CRITICAL": 0, "WARNING": 1, "INFO": 2}.get(x.get("alert_level", "INFO"), 3),
+            -x.get('raw_priority_score', 0.0)
         )
     )
     
-    num_final_alerts = len(final_alerts_sorted_list)
-    logger.info(f"({module_log_prefix}) Generated {num_final_alerts} unique CHW patient alerts after deduplication for {processing_date_str}.")
-    
-    return final_alerts_sorted_list[:max_alerts_to_return]
+    logger.info(f"({log_prefix}) Generated {len(final_alerts)} unique alerts for {processing_date_str}.")
+    return final_alerts[:max_alerts_to_return]
