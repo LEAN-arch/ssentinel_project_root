@@ -1,3 +1,5 @@
+# sentinel_project_root/pages/chw_components/summary_metrics.py
+"""Calculates key summary metrics for a CHW's daily activity for Sentinel."""
 import pandas as pd
 import numpy as np
 import logging
@@ -5,60 +7,53 @@ import re
 from typing import Dict, Any, Optional, Union
 from datetime import date as date_type, datetime
 
-# --- Logger Setup ---
-# Configure logger for this module
-logger = logging.getLogger(__name__)
-
-# --- Module Imports ---
 try:
     from config import settings
     from data_processing.helpers import convert_to_numeric
 except ImportError as e:
-    # Log a critical error if essential modules cannot be imported
-    logger.error(f"Critical import error in summary_metrics.py: {e}. Ensure paths/dependencies are correct.", exc_info=True)
+    logging.basicConfig(level=logging.ERROR)
+    logger_init = logging.getLogger(__name__)
+    logger_init.error(f"Critical import error in summary_metrics.py: {e}. Ensure paths/dependencies are correct.")
     raise
 
-# --- Constants ---
+logger = logging.getLogger(__name__)
+
 # Common NA strings for robust replacement
 COMMON_NA_STRINGS_SUMMARY = frozenset(['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown'])
 
-# FIXED: Reconstructed and valid regex pattern from the corrupted original.
-_pattern_parts_summary = [re.escape(s) for s in COMMON_NA_STRINGS_SUMMARY if s]
-NA_REGEX_SUMMARY_PATTERN = (
-    r'^\s*(?:' + '|'.join(_pattern_parts_summary) + r')\s*$'
-    if _pattern_parts_summary
-    else ''
-)
-
+# FIX: Reconstructed the corrupted regex pattern.
+# This pattern matches either an empty/whitespace-only string, or one of the common NA strings, case-insensitively.
+_na_pattern_core = '|'.join(re.escape(s) for s in COMMON_NA_STRINGS_SUMMARY if s)
+NA_REGEX_SUMMARY_PATTERN = fr'(?i)(^\s*$|^\s*(?:{_na_pattern_core})\s*$)' if _na_pattern_core else r'^\s*$'
 
 def _prepare_summary_dataframe(
     df: pd.DataFrame,
     cols_config: Dict[str, Dict[str, Any]],
     log_prefix: str,
-    target_date_iso_str: str  # For default patient_id
+    target_date_iso_str: str # For default patient_id
 ) -> pd.DataFrame:
     """Prepares the DataFrame for summary metric calculation."""
     df_prepared = df.copy()
     for col_name, config in cols_config.items():
-        # FIXED: Corrected IndentationError for the entire block below
         default_value = config["default"]
         target_type_str = config["type"]
 
         if col_name not in df_prepared.columns:
-            if target_type_str == "datetime" and default_value is pd.NaT:
+            # FIX: Use pd.isna() for robust NaT check
+            if target_type_str == "datetime" and pd.isna(default_value):
                  df_prepared[col_name] = pd.NaT
-            elif isinstance(default_value, (list, dict)):
+            elif isinstance(default_value, (list, dict)): 
                  df_prepared[col_name] = [default_value.copy() for _ in range(len(df_prepared))]
             else:
                  df_prepared[col_name] = default_value
-        
+    
         if target_type_str in [float, int, "datetime"] and pd.api.types.is_object_dtype(df_prepared[col_name].dtype):
             if NA_REGEX_SUMMARY_PATTERN:
                 try:
                     df_prepared[col_name].replace(NA_REGEX_SUMMARY_PATTERN, np.nan, regex=True, inplace=True)
                 except Exception as e_regex:
                      logger.warning(f"({log_prefix}) Regex NA replacement failed for '{col_name}': {e_regex}. Proceeding.")
-        
+    
         try:
             if target_type_str == "datetime":
                 df_prepared[col_name] = pd.to_datetime(df_prepared[col_name], errors='coerce')
@@ -71,19 +66,18 @@ def _prepare_summary_dataframe(
                 df_prepared[col_name] = series.astype(str).str.strip()
         except Exception as e_conv:
             logger.error(f"({log_prefix}) Error converting column '{col_name}' to {target_type_str}: {e_conv}. Using defaults.", exc_info=True)
-            if target_type_str == "datetime" and default_value is pd.NaT:
+            # FIX: Use pd.isna() for robust NaT check
+            if target_type_str == "datetime" and pd.isna(default_value):
                 df_prepared[col_name] = pd.NaT
-            else:
+            else: 
                 df_prepared[col_name] = default_value
 
-    # FIXED: This logic was incorrectly placed at the module level. Moved inside the function.
     placeholder_pid = f"UPID_Sum_{target_date_iso_str}"
     if 'patient_id' in df_prepared.columns:
         df_prepared['patient_id'].replace('', placeholder_pid, inplace=True)
         df_prepared['patient_id'].fillna(placeholder_pid, inplace=True)
 
     return df_prepared
-
 
 def calculate_chw_daily_summary_metrics(
     chw_daily_encounter_df: Optional[pd.DataFrame],
@@ -97,7 +91,7 @@ def calculate_chw_daily_summary_metrics(
     """
     try:
         target_processing_date_dt = pd.to_datetime(for_date, errors='coerce')
-        # FIXED: Use robust pd.isna() for NaT checking
+        # FIX: Use pd.isna() for robust NaT check
         if pd.isna(target_processing_date_dt):
             raise ValueError(f"Invalid 'for_date' ({for_date}) for summary metrics.")
         target_processing_date = target_processing_date_dt.date()
@@ -126,7 +120,6 @@ def calculate_chw_daily_summary_metrics(
         for key, value in chw_daily_kpi_input_data.items():
             if key in metrics_summary and pd.notna(value):
                 try:
-                    # Use robust helper for numeric conversion
                     expected_type = initial_metric_types.get(key)
                     if expected_type in [int, float]:
                         metrics_summary[key] = convert_to_numeric(
@@ -144,7 +137,7 @@ def calculate_chw_daily_summary_metrics(
     if not isinstance(chw_daily_encounter_df, pd.DataFrame) or chw_daily_encounter_df.empty:
         logger.info(f"({source_context}) No daily encounter DataFrame for {target_date_iso_str}. Metrics will rely on pre-calculated data or defaults.")
     else:
-        df_enc_sum = chw_daily_encounter_df.copy() # Use a copy to avoid side effects
+        df_enc_sum = chw_daily_encounter_df
 
         enc_cols_cfg_sum = {
             'patient_id': {"default": f"UPID_Sum_{target_date_iso_str}", "type": str},
@@ -217,7 +210,7 @@ def calculate_chw_daily_summary_metrics(
                     )
                     metrics_summary["pending_critical_referrals_generated_today_count"] = patient_records_df[crit_ref_mask]['patient_id'].nunique()
 
-        if pd.isna(metrics_summary.get("worker_self_fatigue_index_today")):
+        if pd.isna(metrics_summary.get("worker_self_fatigue_index_today")): 
             worker_self_checks_df = df_enc_sum[
                 df_enc_sum.get('encounter_type', pd.Series(dtype=str)).str.contains("WORKER_SELF_CHECK", case=False, na=False)
             ]
@@ -229,7 +222,7 @@ def calculate_chw_daily_summary_metrics(
                     if pd.notna(fatigue_value):
                         metrics_summary["worker_self_fatigue_index_today"] = float(fatigue_value)
 
-    # FIXED: This block was incorrectly outside the function. Moved it inside.
+    # FIX: This block was incorrectly de-dented. It is now part of the function.
     final_fatigue_score = metrics_summary.get("worker_self_fatigue_index_today")
     if pd.notna(final_fatigue_score):
         high_thresh = getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 80)
@@ -243,10 +236,9 @@ def calculate_chw_daily_summary_metrics(
     else:
         metrics_summary["worker_self_fatigue_level_code"] = "NOT_ASSESSED"
 
-    # FIXED: This block was also incorrectly outside the function. Moved it inside.
     float_metrics_to_round = {
-        "avg_risk_of_visited_patients": 1,
-        "avg_steps_of_visited_patients": 0,
+        "avg_risk_of_visited_patients": 1, 
+        "avg_steps_of_visited_patients": 0, 
         "worker_self_fatigue_index_today": 1
     }
     for metric_name, decimal_places in float_metrics_to_round.items():
