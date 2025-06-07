@@ -1,15 +1,18 @@
 # sentinel_project_root/pages/clinic_components/env_details.py
-# Prepares detailed environmental data from clinic IoT sensors for Sentinel.
+# Prepares detailed environmental data, including plot objects, for Sentinel.
 
 import pandas as pd
 import numpy as np
 import logging
 from typing import Dict, Any, Optional, List
 
+# --- Sentinel System Imports ---
 try:
     from config import settings
     from data_processing.aggregation import get_trend_data
     from data_processing.helpers import convert_to_numeric
+    # FIX: Import plotting functions to make this a self-contained component builder.
+    from visualization.plots import plot_annotated_line_chart, create_empty_figure
 except ImportError as e:
     # This initial logger is for bootstrap errors only.
     logging.basicConfig(level=logging.ERROR)
@@ -18,6 +21,11 @@ except ImportError as e:
     raise
 
 logger = logging.getLogger(__name__)
+
+# FIX: The missing helper function is re-introduced at the module level to resolve the NameError.
+def _get_setting(attr_name: str, default_value: Any) -> Any:
+    """Safely get attributes from the global settings object."""
+    return getattr(settings, attr_name, default_value)
 
 # --- Constants for Clarity and Maintainability ---
 COL_TIMESTAMP = 'timestamp'
@@ -33,6 +41,7 @@ ALERT_LEVEL_ACCEPTABLE = "ACCEPTABLE"
 class ClinicEnvDetailPrep:
     """
     Encapsulates logic for preparing detailed environmental data for the clinic dashboard.
+    This class generates ready-to-render Plotly figure objects.
     """
     
     def __init__(self, filtered_iot_df: Optional[pd.DataFrame], reporting_period_context_str: str):
@@ -42,48 +51,22 @@ class ClinicEnvDetailPrep:
         self.module_log_prefix = self.__class__.__name__
         self._validate_and_prepare_input_df()
 
-        # --- Data-Driven Alert Configuration ---
-        # To add a new alert, simply add a new dictionary to this list.
+        # This configuration can now correctly call the _get_setting function.
         self.ALERT_CONFIG = [
-            {
-                "metric": COL_CO2_PPM,
-                "threshold": _get_setting('ALERT_AMBIENT_CO2_VERY_HIGH_PPM', 2500),
-                "level": ALERT_LEVEL_HIGH,
-                "message_template": "{count} area(s) with very high CO2 (> {threshold} ppm)."
-            },
-            {
-                "metric": COL_CO2_PPM,
-                "threshold": _get_setting('ALERT_AMBIENT_CO2_HIGH_PPM', 1500),
-                "level": ALERT_LEVEL_MODERATE,
-                "message_template": "{count} area(s) with elevated CO2 (> {threshold} ppm)."
-            },
-            {
-                "metric": COL_PM25,
-                "threshold": _get_setting('ALERT_AMBIENT_PM25_VERY_HIGH_UGM3', 50),
-                "level": ALERT_LEVEL_HIGH,
-                "message_template": "Poor Air Quality: PM2.5 > {threshold} µg/m³ detected in {count} area(s)."
-            },
-            {
-                "metric": COL_PM25,
-                "threshold": _get_setting('ALERT_AMBIENT_PM25_HIGH_UGM3', 35),
-                "level": ALERT_LEVEL_MODERATE,
-                "message_template": "Elevated PM2.5: > {threshold} µg/m³ detected in {count} area(s)."
-            }
+            { "metric": COL_CO2_PPM, "threshold": _get_setting('ALERT_AMBIENT_CO2_VERY_HIGH_PPM', 2500), "level": ALERT_LEVEL_HIGH, "message_template": "{count} area(s) with very high CO2 (> {threshold} ppm)." },
+            { "metric": COL_CO2_PPM, "threshold": _get_setting('ALERT_AMBIENT_CO2_HIGH_PPM', 1500), "level": ALERT_LEVEL_MODERATE, "message_template": "{count} area(s) with elevated CO2 (> {threshold} ppm)." },
+            { "metric": COL_PM25, "threshold": _get_setting('ALERT_AMBIENT_PM25_VERY_HIGH_UGM3', 50), "level": ALERT_LEVEL_HIGH, "message_template": "Poor Air Quality: PM2.5 > {threshold} µg/m³ detected in {count} area(s)." },
+            { "metric": COL_PM25, "threshold": _get_setting('ALERT_AMBIENT_PM25_HIGH_UGM3', 35), "level": ALERT_LEVEL_MODERATE, "message_template": "Elevated PM2.5: > {threshold} µg/m³ detected in {count} area(s)." }
         ]
-
 
     def _validate_and_prepare_input_df(self):
         """Performs initial validation and cleaning of the input DataFrame."""
         if self.df_iot.empty:
-            note = f"No clinic IoT data provided for the period '{self.reporting_period}'."
-            logger.warning(f"({self.module_log_prefix}) {note}")
-            self.notes.append(note)
+            self.notes.append(f"No clinic IoT data provided for the period '{self.reporting_period}'.")
             return
 
         if COL_TIMESTAMP not in self.df_iot.columns:
-            critical_note = f"Critical: '{COL_TIMESTAMP}' column missing from IoT data. Cannot process."
-            logger.error(f"({self.module_log_prefix}) {critical_note}")
-            self.notes.append(critical_note)
+            self.notes.append(f"Critical: '{COL_TIMESTAMP}' column missing from IoT data. Cannot process.")
             self.df_iot = pd.DataFrame() # Invalidate DataFrame
             return
         
@@ -96,7 +79,6 @@ class ClinicEnvDetailPrep:
             self.df_iot.dropna(subset=[COL_TIMESTAMP], inplace=True)
             if self.df_iot.empty:
                  self.notes.append("No IoT records with valid timestamps found.")
-
         except Exception as e:
             logger.error(f"({self.module_log_prefix}) Error processing timestamps: {e}", exc_info=True)
             self.notes.append("Error processing timestamps; data may be incomplete.")
@@ -104,14 +86,12 @@ class ClinicEnvDetailPrep:
 
     def _get_latest_room_readings(self) -> pd.DataFrame:
         """Finds the single most recent sensor reading for each room."""
-        if self.df_iot.empty:
-            return pd.DataFrame()
+        if self.df_iot.empty: return pd.DataFrame()
 
         required_keys = [COL_CLINIC_ID, COL_ROOM_NAME, COL_TIMESTAMP]
         if not all(col in self.df_iot.columns for col in required_keys):
             self.notes.append("Missing required columns for identifying latest readings.")
             return pd.DataFrame()
-
         try:
             return self.df_iot.sort_values(COL_TIMESTAMP).drop_duplicates(subset=[COL_CLINIC_ID, COL_ROOM_NAME], keep='last').reset_index(drop=True)
         except Exception as e:
@@ -121,18 +101,14 @@ class ClinicEnvDetailPrep:
 
     def _generate_environmental_alerts(self, latest_readings_df: pd.DataFrame) -> List[Dict[str, Any]]:
         """Generates a list of alerts based on the latest readings and a configuration."""
-        if latest_readings_df.empty:
-            return []
+        if latest_readings_df.empty: return []
 
         alerts = []
-        # Sort config by threshold descending to ensure highest alert is caught first for a given metric
         sorted_alert_config = sorted(self.ALERT_CONFIG, key=lambda x: x['threshold'], reverse=True)
-
         checked_metrics = set()
         for config in sorted_alert_config:
             metric = config['metric']
-            if metric in checked_metrics or metric not in latest_readings_df.columns:
-                continue
+            if metric in checked_metrics or metric not in latest_readings_df.columns: continue
             
             latest_readings_df[metric] = convert_to_numeric(latest_readings_df[metric])
             alert_df = latest_readings_df[latest_readings_df[metric] > config['threshold']]
@@ -148,21 +124,30 @@ class ClinicEnvDetailPrep:
         
         return alerts
 
-    def _get_hourly_co2_trend(self) -> pd.Series:
-        """Calculates the hourly average CO2 trend."""
+    def _prepare_co2_trend_plot(self) -> Any:
+        """
+        Calculates the hourly CO2 trend and returns a Plotly Figure object.
+        Returns an empty figure with a message if data is unavailable.
+        """
         if self.df_iot.empty or COL_CO2_PPM not in self.df_iot.columns or self.df_iot[COL_CO2_PPM].notna().sum() == 0:
-            return pd.Series(dtype='float64')
+            self.notes.append("CO2 data not available for trend plot.")
+            return create_empty_figure("No CO₂ Trend Data Available")
         try:
-            return get_trend_data(df=self.df_iot, value_col=COL_CO2_PPM, date_col=COL_TIMESTAMP, period='H', agg_func='mean')
+            trend_data = get_trend_data(df=self.df_iot, value_col=COL_CO2_PPM, date_col=COL_TIMESTAMP, period='H', agg_func='mean')
+            if trend_data.empty:
+                return create_empty_figure("No CO₂ Trend Data in Selected Period")
+            
+            # Create the plot object here
+            return plot_annotated_line_chart(trend_data, "Hourly Avg. CO₂ Levels", "CO₂ (ppm)")
         except Exception as e:
-            logger.error(f"({self.module_log_prefix}) Error calculating CO2 trend: {e}", exc_info=True)
-            self.notes.append("Failed to calculate hourly CO2 trend.")
-            return pd.Series(dtype='float64')
+            logger.error(f"({self.module_log_prefix}) Error creating CO2 trend plot: {e}", exc_info=True)
+            self.notes.append("Failed to generate hourly CO2 trend plot.")
+            return create_empty_figure("Error Generating CO₂ Plot")
 
     def prepare(self) -> Dict[str, Any]:
         """
         Orchestrates the preparation of all environmental detail components.
-        Returns a structured dictionary for the dashboard.
+        Returns a structured dictionary including pre-built plot objects.
         """
         logger.info(f"({self.module_log_prefix}) Preparing details for period: {self.reporting_period}")
 
@@ -171,7 +156,7 @@ class ClinicEnvDetailPrep:
         output = {
             "reporting_period": self.reporting_period,
             "current_environmental_alerts_list": self._generate_environmental_alerts(latest_readings_df),
-            "hourly_avg_co2_trend": self._get_hourly_co2_trend(),
+            "co2_trend_plot": self._prepare_co2_trend_plot(),
             "latest_room_sensor_readings_df": latest_readings_df,
             "processing_notes": self.notes
         }
