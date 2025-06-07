@@ -1,12 +1,11 @@
+# ssentinel_project_root/config/settings.py
 import os
 import logging
 from datetime import datetime
 from pathlib import Path
 
 # --- Logger Setup (must be at the top) ---
-# FIXED: Initialize logger before any potential use.
 settings_logger = logging.getLogger(__name__)
-
 
 def validate_path(path_obj: Path, description: str, is_dir: bool = False) -> Path:
     """Helper to validate if a path exists and log a warning if not."""
@@ -19,9 +18,7 @@ def validate_path(path_obj: Path, description: str, is_dir: bool = False) -> Pat
         settings_logger.warning(f"{description} at path is not a file: {abs_path}")
     return abs_path
 
-
 # --- I. Core System & Directory Configuration ---
-# FIXED: Use the correct `__file__` magic variable.
 PROJECT_ROOT_DIR = Path(__file__).resolve().parent.parent
 settings_logger.debug(f"PROJECT_ROOT_DIR resolved to: {PROJECT_ROOT_DIR}")
 
