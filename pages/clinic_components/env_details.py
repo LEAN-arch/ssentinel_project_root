@@ -11,7 +11,6 @@ try:
     from config import settings
     from data_processing.aggregation import get_trend_data
     from data_processing.helpers import convert_to_numeric
-    # FIX: Import plotting functions to make this a self-contained component builder.
     from visualization.plots import plot_annotated_line_chart, create_empty_figure
 except ImportError as e:
     # This initial logger is for bootstrap errors only.
@@ -22,7 +21,7 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
-# FIX: The missing helper function is re-introduced at the module level to resolve the NameError.
+# FIX: The missing helper function is defined at the module level to resolve the NameError.
 def _get_setting(attr_name: str, default_value: Any) -> Any:
     """Safely get attributes from the global settings object."""
     return getattr(settings, attr_name, default_value)
@@ -137,7 +136,6 @@ class ClinicEnvDetailPrep:
             if trend_data.empty:
                 return create_empty_figure("No CO₂ Trend Data in Selected Period")
             
-            # Create the plot object here
             return plot_annotated_line_chart(trend_data, "Hourly Avg. CO₂ Levels", "CO₂ (ppm)")
         except Exception as e:
             logger.error(f"({self.module_log_prefix}) Error creating CO2 trend plot: {e}", exc_info=True)
@@ -170,7 +168,6 @@ def prepare_clinic_environmental_detail_data(
 ) -> Dict[str, Any]:
     """
     Public factory function to instantiate and run the ClinicEnvDetailPrep class.
-    This maintains the original function signature for compatibility with the calling page.
     """
     preparer = ClinicEnvDetailPrep(filtered_iot_df, reporting_period_context_str)
     return preparer.prepare()
