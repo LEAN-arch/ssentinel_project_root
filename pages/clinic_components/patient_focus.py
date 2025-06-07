@@ -7,7 +7,6 @@ import logging
 import re
 from typing import Dict, Any, Optional, List
 
-# --- Module Imports ---
 try:
     from config import settings
     from analytics.alerting import get_patient_alerts_for_clinic
@@ -27,7 +26,7 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 
 def prepare_clinic_patient_focus_overview_data(
-    # FIXED: Renamed the parameter to `filtered_health_df` to match its usage within the function and fix the NameError.
+    # FIXED: Renamed parameter to `filtered_health_df` to match usage and calling context.
     filtered_health_df: Optional[pd.DataFrame],
     **kwargs
 ) -> Dict[str, Any]:
