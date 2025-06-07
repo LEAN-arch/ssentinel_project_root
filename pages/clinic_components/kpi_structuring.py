@@ -32,18 +32,20 @@ def _format_kpi_value(
     value: Any, default_str: str = "N/A", precision: int = 1, is_count: bool = False
 ) -> str:
     """Helper to format KPI values robustly."""
-    if pd.isna(value): return default_str
+    if pd.isna(value) or value is None:
+        return default_str
     try:
         numeric_value = pd.to_numeric(value)
-        if is_count: return f"{int(numeric_value):,}"
+        if is_count:
+            return f"{int(numeric_value):,}"
         return f"{numeric_value:.{precision}f}"
     except (ValueError, TypeError):
-        return str(value)
+        return str(value) if str(value).strip() else default_str
 
 
 def structure_main_clinic_kpis(
     kpis_summary: Optional[Dict[str, Any]],
-    **kwargs # Accept and ignore other kwargs
+    **kwargs
 ) -> List[Dict[str, Any]]:
     """
     Structures main clinic performance KPIs into a list formatted for display.
@@ -70,7 +72,7 @@ def structure_main_clinic_kpis(
     if pd.notna(perc_met):
         perc_status = "GOOD_PERFORMANCE" if perc_met >= perc_target else "ACCEPTABLE" if perc_met >= perc_target * 0.8 else "HIGH_CONCERN"
     structured_kpis.append({
-        "title": "% Critical Tests TAT Met", "value_str": _format_kpi_value(perc_met) + "%",
+        "title": "% Critical Tests TAT Met", "value_str": _format_kpi_value(perc_met) + ("%" if pd.notna(perc_met) else ""),
         "icon": "🎯", "status_level": perc_status,
         "help_text": f"Percentage of critical tests meeting TAT targets. Target: ≥{perc_target:.1f}%."
     })
@@ -93,7 +95,7 @@ def structure_main_clinic_kpis(
     if pd.notna(rejection_rate):
         rejection_status = "HIGH_CONCERN" if rejection_rate > rejection_target * 1.5 else "MODERATE_CONCERN" if rejection_rate > rejection_target else "GOOD_PERFORMANCE"
     structured_kpis.append({
-        "title": "Sample Rejection Rate", "value_str": _format_kpi_value(rejection_rate) + "%",
+        "title": "Sample Rejection Rate", "value_str": _format_kpi_value(rejection_rate) + ("%" if pd.notna(rejection_rate) else ""),
         "icon": "🧪", "status_level": rejection_status,
         "help_text": f"Overall rate of rejected lab samples. Target: < {rejection_target:.1f}%."
     })
@@ -103,7 +105,7 @@ def structure_main_clinic_kpis(
 
 def structure_disease_specific_clinic_kpis(
     kpis_summary: Optional[Dict[str, Any]],
-    **kwargs # Accept and ignore other kwargs
+    **kwargs
 ) -> List[Dict[str, Any]]:
     """
     Structures disease-specific and supply-chain KPIs.
@@ -111,26 +113,28 @@ def structure_disease_specific_clinic_kpis(
     structured_kpis = []
     if not isinstance(kpis_summary, dict): return structured_kpis
 
+    # FIXED: Use .get() with a default empty dict to prevent crash if test_summary_details is missing.
     test_details = kpis_summary.get("test_summary_details", {})
     key_tests = _get_setting('KEY_TEST_TYPES_FOR_ANALYSIS', {})
     
-    # Iterate through KEY_TESTS from settings to ensure order and inclusion
     for test_name, config in key_tests.items():
         if not isinstance(config, dict): continue
 
         display_name = config.get("display_name", test_name)
         target_positivity = float(config.get("target_max_positivity_pct", 10.0))
+        # FIXED: Use .get() with a default empty dict to prevent crash if a specific test has no data.
         stats = test_details.get(test_name, {})
         pos_rate = stats.get("positive_rate_perc")
         
         status = "NO_DATA"
         if pd.notna(pos_rate):
-            status = "HIGH_CONCERN" if pos_rate > target_positivity * 1.5 else "MODERATE_CONCERN" if pos_rate > target_positivity else "ACCEPTABLE"
+            pos_rate_num = pd.to_numeric(pos_rate, errors='coerce')
+            if pd.notna(pos_rate_num):
+                status = "HIGH_CONCERN" if pos_rate_num > target_positivity * 1.5 else "MODERATE_CONCERN" if pos_rate_num > target_positivity else "ACCEPTABLE"
         
-        # FIXED: Use the specific display_name in the title for clarity.
         structured_kpis.append({
             "title": f"{display_name} Positivity",
-            "value_str": _format_kpi_value(pos_rate) + "%",
+            "value_str": _format_kpi_value(pos_rate) + ("%" if pd.notna(pos_rate) else ""),
             "icon": config.get("icon", "🔬"), "status_level": status,
             "help_text": f"Positivity rate for {display_name}. Context target: < {target_positivity:.1f}%."
         })
