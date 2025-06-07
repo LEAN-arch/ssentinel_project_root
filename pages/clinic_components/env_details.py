@@ -4,14 +4,14 @@
 import pandas as pd
 import numpy as np
 import logging
-from typing import Dict, Any, Optional, List, Union
-from datetime import date as date_type, datetime
+from typing import Dict, Any, Optional, List
 
 try:
     from config import settings
-    from data_processing.aggregation import get_trend_data, get_clinic_environmental_summary_kpis
+    from data_processing.aggregation import get_trend_data
     from data_processing.helpers import convert_to_numeric
 except ImportError as e:
+    # This initial logger is for bootstrap errors only.
     logging.basicConfig(level=logging.ERROR)
     logger_init = logging.getLogger(__name__)
     logger_init.error(f"Critical import error in env_details.py: {e}. Ensure paths and dependencies are correct.")
@@ -19,113 +19,173 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
-def _get_setting(attr_name: str, default_value: Any) -> Any:
-    """Safely get attributes from settings."""
-    return getattr(settings, attr_name, default_value)
+# --- Constants for Clarity and Maintainability ---
+COL_TIMESTAMP = 'timestamp'
+COL_ROOM_NAME = 'room_name'
+COL_CLINIC_ID = 'clinic_id'
+COL_CO2_PPM = 'avg_co2_ppm'
+COL_PM25 = 'avg_pm25'
 
+ALERT_LEVEL_HIGH = "HIGH_RISK"
+ALERT_LEVEL_MODERATE = "MODERATE_CONCERN"
+ALERT_LEVEL_ACCEPTABLE = "ACCEPTABLE"
+
+class ClinicEnvDetailPrep:
+    """
+    Encapsulates logic for preparing detailed environmental data for the clinic dashboard.
+    """
+    
+    def __init__(self, filtered_iot_df: Optional[pd.DataFrame], reporting_period_context_str: str):
+        self.df_iot = filtered_iot_df.copy() if isinstance(filtered_iot_df, pd.DataFrame) and not filtered_iot_df.empty else pd.DataFrame()
+        self.reporting_period = reporting_period_context_str
+        self.notes: List[str] = []
+        self.module_log_prefix = self.__class__.__name__
+        self._validate_and_prepare_input_df()
+
+        # --- Data-Driven Alert Configuration ---
+        # To add a new alert, simply add a new dictionary to this list.
+        self.ALERT_CONFIG = [
+            {
+                "metric": COL_CO2_PPM,
+                "threshold": _get_setting('ALERT_AMBIENT_CO2_VERY_HIGH_PPM', 2500),
+                "level": ALERT_LEVEL_HIGH,
+                "message_template": "{count} area(s) with very high CO2 (> {threshold} ppm)."
+            },
+            {
+                "metric": COL_CO2_PPM,
+                "threshold": _get_setting('ALERT_AMBIENT_CO2_HIGH_PPM', 1500),
+                "level": ALERT_LEVEL_MODERATE,
+                "message_template": "{count} area(s) with elevated CO2 (> {threshold} ppm)."
+            },
+            {
+                "metric": COL_PM25,
+                "threshold": _get_setting('ALERT_AMBIENT_PM25_VERY_HIGH_UGM3', 50),
+                "level": ALERT_LEVEL_HIGH,
+                "message_template": "Poor Air Quality: PM2.5 > {threshold} µg/m³ detected in {count} area(s)."
+            },
+            {
+                "metric": COL_PM25,
+                "threshold": _get_setting('ALERT_AMBIENT_PM25_HIGH_UGM3', 35),
+                "level": ALERT_LEVEL_MODERATE,
+                "message_template": "Elevated PM2.5: > {threshold} µg/m³ detected in {count} area(s)."
+            }
+        ]
+
+
+    def _validate_and_prepare_input_df(self):
+        """Performs initial validation and cleaning of the input DataFrame."""
+        if self.df_iot.empty:
+            note = f"No clinic IoT data provided for the period '{self.reporting_period}'."
+            logger.warning(f"({self.module_log_prefix}) {note}")
+            self.notes.append(note)
+            return
+
+        if COL_TIMESTAMP not in self.df_iot.columns:
+            critical_note = f"Critical: '{COL_TIMESTAMP}' column missing from IoT data. Cannot process."
+            logger.error(f"({self.module_log_prefix}) {critical_note}")
+            self.notes.append(critical_note)
+            self.df_iot = pd.DataFrame() # Invalidate DataFrame
+            return
+        
+        try:
+            if not pd.api.types.is_datetime64_any_dtype(self.df_iot[COL_TIMESTAMP]):
+                self.df_iot[COL_TIMESTAMP] = pd.to_datetime(self.df_iot[COL_TIMESTAMP], errors='coerce')
+            if self.df_iot[COL_TIMESTAMP].dt.tz is not None:
+                self.df_iot[COL_TIMESTAMP] = self.df_iot[COL_TIMESTAMP].dt.tz_localize(None)
+            
+            self.df_iot.dropna(subset=[COL_TIMESTAMP], inplace=True)
+            if self.df_iot.empty:
+                 self.notes.append("No IoT records with valid timestamps found.")
+
+        except Exception as e:
+            logger.error(f"({self.module_log_prefix}) Error processing timestamps: {e}", exc_info=True)
+            self.notes.append("Error processing timestamps; data may be incomplete.")
+            self.df_iot = pd.DataFrame() # Invalidate on critical error
+
+    def _get_latest_room_readings(self) -> pd.DataFrame:
+        """Finds the single most recent sensor reading for each room."""
+        if self.df_iot.empty:
+            return pd.DataFrame()
+
+        required_keys = [COL_CLINIC_ID, COL_ROOM_NAME, COL_TIMESTAMP]
+        if not all(col in self.df_iot.columns for col in required_keys):
+            self.notes.append("Missing required columns for identifying latest readings.")
+            return pd.DataFrame()
+
+        try:
+            return self.df_iot.sort_values(COL_TIMESTAMP).drop_duplicates(subset=[COL_CLINIC_ID, COL_ROOM_NAME], keep='last').reset_index(drop=True)
+        except Exception as e:
+            logger.error(f"({self.module_log_prefix}) Error getting latest readings: {e}", exc_info=True)
+            self.notes.append("Failed to isolate latest room sensor readings.")
+            return pd.DataFrame()
+
+    def _generate_environmental_alerts(self, latest_readings_df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """Generates a list of alerts based on the latest readings and a configuration."""
+        if latest_readings_df.empty:
+            return []
+
+        alerts = []
+        # Sort config by threshold descending to ensure highest alert is caught first for a given metric
+        sorted_alert_config = sorted(self.ALERT_CONFIG, key=lambda x: x['threshold'], reverse=True)
+
+        checked_metrics = set()
+        for config in sorted_alert_config:
+            metric = config['metric']
+            if metric in checked_metrics or metric not in latest_readings_df.columns:
+                continue
+            
+            latest_readings_df[metric] = convert_to_numeric(latest_readings_df[metric])
+            alert_df = latest_readings_df[latest_readings_df[metric] > config['threshold']]
+            
+            if not alert_df.empty:
+                count = len(alert_df)
+                message = config['message_template'].format(count=count, threshold=config['threshold'])
+                alerts.append({"message": message, "level": config['level']})
+                checked_metrics.add(metric)
+        
+        if not alerts:
+            alerts.append({"message": "No significant environmental alerts detected.", "level": ALERT_LEVEL_ACCEPTABLE})
+        
+        return alerts
+
+    def _get_hourly_co2_trend(self) -> pd.Series:
+        """Calculates the hourly average CO2 trend."""
+        if self.df_iot.empty or COL_CO2_PPM not in self.df_iot.columns or self.df_iot[COL_CO2_PPM].notna().sum() == 0:
+            return pd.Series(dtype='float64')
+        try:
+            return get_trend_data(df=self.df_iot, value_col=COL_CO2_PPM, date_col=COL_TIMESTAMP, period='H', agg_func='mean')
+        except Exception as e:
+            logger.error(f"({self.module_log_prefix}) Error calculating CO2 trend: {e}", exc_info=True)
+            self.notes.append("Failed to calculate hourly CO2 trend.")
+            return pd.Series(dtype='float64')
+
+    def prepare(self) -> Dict[str, Any]:
+        """
+        Orchestrates the preparation of all environmental detail components.
+        Returns a structured dictionary for the dashboard.
+        """
+        logger.info(f"({self.module_log_prefix}) Preparing details for period: {self.reporting_period}")
+
+        latest_readings_df = self._get_latest_room_readings()
+        
+        output = {
+            "reporting_period": self.reporting_period,
+            "current_environmental_alerts_list": self._generate_environmental_alerts(latest_readings_df),
+            "hourly_avg_co2_trend": self._get_hourly_co2_trend(),
+            "latest_room_sensor_readings_df": latest_readings_df,
+            "processing_notes": self.notes
+        }
+
+        logger.info(f"({self.module_log_prefix}) Preparation finished. Notes: {len(self.notes)}")
+        return output
 
 def prepare_clinic_environmental_detail_data(
-    # FIXED: The parameter name is now standardized to match the calling context.
     filtered_iot_df: Optional[pd.DataFrame],
     reporting_period_context_str: str 
 ) -> Dict[str, Any]:
     """
-    Prepares structured data for detailed environmental trends and latest room readings.
-    Returns a dictionary containing various environmental data components.
+    Public factory function to instantiate and run the ClinicEnvDetailPrep class.
+    This maintains the original function signature for compatibility with the calling page.
     """
-    module_log_prefix = "ClinicEnvDetailPrep"
-    logger.info(f"({module_log_prefix}) Preparing clinic environment details for period: {reporting_period_context_str}")
-
-    env_details_output: Dict[str, Any] = {
-        "reporting_period": reporting_period_context_str,
-        "current_environmental_alerts_list": [],
-        "hourly_avg_co2_trend": pd.Series(dtype='float64'),
-        "latest_room_sensor_readings_df": pd.DataFrame(),
-        "processing_notes": []
-    }
-
-    if not isinstance(filtered_iot_df, pd.DataFrame) or filtered_iot_df.empty:
-        note = f"No clinic IoT data provided for the period '{reporting_period_context_str}'."
-        logger.warning(f"({module_log_prefix}) {note}")
-        env_details_output["processing_notes"].append(note)
-        return env_details_output
-
-    df_iot = filtered_iot_df.copy()
-    timestamp_col = 'timestamp'
-    if timestamp_col not in df_iot.columns:
-        critical_note = "Critical: 'timestamp' column missing from IoT data. Cannot process environmental details."
-        logger.error(f"({module_log_prefix}) {critical_note}")
-        env_details_output["processing_notes"].append(critical_note)
-        return env_details_output
-        
-    try:
-        if not pd.api.types.is_datetime64_any_dtype(df_iot[timestamp_col]):
-            df_iot[timestamp_col] = pd.to_datetime(df_iot[timestamp_col], errors='coerce')
-        if df_iot[timestamp_col].dt.tz is not None:
-            df_iot[timestamp_col] = df_iot[timestamp_col].dt.tz_localize(None)
-        df_iot.dropna(subset=[timestamp_col], inplace=True)
-    except Exception as e_ts:
-        logger.error(f"({module_log_prefix}) Error converting 'timestamp' to datetime: {e_ts}", exc_info=True)
-        env_details_output["processing_notes"].append("Error processing timestamps in IoT data. Details may be incomplete.")
-        return env_details_output
-    
-    if df_iot.empty:
-        empty_note = "No IoT records with valid timestamps found in the provided period data."
-        logger.info(f"({module_log_prefix}) {empty_note}")
-        env_details_output["processing_notes"].append(empty_note)
-        return env_details_output
-
-    # --- Current Environmental Alerts (Derived from latest summary KPIs for the period) ---
-    try:
-        env_summary_kpis = get_clinic_environmental_summary_kpis(
-            iot_df_period=df_iot,
-            source_context=f"{module_log_prefix}/LatestAlertsKPIs"
-        )
-        
-        alerts_buffer_list: List[Dict[str, Any]] = []
-        co2_very_high_thresh = _get_setting('ALERT_AMBIENT_CO2_VERY_HIGH_PPM', 2500)
-        co2_high_thresh = _get_setting('ALERT_AMBIENT_CO2_HIGH_PPM', 1500)
-        pm25_very_high_thresh = _get_setting('ALERT_AMBIENT_PM25_VERY_HIGH_UGM3', 50)
-        pm25_high_thresh = _get_setting('ALERT_AMBIENT_PM25_HIGH_UGM3', 35)
-        
-        if env_summary_kpis.get('rooms_co2_very_high_alert_latest_count', 0) > 0:
-            alerts_buffer_list.append({"message": f"{env_summary_kpis['rooms_co2_very_high_alert_latest_count']} area(s) with CO2 > {co2_very_high_thresh}ppm.", "level": "HIGH_RISK"})
-        elif env_summary_kpis.get('rooms_co2_high_alert_latest_count', 0) > 0:
-             alerts_buffer_list.append({"message": f"{env_summary_kpis['rooms_co2_high_alert_latest_count']} area(s) with CO2 > {co2_high_thresh}ppm.", "level": "MODERATE_CONCERN"})
-        
-        if env_summary_kpis.get('rooms_pm25_very_high_alert_latest_count', 0) > 0:
-            alerts_buffer_list.append({"message": f"Poor Air Quality: PM2.5 > {pm25_very_high_thresh}µg/m³ detected.", "level": "HIGH_RISK"})
-        elif env_summary_kpis.get('rooms_pm25_high_alert_latest_count', 0) > 0:
-            alerts_buffer_list.append({"message": f"Elevated PM2.5: > {pm25_high_thresh}µg/m³ detected.", "level": "MODERATE_CONCERN"})
-
-        if not alerts_buffer_list:
-            alerts_buffer_list.append({"message": "No significant environmental alerts detected.", "level": "ACCEPTABLE"})
-        
-        env_details_output["current_environmental_alerts_list"] = alerts_buffer_list
-    except Exception as e_env_alerts:
-        logger.error(f"({module_log_prefix}) Error generating current environmental alerts: {e_env_alerts}", exc_info=True)
-
-    # --- Hourly CO2 Trend ---
-    co2_col = 'avg_co2_ppm'
-    if co2_col in df_iot.columns and df_iot[co2_col].notna().any():
-        try:
-            co2_trend_series = get_trend_data(df=df_iot, value_col=co2_col, date_col=timestamp_col, period='H', agg_func='mean')
-            env_details_output["hourly_avg_co2_trend"] = co2_trend_series
-        except Exception as e:
-            logger.error(f"({module_log_prefix}) Error calculating CO2 trend: {e}", exc_info=True)
-            env_details_output["processing_notes"].append("Failed to calculate hourly CO2 trend.")
-
-    # --- Latest Sensor Readings by Room ---
-    expected_numeric_cols = ['avg_co2_ppm', 'max_co2_ppm', 'avg_pm25', 'voc_index', 'avg_temp_celsius', 'avg_humidity_rh', 'avg_noise_db', 'waiting_room_occupancy']
-    latest_reading_keys = ['clinic_id', 'room_name', timestamp_col]
-    if all(col in df_iot.columns for col in latest_reading_keys):
-        display_cols = latest_reading_keys + [col for col in expected_numeric_cols if col in df_iot.columns]
-        try:
-            latest_readings = df_iot[display_cols].sort_values(timestamp_col).drop_duplicates(subset=['clinic_id', 'room_name'], keep='last')
-            env_details_output["latest_room_sensor_readings_df"] = latest_readings.reset_index(drop=True)
-        except Exception as e:
-            logger.error(f"({module_log_prefix}) Error processing latest room sensor readings: {e}", exc_info=True)
-            env_details_output["processing_notes"].append("Failed to process latest room sensor readings.")
-        
-    logger.info(f"({module_log_prefix}) Clinic environment details preparation finished. Notes: {len(env_details_output['processing_notes'])}")
-    return env_details_output
+    preparer = ClinicEnvDetailPrep(filtered_iot_df, reporting_period_context_str)
+    return preparer.prepare()
