@@ -114,9 +114,13 @@ def prepare_clinic_lab_testing_insights_data(
     if 'sample_status' in df_tests.columns and 'rejection_reason' in df_tests.columns:
         df_rejected = df_tests[df_tests['sample_status'].str.lower() == 'rejected by lab'].copy()
         if not df_rejected.empty:
-            rejection_counts = df_rejected['rejection_reason'].value_counts().reset_index()
-            rejection_counts.columns = ['Reason', 'Count']
-            insights['rejection_reasons_df'] = rejection_counts
+            # Only consider non-empty/non-NA rejection reasons
+            df_rejected = df_rejected.dropna(subset=['rejection_reason'])
+            df_rejected = df_rejected[df_rejected['rejection_reason'].astype(str).str.strip() != '']
+            if not df_rejected.empty:
+                rejection_counts = df_rejected['rejection_reason'].value_counts().reset_index()
+                rejection_counts.columns = ['Reason', 'Count']
+                insights['rejection_reasons_df'] = rejection_counts
 
     logger.info(f"({module_log_prefix}) Testing insights preparation complete.")
     return insights
