@@ -27,8 +27,9 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 
 def prepare_clinic_environmental_detail_data(
-    filtered_iot_df_for_period: Optional[pd.DataFrame],
-    reporting_period_context_str: str  # For logging and context in outputs
+    # FIXED: Parameter name now matches the calling context
+    filtered_iot_df: Optional[pd.DataFrame],
+    reporting_period_context_str: str 
 ) -> Dict[str, Any]:
     """
     Prepares structured data for detailed environmental trends and latest room readings.
