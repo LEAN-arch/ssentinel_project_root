@@ -1,7 +1,3 @@
-# sentinel_project_root/pages/chw_components/task_processing.py
-"""
-Processes CHW data to generate a prioritized list of tasks for Sentinel.
-"""
 import pandas as pd
 import numpy as np
 import logging
