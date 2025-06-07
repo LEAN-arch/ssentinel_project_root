@@ -33,7 +33,7 @@ def prepare_clinic_lab_testing_insights_data(
 ) -> Dict[str, Any]:
     """
     Prepares structured data for detailed testing insights, including summaries, trends,
-    overdue tests, and rejection reasons for plotting.
+    and lists of overdue tests.
     """
     module_log_prefix = "ClinicTestInsightsPrep"
     
@@ -76,18 +76,34 @@ def prepare_clinic_lab_testing_insights_data(
     # --- Overdue Pending Tests List ---
     date_col = 'sample_collection_date' if 'sample_collection_date' in df_tests and df_tests['sample_collection_date'].notna().any() else 'encounter_date'
     df_pending = df_tests[(df_tests.get('test_result', pd.Series(dtype=str)).astype(str).str.lower() == 'pending') & (df_tests[date_col].notna())].copy()
+
     if not df_pending.empty:
         df_pending[date_col] = pd.to_datetime(df_pending[date_col], errors='coerce').dt.tz_localize(None)
-        df_pending['days_pending'] = (pd.Timestamp('now').normalize() - df_pending[date_col]).dt.days
-        def get_overdue_threshold(test_type: str) -> int:
-            config = key_test_configs.get(test_type, {})
-            tat = config.get('target_tat_days', _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2))
-            return int(pd.to_numeric(tat, errors='coerce').fillna(2)) + _get_setting('OVERDUE_TEST_BUFFER_DAYS', 2)
-        df_pending['overdue_threshold_days'] = df_pending['test_type'].apply(get_overdue_threshold)
-        df_overdue = df_pending[df_pending['days_pending'] > df_pending['overdue_threshold_days']]
-        if not df_overdue.empty:
-            df_display = df_overdue.rename(columns={date_col: "Sample Collection/Registered Date"})
-            insights["overdue_pending_tests_list_df"] = df_display.reindex(columns=default_overdue_cols).sort_values('days_pending', ascending=False)
+        df_pending.dropna(subset=[date_col], inplace=True)
+        
+        if not df_pending.empty:
+            df_pending['days_pending'] = (pd.Timestamp('now').normalize() - df_pending[date_col]).dt.days
+            
+            def get_overdue_threshold(test_type: str) -> int:
+                """Safely calculate the overdue threshold for a given test type."""
+                test_config = key_test_configs.get(test_type, {})
+                target_tat = test_config.get('target_tat_days', _get_setting('TARGET_TEST_TURNAROUND_DAYS', 2))
+                buffer_days = _get_setting('OVERDUE_TEST_BUFFER_DAYS', 2)
+                
+                # FIXED: Wrap the input 'tat' in a pandas Series before using pandas methods.
+                # This prevents the AttributeError on scalar values (like integers).
+                # .iloc[0] is used to extract the scalar value back out.
+                numeric_tat = pd.to_numeric(pd.Series([target_tat]), errors='coerce').fillna(2).iloc[0]
+                
+                return int(numeric_tat) + buffer_days
+            
+            df_pending['overdue_threshold_days'] = df_pending['test_type'].apply(get_overdue_threshold)
+            
+            df_overdue = df_pending[df_pending['days_pending'] > df_pending['overdue_threshold_days']]
+            
+            if not df_overdue.empty:
+                df_display = df_overdue.rename(columns={date_col: "Sample Collection/Registered Date"})
+                insights["overdue_pending_tests_list_df"] = df_display.reindex(columns=default_overdue_cols).sort_values('days_pending', ascending=False).reset_index(drop=True)
 
     # --- Average TAT by Test Type (for new plot) ---
     if 'test_turnaround_days' in df_tests.columns and 'test_type' in df_tests.columns:
