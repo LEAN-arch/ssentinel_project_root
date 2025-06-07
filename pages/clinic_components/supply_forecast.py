@@ -5,9 +5,8 @@ import pandas as pd
 import numpy as np
 import logging
 import re
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
-# --- Module Imports ---
 try:
     from config import settings
     from data_processing.helpers import convert_to_numeric
@@ -19,134 +18,191 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
+# --- Constants ---
+COL_ITEM = 'item'
+COL_DATE = 'encounter_date'
+COL_STOCK = 'item_stock_agg_zone'
+COL_CONSUMPTION = 'consumption_rate_per_day'
 
-def _get_setting(attr_name: str, default_value: Any) -> Any:
-    """Helper to safely get attributes from settings."""
-    return getattr(settings, attr_name, default_value)
+# --- Forecasting Strategies ---
 
-
-def generate_simple_supply_forecast(
-    df_historical: pd.DataFrame,
-    forecast_horizon_days: int,
-    items_to_forecast: List[str],
-    log_prefix: str = "SimpleSupplyForecast"
-) -> pd.DataFrame:
-    """
-    A simplified supply forecasting model.
-    Estimates future stock based on the latest stock and average daily consumption.
-    """
-    output_cols = ['item', 'current_stock_level', 'avg_daily_consumption_rate', 'days_of_supply_remaining', 'estimated_stockout_date']
-
-    if not isinstance(df_historical, pd.DataFrame) or df_historical.empty or not items_to_forecast:
-        return pd.DataFrame(columns=output_cols)
-
-    required_cols = ['item', 'encounter_date', 'item_stock_agg_zone', 'consumption_rate_per_day']
-    if not all(col in df_historical.columns for col in required_cols):
-        logger.error(f"({log_prefix}) Missing required columns for forecasting. Aborting.")
-        return pd.DataFrame(columns=output_cols)
-
-    df = df_historical.copy()
+class SimpleAggregateForecaster:
+    """A vectorized, efficient implementation of the simple supply forecasting model."""
     
-    # Ensure datetime is timezone-naive before calculations
-    df['encounter_date'] = pd.to_datetime(df['encounter_date'], errors='coerce')
-    if pd.api.types.is_datetime64_any_dtype(df['encounter_date']) and df['encounter_date'].dt.tz is not None:
-        df['encounter_date'] = df['encounter_date'].dt.tz_localize(None)
-    
-    df.dropna(subset=['encounter_date', 'item'], inplace=True)
-    df['item_stock_agg_zone'] = convert_to_numeric(df['item_stock_agg_zone'], default_value=0.0)
-    df['consumption_rate_per_day'] = convert_to_numeric(df['consumption_rate_per_day'], default_value=0.001)
-    df.loc[df['consumption_rate_per_day'] <= 0, 'consumption_rate_per_day'] = 0.001
+    def __init__(self, historical_df: pd.DataFrame, items_to_forecast: List[str]):
+        self.df = historical_df
+        self.items_to_forecast = items_to_forecast
+        self.model_name = "Simple Aggregate"
 
-    if df.empty: return pd.DataFrame(columns=output_cols)
+    def forecast(self) -> Tuple[pd.DataFrame, List[str]]:
+        """
+        Calculates future stock based on latest stock and average daily consumption.
+        Returns a forecast DataFrame and any processing notes.
+        """
+        output_cols = [COL_ITEM, 'current_stock_level', 'avg_daily_consumption_rate', 'days_of_supply_remaining', 'estimated_stockout_date']
         
-    latest_records = df.sort_values('encounter_date').drop_duplicates(subset=['item'], keep='last')
-    forecasts = []
-    today = pd.Timestamp.now().normalize()
+        if self.df.empty or not self.items_to_forecast:
+            return pd.DataFrame(columns=output_cols), ["No data or items to forecast."]
 
-    for item in items_to_forecast:
-        record = latest_records[latest_records['item'] == item]
-        if record.empty:
-            forecasts.append({"item": item, "days_of_supply_remaining": 0.0, "estimated_stockout_date": "No History"})
-            continue
+        # 1. Get the single most recent record for each item
+        latest_records = self.df[self.df[COL_ITEM].isin(self.items_to_forecast)] \
+            .sort_values(COL_DATE) \
+            .drop_duplicates(subset=[COL_ITEM], keep='last')
 
-        row = record.iloc[0]
-        days_since_update = (today - row['encounter_date']).days
-        current_stock = max(0, row['item_stock_agg_zone'] - (days_since_update * row['consumption_rate_per_day']))
+        if latest_records.empty:
+            return pd.DataFrame(columns=output_cols), ["No historical records found for specified items."]
+            
+        today = pd.Timestamp.now().normalize()
         
-        dos = current_stock / row['consumption_rate_per_day'] if row['consumption_rate_per_day'] > 0 else float('inf')
+        # 2. Vectorized Calculations
+        latest_records['days_since_update'] = (today - latest_records[COL_DATE]).dt.days
         
-        stockout_date = "N/A"
-        if np.isfinite(dos):
+        latest_records['current_stock_level'] = np.maximum(
+            0,
+            latest_records[COL_STOCK] - (latest_records['days_since_update'] * latest_records[COL_CONSUMPTION])
+        )
+        
+        latest_records['days_of_supply_remaining'] = latest_records['current_stock_level'] / latest_records[COL_CONSUMPTION]
+        
+        # 3. Handle stockout date formatting safely
+        def calculate_stockout_date(dos):
+            if not np.isfinite(dos) or dos < 0:
+                return "N/A"
             try:
-                stockout_date = (today + pd.to_timedelta(dos, unit='D')).strftime('%Y-%m-%d')
-            except (OverflowError, ValueError): 
-                stockout_date = ">5Y"
-        
-        forecasts.append({
-            "item": item,
-            "current_stock_level": round(current_stock, 1),
-            "avg_daily_consumption_rate": round(row['consumption_rate_per_day'], 3),
-            "days_of_supply_remaining": round(dos, 1) if np.isfinite(dos) else "N/A",
-            "estimated_stockout_date": stockout_date
-        })
-    
-    return pd.DataFrame(forecasts, columns=output_cols)
+                return (today + pd.to_timedelta(dos, unit='D')).strftime('%Y-%m-%d')
+            except (OverflowError, ValueError):
+                return ">5 Years" # Handle extremely large DOS values
 
+        latest_records['estimated_stockout_date'] = latest_records['days_of_supply_remaining'].apply(calculate_stockout_date)
+
+        # 4. Clean up for final output
+        latest_records.rename(columns={COL_CONSUMPTION: 'avg_daily_consumption_rate'}, inplace=True)
+        latest_records['days_of_supply_remaining'] = latest_records['days_of_supply_remaining'].round(1)
+
+        return latest_records[output_cols], []
+
+class AIAdvancedForecaster(SimpleAggregateForecaster):
+    """Placeholder for a more advanced forecasting model. Currently simulates by using the simple model."""
+    
+    def __init__(self, historical_df: pd.DataFrame, items_to_forecast: List[str]):
+        super().__init__(historical_df, items_to_forecast)
+        self.model_name = "AI Advanced (Simulated)"
+
+    def forecast(self) -> Tuple[pd.DataFrame, List[str]]:
+        # In a real scenario, this would call a complex ML model.
+        # For now, it delegates to the simple model and adds a note.
+        forecast_df, _ = super().forecast()
+        notes = ["AI Advanced Forecasting is currently simulated by the simple model."]
+        return forecast_df, notes
+
+# --- Main Preparation Orchestrator ---
+
+class ClinicSupplyForecastPreparer:
+    """Orchestrates the supply forecast data preparation process."""
+
+    def __init__(self, full_historical_df: pd.DataFrame, use_ai_model: bool):
+        self.use_ai_model = use_ai_model
+        self.df_historical = self._prepare_clean_dataframe(full_historical_df)
+        self.notes: List[str] = []
+
+    def _get_setting(self, attr_name: str, default_value: Any) -> Any:
+        return getattr(settings, attr_name, default_value)
+    
+    def _prepare_clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Performs all necessary cleaning and validation on the input DataFrame."""
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            self.notes.append("Historical health data is empty.")
+            return pd.DataFrame()
+
+        required_cols = [COL_ITEM, COL_DATE, COL_STOCK, COL_CONSUMPTION]
+        if not all(col in df.columns for col in required_cols):
+            self.notes.append("Missing one or more required columns for forecasting.")
+            return pd.DataFrame()
+        
+        clean_df = df.copy()
+        clean_df[COL_DATE] = pd.to_datetime(clean_df[COL_DATE], errors='coerce').dt.tz_localize(None)
+        clean_df.dropna(subset=[COL_DATE, COL_ITEM], inplace=True)
+        clean_df[COL_STOCK] = convert_to_numeric(clean_df[COL_STOCK], default_value=0.0)
+        # Prevent division by zero errors by setting a floor
+        clean_df[COL_CONSUMPTION] = convert_to_numeric(clean_df[COL_CONSUMPTION], default_value=0.001)
+        clean_df.loc[clean_df[COL_CONSUMPTION] <= 0, COL_CONSUMPTION] = 0.001
+        
+        return clean_df
+
+    def _find_items_to_forecast(self) -> List[str]:
+        """Identifies relevant supply items based on settings."""
+        key_drugs = self._get_setting('KEY_DRUG_SUBSTRINGS_SUPPLY', [])
+        if not key_drugs:
+            self.notes.append("KEY_DRUG_SUBSTRINGS_SUPPLY not defined in settings.")
+            return []
+        
+        drug_pattern = '|'.join([re.escape(s) for s in key_drugs if s])
+        if not drug_pattern or COL_ITEM not in self.df_historical.columns:
+            return []
+
+        all_items = self.df_historical[COL_ITEM].dropna().unique()
+        items = [item for item in all_items if re.search(drug_pattern, item, re.IGNORECASE)]
+        
+        if not items:
+            self.notes.append("No items matching keywords found in data.")
+        return items
+
+    def _add_status_column(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Adds a 'stock_status' column based on days of supply remaining."""
+        if df.empty or 'days_of_supply_remaining' not in df.columns:
+            return df
+        
+        dos_numeric = pd.to_numeric(df['days_of_supply_remaining'], errors='coerce')
+        critical_thresh = self._get_setting('CRITICAL_SUPPLY_DAYS_REMAINING', 7)
+        warning_thresh = self._get_setting('LOW_SUPPLY_DAYS_REMAINING', 14)
+        
+        conditions = [
+            dos_numeric < critical_thresh,
+            dos_numeric < warning_thresh,
+            dos_numeric.notna()
+        ]
+        choices = ["Critical Low", "Warning Low", "Sufficient"]
+        df['stock_status'] = np.select(conditions, choices, default="Unknown")
+        return df
+
+    def prepare(self) -> Dict[str, Any]:
+        """Main method to generate the complete forecast overview."""
+        if self.df_historical.empty:
+            return {"forecast_items_overview_list": [], "forecast_model_type_used": "N/A", "processing_notes": self.notes}
+
+        items_to_forecast = self._find_items_to_forecast()
+        if not items_to_forecast:
+            return {"forecast_items_overview_list": [], "forecast_model_type_used": "N/A", "processing_notes": self.notes}
+
+        # Strategy Pattern: Select and instantiate the correct forecaster
+        if self.use_ai_model:
+            forecaster = AIAdvancedForecaster(self.df_historical, items_to_forecast)
+        else:
+            forecaster = SimpleAggregateForecaster(self.df_historical, items_to_forecast)
+        
+        forecast_df, model_notes = forecaster.forecast()
+        self.notes.extend(model_notes)
+
+        final_df = self._add_status_column(forecast_df)
+
+        return {
+            "forecast_items_overview_list": final_df.to_dict('records'),
+            "forecast_model_type_used": forecaster.model_name,
+            "processing_notes": self.notes
+        }
 
 def prepare_clinic_supply_forecast_overview_data(
     full_historical_health_df: Optional[pd.DataFrame],
-    current_period_context_str: str,
+    current_period_context_str: str, # Kept for signature compatibility, though not used in this version
     use_ai_supply_forecasting_model: bool = False
 ) -> Dict[str, Any]:
-    """Prepares an overview of supply forecasts."""
-    forecast_days = int(_get_setting('DEFAULT_SUPPLY_FORECAST_HORIZON_DAYS', 30))
-    output: Dict[str, Any] = {
-        "forecast_items_overview_list": [],
-        "forecast_model_type_used": "AI Advanced (Simulated)" if use_ai_supply_forecasting_model else "Simple Aggregate",
-        "processing_notes": []
-    }
+    """
+    Factory function to prepare an overview of supply forecasts.
+    Instantiates and runs the main preparer class.
+    """
 
-    if not isinstance(full_historical_health_df, pd.DataFrame) or full_historical_health_df.empty:
-        output["processing_notes"].append("Historical health data is empty.")
-        return output
-
-    key_drugs = _get_setting('KEY_DRUG_SUBSTRINGS_SUPPLY', [])
-    if not key_drugs:
-        output["processing_notes"].append("KEY_DRUG_SUBSTRINGS_SUPPLY not defined in settings.")
-        return output
-
-    drug_pattern = '|'.join([re.escape(s) for s in key_drugs if s])
-    if not drug_pattern:
-        output["processing_notes"].append("No valid drug keywords in settings.")
-        return output
-
-    all_items = full_historical_health_df['item'].dropna().unique()
-    items_to_forecast = [item for item in all_items if re.search(drug_pattern, item, re.IGNORECASE)]
-
-    if not items_to_forecast:
-        output["processing_notes"].append("No items matching keywords found in data.")
-        return output
-    
-    forecast_df = pd.DataFrame()
-    if use_ai_supply_forecasting_model:
-        # Placeholder for future AI model call
-        output["processing_notes"].append("AI Advanced Forecasting is currently simulated by the simple model.")
-    
-    try:
-        forecast_df = generate_simple_supply_forecast(full_historical_health_df, forecast_days, items_to_forecast)
-    except Exception as e:
-        logger.error(f"Error in forecast generation: {e}", exc_info=True)
-        output["processing_notes"].append(f"Error during forecast: {e}")
-
-    if not forecast_df.empty:
-        if 'days_of_supply_remaining' in forecast_df.columns:
-            dos_numeric = pd.to_numeric(forecast_df['days_of_supply_remaining'], errors='coerce')
-            critical_thresh = _get_setting('CRITICAL_SUPPLY_DAYS_REMAINING', 7)
-            warning_thresh = _get_setting('LOW_SUPPLY_DAYS_REMAINING', 14)
-            conditions = [dos_numeric < critical_thresh, dos_numeric < warning_thresh, dos_numeric.notna()]
-            choices = ["Critical Low", "Warning Low", "Sufficient"]
-            forecast_df['stock_status'] = np.select(conditions, choices, default="Unknown")
-        
-        output["forecast_items_overview_list"] = forecast_df.to_dict('records')
-
-    return output
+    preparer = ClinicSupplyForecastPreparer(
+        full_historical_df=full_historical_health_df,
+        use_ai_model=use_ai_supply_forecasting_model
+    )
+    return preparer.prepare()
