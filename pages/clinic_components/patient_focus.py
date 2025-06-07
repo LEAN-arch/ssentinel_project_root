@@ -27,7 +27,9 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 
 def prepare_clinic_patient_focus_overview_data(
-    filtered_health_df: Optional[pd.DataFrame]
+    # FIXED: Renamed the parameter to `filtered_health_df` to match its usage within the function and fix the NameError.
+    filtered_health_df: Optional[pd.DataFrame],
+    **kwargs
 ) -> Dict[str, Any]:
     """
     Prepares data for patient load analysis and flagged patient cases.
@@ -62,7 +64,7 @@ def prepare_clinic_patient_focus_overview_data(
     if not df_load_analysis.empty:
         key_conditions = _get_setting('KEY_CONDITIONS_FOR_ACTION', [])
         if key_conditions:
-            summaries = []
+            aggregated_summaries = []
             for condition in key_conditions:
                 try:
                     mask = df_load_analysis['condition'].str.contains(re.escape(condition), case=False, na=False)
@@ -71,18 +73,21 @@ def prepare_clinic_patient_focus_overview_data(
                         grouped = df_cond.groupby(pd.Grouper(key='encounter_date', freq='W-MON'))['patient_id'].nunique().reset_index()
                         grouped.rename(columns={'encounter_date': 'period_start_date', 'patient_id': 'unique_patients_count'}, inplace=True)
                         grouped['condition'] = condition
-                        summaries.append(grouped)
+                        aggregated_summaries.append(grouped)
                 except Exception as e:
                     logger.error(f"Error aggregating load for condition '{condition}': {e}", exc_info=True)
             
-            if summaries:
-                final_df = pd.concat(summaries, ignore_index=True)
-                output_data["patient_load_by_key_condition_df"] = final_df[default_load_cols]
+            if aggregated_summaries:
+                final_load_df = pd.concat(aggregated_summaries, ignore_index=True)
+                output_data["patient_load_by_key_condition_df"] = final_load_df[default_load_cols]
     
     # --- Flagged Patients for Review ---
     try:
-        risk_thresh = float(_get_setting('RISK_SCORE_MODERATE_THRESHOLD', 60))
-        alerts_df = get_patient_alerts_for_clinic(health_df_period=filtered_health_df, risk_threshold_moderate=risk_thresh)
+        risk_moderate_thresh = float(_get_setting('RISK_SCORE_MODERATE_THRESHOLD', 60))
+        alerts_df = get_patient_alerts_for_clinic(
+            health_df_period=filtered_health_df,
+            risk_threshold_moderate=risk_moderate_thresh
+        )
         if isinstance(alerts_df, pd.DataFrame) and not alerts_df.empty:
             output_data["flagged_patients_for_review_df"] = alerts_df.reindex(columns=default_flagged_cols, fill_value=np.nan)
     except Exception as e:
