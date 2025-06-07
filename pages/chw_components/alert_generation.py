@@ -22,7 +22,7 @@ except ImportError as e:
 # --- Constants ---
 COMMON_NA_VALUES_ALERTS = frozenset(['', 'nan', 'none', 'n/a', '#n/a', 'np.nan', 'nat', '<na>', 'null', 'nu', 'unknown'])
 
-# Reconstructed and valid regex pattern from the corrupted original.
+# Reconstructed and valid regex pattern.
 # This pattern matches any of the common NA values, surrounded by optional whitespace.
 _pattern_parts = [re.escape(s) for s in COMMON_NA_VALUES_ALERTS if s]
 NA_REGEX_PATTERN = (
@@ -48,14 +48,12 @@ def _prepare_alert_dataframe(
 
         if col_name not in df_prepared.columns:
             if is_mutable_default:
-                # CORRECTED: Assign a new copy of the mutable default to each row.
                 df_prepared[col_name] = [default_value.copy() for _ in range(len(df_prepared))]
             elif target_type_str == "datetime" and default_value is pd.NaT:
                  df_prepared[col_name] = pd.NaT
             else:
                  df_prepared[col_name] = default_value
         elif is_mutable_default:
-            # CORRECTED: Fill NaNs with a new copy of the mutable default for each NaN value.
             fill_mask = df_prepared[col_name].isnull()
             if fill_mask.any():
                 df_prepared.loc[fill_mask, col_name] = df_prepared.loc[fill_mask, col_name].apply(
@@ -66,8 +64,7 @@ def _prepare_alert_dataframe(
         if target_type_str in [float, int, "datetime"] and pd.api.types.is_object_dtype(df_prepared[col_name].dtype):
             if NA_REGEX_PATTERN:
                 try:
-                    # Using case-insensitive matching for robustness
-                    df_prepared[col_name].replace(NA_REGEX_PATTERN, np.nan, regex=True, inplace=True)
+                    df_prepared[col_name].replace(NA_REGEX_PATTERN, np.nan, regex=True, inplace=True, case=False)
                 except Exception as e_regex_replace:
                     logger.warning(f"({log_prefix}) Regex NA replacement failed for column '{col_name}': {e_regex_replace}. Proceeding with original values.")
 
@@ -80,7 +77,6 @@ def _prepare_alert_dataframe(
             elif target_type_str == int:
                 df_prepared[col_name] = convert_to_numeric(df_prepared[col_name], default_value=default_value, target_type=int)
             elif target_type_str == str and not is_mutable_default:
-                # Fill np.nan/pd.NA before converting to string
                 series = df_prepared[col_name].fillna(str(default_value))
                 df_prepared[col_name] = series.astype(str).str.strip()
 
@@ -91,7 +87,6 @@ def _prepare_alert_dataframe(
             else:
                 df_prepared[col_name] = default_value
     
-    # This logic is correctly indented and placed.
     placeholder_pid = f"UnknownPID_CHWAlert_{processing_date_str}"
     if 'patient_id' in df_prepared.columns:
         df_prepared['patient_id'].replace('', placeholder_pid, inplace=True)
@@ -114,7 +109,6 @@ def generate_chw_alerts(
     module_log_prefix = "CHWAlertGeneration"
     try:
         processing_date_dt = pd.to_datetime(for_date, errors='coerce')
-        # Using robust pd.isna() for NaT checking.
         if pd.isna(processing_date_dt):
              raise ValueError(f"'for_date' ({for_date}) could not be parsed to a valid date object.")
         processing_date = processing_date_dt.date()
@@ -296,12 +290,8 @@ def generate_chw_alerts(
             -x_alert.get('raw_priority_score', 0.0)
         )
     )
-
-    num_final_alerts = len(final_alerts_sorted_list)
-    logger.info(f"({module_log_prefix}) Generated {num_final_alerts} unique CHW patient alerts after deduplication for {processing_date_str}.")
-
-    return final_alerts_sorted_list[:max_alerts_to_return]
-
+    
+    # FIXED: Removed duplicated block of code from here.
     num_final_alerts = len(final_alerts_sorted_list)
     logger.info(f"({module_log_prefix}) Generated {num_final_alerts} unique CHW patient alerts after deduplication for {processing_date_str}.")
 
