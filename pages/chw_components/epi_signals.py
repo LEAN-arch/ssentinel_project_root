@@ -82,8 +82,8 @@ def _calculate_demographics_high_risk(df_high_risk: pd.DataFrame) -> Dict[str, A
 
     # Age Group Distribution
     if 'age' in df_high_risk.columns and df_high_risk['age'].notna().any():
-        age_bins = [0, 5, 18, 60, 75, np.inf]
-        age_labels = ['0-4', '5-17', '18-59', '60-74', '75+']
+        age_bins = [0, settings.AGE_THRESHOLD_CHILD, settings.AGE_THRESHOLD_ADULT, settings.AGE_THRESHOLD_ELDERLY, np.inf]
+        age_labels = [f'0-{settings.AGE_THRESHOLD_CHILD-1}', f'{settings.AGE_THRESHOLD_CHILD}-{settings.AGE_THRESHOLD_ADULT-1}', f'{settings.AGE_THRESHOLD_ADULT}-{settings.AGE_THRESHOLD_ELDERLY-1}', f'{settings.AGE_THRESHOLD_ELDERLY}+']
         demographics["age_group_distribution"] = pd.cut(
             df_high_risk['age'], bins=age_bins, labels=age_labels, right=False
         ).value_counts().sort_index().to_dict()
@@ -99,16 +99,13 @@ def _detect_symptom_clusters(
     df_symptoms: pd.DataFrame, chw_zone_context: str, max_clusters: int
 ) -> List[Dict[str, Any]]:
     """Detects symptom clusters based on co-occurrence of keywords from settings."""
-    symptom_clusters_config = getattr(settings, 'SYMPTOM_CLUSTERS_CONFIG', {})
-    min_patients_for_cluster = getattr(settings, 'MIN_PATIENTS_FOR_SYMPTOM_CLUSTER', 2)
-
-    if df_symptoms.empty or 'patient_reported_symptoms' not in df_symptoms or not symptom_clusters_config:
+    if df_symptoms.empty or 'patient_reported_symptoms' not in df_symptoms or not hasattr(settings, 'SYMPTOM_CLUSTERS_CONFIG'):
         return []
 
     symptoms_series = df_symptoms['patient_reported_symptoms'].str.lower()
     detected_clusters = []
 
-    for cluster_name, keywords in symptom_clusters_config.items():
+    for cluster_name, keywords in settings.SYMPTOM_CLUSTERS_CONFIG.items():
         if not keywords: continue
         
         # Create a boolean mask for each keyword and combine with logical AND
@@ -119,7 +116,7 @@ def _detect_symptom_clusters(
         
         if combined_mask.any():
             patient_count = df_symptoms.loc[combined_mask, 'patient_id'].nunique()
-            if patient_count >= min_patients_for_cluster:
+            if patient_count >= settings.MIN_PATIENTS_FOR_SYMPTOM_CLUSTER:
                 detected_clusters.append({
                     "symptoms_pattern": cluster_name,
                     "patient_count": int(patient_count),
@@ -173,7 +170,7 @@ def extract_chw_epi_signals(
     # --- Vectorized Calculations for Performance ---
     
     # Count symptomatic patients for key conditions
-    key_conditions_regex = '|'.join(getattr(settings, 'KEY_CONDITIONS_FOR_ACTION', []))
+    key_conditions_regex = '|'.join(settings.KEY_CONDITIONS_FOR_ACTION)
     if key_conditions_regex:
         symptoms_present_mask = df['patient_reported_symptoms'].str.contains(SYMPTOM_KEYWORDS_PATTERN, na=False)
         key_condition_mask = df['condition'].str.contains(key_conditions_regex, case=False, na=False)
@@ -196,8 +193,7 @@ def extract_chw_epi_signals(
     epi_signals_output["pending_tb_contact_tracing_tasks_count"] = df.loc[tb_contact_mask, 'patient_id'].nunique()
 
     # Calculate demographics of high AI risk patients
-    risk_threshold = getattr(settings, 'RISK_SCORE_HIGH_THRESHOLD', 75)
-    high_risk_df = df.loc[df['ai_risk_score'] >= risk_threshold].drop_duplicates(subset=['patient_id'])
+    high_risk_df = df.loc[df['ai_risk_score'] >= settings.RISK_SCORE_HIGH_THRESHOLD].drop_duplicates(subset=['patient_id'])
     epi_signals_output["demographics_of_high_ai_risk_patients_today"] = _calculate_demographics_high_risk(high_risk_df)
     
     # Detect symptom clusters
