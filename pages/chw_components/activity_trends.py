@@ -127,7 +127,7 @@ def calculate_chw_activity_trends_data(
     mask = (df[DATE_COL].dt.date >= start_date) & (df[DATE_COL].dt.date <= end_date)
     if zone_filter and ZONE_ID_COL in df.columns:
         mask &= (df[ZONE_ID_COL].astype(str) == str(zone_filter))
-    df_period = df[mask].copy() # Use .copy() to avoid SettingWithCopyWarning
+    df_period = df[mask].copy()
 
     if df_period.empty:
         logger.info(f"({log_context}) No data after period/zone filtering. Trend Series will be empty.")
@@ -141,10 +141,9 @@ def calculate_chw_activity_trends_data(
     )
 
     # 2. High-Priority Follow-ups Trend
-    prio_threshold = getattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD', 80)
     if PRIORITY_SCORE_COL in df_period.columns:
         df_period[PRIORITY_SCORE_COL] = convert_to_numeric(df_period[PRIORITY_SCORE_COL])
-        high_prio_mask = df_period[PRIORITY_SCORE_COL] >= prio_threshold
+        high_prio_mask = df_period[PRIORITY_SCORE_COL] >= settings.FATIGUE_INDEX_HIGH_THRESHOLD
         trends_output["high_priority_followups_trend"] = _calculate_trend(
             df_period, PATIENT_ID_COL, 'nunique', time_period_aggregation, 'high_priority_followups_trend', log_context, filter_series=high_prio_mask
         )
@@ -157,10 +156,9 @@ def calculate_chw_activity_trends_data(
         )
 
     # 4. New High-Priority Tasks Trend (NEW & ACTIONABLE)
-    task_prio_threshold = getattr(settings, 'TASK_PRIORITY_HIGH_THRESHOLD', 70)
     if TASK_PRIORITY_COL in df_period.columns and TASK_ID_COL in df_period.columns:
         df_period[TASK_PRIORITY_COL] = convert_to_numeric(df_period[TASK_PRIORITY_COL])
-        high_task_prio_mask = df_period[TASK_PRIORITY_COL] >= task_prio_threshold
+        high_task_prio_mask = df_period[TASK_PRIORITY_COL] >= settings.TASK_PRIORITY_HIGH_THRESHOLD
         trends_output["new_high_priority_tasks_trend"] = _calculate_trend(
             df_period, TASK_ID_COL, 'nunique', time_period_aggregation, 'new_high_priority_tasks_trend', log_context, filter_series=high_task_prio_mask
         )
