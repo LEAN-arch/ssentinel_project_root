@@ -1,184 +1,159 @@
-# sentinel_project_root/pages/clinic_components/supply_forecast.py
-# Generates supply forecast overview data for the Clinic Console.
+# sentinel_project_root/pages/clinic_components/epi_data.py
+# Calculates clinic-level epidemiological data for Sentinel Health Co-Pilot.
 
 import pandas as pd
 import numpy as np
 import logging
-import re
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List
 
 try:
     from config import settings
-    from data_processing.helpers import convert_to_numeric
+    from data_processing.aggregation import get_trend_data
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
     logger_init = logging.getLogger(__name__)
-    logger_init.error(f"Critical import error in supply_forecast.py: {e}. Ensure paths/dependencies are correct.")
+    logger_init.error(f"Critical import error in epi_data.py: {e}. Ensure paths/dependencies are correct.")
     raise
 
 logger = logging.getLogger(__name__)
 
-# --- Constants ---
-COL_ITEM = 'item'
-COL_DATE = 'encounter_date'
-COL_STOCK = 'item_stock_agg_zone'
-COL_CONSUMPTION = 'consumption_rate_per_day'
+# --- Constants for Clarity and Maintainability ---
+COL_ENCOUNTER_DATE = 'encounter_date'
+COL_SYMPTOMS = 'patient_reported_symptoms'
+COL_PATIENT_ID = 'patient_id'
+COL_AGE = 'age'
+COL_GENDER = 'gender'
+COL_TEST_TYPE = 'test_type'
+COL_TEST_RESULT = 'test_result'
 
-# --- Forecasting Strategies ---
-
-class SimpleAggregateForecaster:
-    """A vectorized, efficient implementation of the simple supply forecasting model."""
-    
-    def __init__(self, historical_df: pd.DataFrame, items_to_forecast: List[str]):
-        self.df = historical_df
-        self.items_to_forecast = items_to_forecast
-        self.model_name = "Simple Aggregate"
-
-    def forecast(self) -> Tuple[pd.DataFrame, List[str]]:
-        """
-        Calculates future stock based on latest stock and average daily consumption.
-        Ensures all requested items have a row in the output.
-        """
-        output_cols = [COL_ITEM, 'current_stock_level', 'avg_daily_consumption_rate', 'days_of_supply_remaining', 'estimated_stockout_date']
-        
-        if not self.items_to_forecast:
-            return pd.DataFrame(columns=output_cols), ["No items identified for forecasting."]
-
-        # Create a base DataFrame to ensure all items are included in the final output.
-        results_df = pd.DataFrame({COL_ITEM: self.items_to_forecast})
-        
-        if self.df.empty:
-            notes = ["Historical data is empty; cannot generate forecasts."]
-        else:
-            # 1. Get the single most recent record for each relevant item
-            latest_records = self.df[self.df[COL_ITEM].isin(self.items_to_forecast)] \
-                .sort_values(COL_DATE) \
-                .drop_duplicates(subset=[COL_ITEM], keep='last')
-            
-            if not latest_records.empty:
-                today = pd.Timestamp.now().normalize()
-                
-                # 2. Vectorized Calculations on available data
-                latest_records['days_since_update'] = (today - latest_records[COL_DATE]).dt.days
-                latest_records['current_stock_level'] = np.maximum(0, latest_records[COL_STOCK] - (latest_records['days_since_update'] * latest_records[COL_CONSUMPTION]))
-                latest_records['days_of_supply_remaining'] = latest_records['current_stock_level'] / latest_records[COL_CONSUMPTION]
-                
-                def calculate_stockout_date(dos):
-                    if not np.isfinite(dos) or dos < 0: return "Indefinite"
-                    try: return (today + pd.to_timedelta(dos, unit='D')).strftime('%Y-%m-%d')
-                    except (OverflowError, ValueError): return ">5 Years"
-
-                latest_records['estimated_stockout_date'] = latest_records['days_of_supply_remaining'].apply(calculate_stockout_date)
-                latest_records['days_of_supply_remaining'] = latest_records['days_of_supply_remaining'].replace([np.inf, -np.inf], np.nan)
-                
-                # 3. Merge calculated data back to the complete list
-                results_df = pd.merge(results_df, latest_records, on=COL_ITEM, how='left')
-            notes = []
-
-        # 4. Fill default values for items that had no historical data
-        fill_values = {
-            'current_stock_level': 0.0,
-            'avg_daily_consumption_rate': 0.0,
-            'days_of_supply_remaining': 0.0,
-            'estimated_stockout_date': "No History"
-        }
-        results_df.fillna(value=fill_values, inplace=True)
-        results_df.rename(columns={COL_CONSUMPTION: 'avg_daily_consumption_rate'}, inplace=True)
-
-        return results_df[output_cols], notes
-
-class AIAdvancedForecaster(SimpleAggregateForecaster):
-    """Placeholder for a more advanced forecasting model. Currently simulates by using the simple model."""
-    def __init__(self, historical_df: pd.DataFrame, items_to_forecast: List[str]):
-        super().__init__(historical_df, items_to_forecast)
-        self.model_name = "AI Advanced (Simulated)"
-
-    def forecast(self) -> Tuple[pd.DataFrame, List[str]]:
-        forecast_df, _ = super().forecast()
-        notes = ["AI Advanced Forecasting is currently simulated by the simple model."]
-        return forecast_df, notes
-
-# --- Main Preparation Orchestrator ---
-
-class ClinicSupplyForecastPreparer:
-    """Orchestrates the supply forecast data preparation process."""
-    def __init__(self, full_historical_df: pd.DataFrame, use_ai_model: bool):
-        self.use_ai_model = use_ai_model
-        self.df_historical = self._prepare_clean_dataframe(full_historical_df)
+class ClinicEpiDataCalculator:
+    """
+    Encapsulates all logic for calculating epidemiological data for the clinic dashboard.
+    This class structure improves maintainability, testability, and clarity.
+    """
+    def __init__(self, filtered_health_df: Optional[pd.DataFrame]):
+        self.df_epi = self._validate_and_prepare_df(filtered_health_df)
         self.notes: List[str] = []
+        self.module_log_prefix = self.__class__.__name__
 
     def _get_setting(self, attr_name: str, default_value: Any) -> Any:
+        """Helper to safely get attributes from settings."""
         return getattr(settings, attr_name, default_value)
-    
-    def _prepare_clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+
+    def _validate_and_prepare_df(self, df: Optional[pd.DataFrame]) -> pd.DataFrame:
+        """Validates the input DataFrame and performs initial cleaning."""
         if not isinstance(df, pd.DataFrame) or df.empty:
-            self.notes.append("Historical health data is empty.")
-            return pd.DataFrame()
-
-        required_cols = [COL_ITEM, COL_DATE, COL_STOCK, COL_CONSUMPTION]
-        if not all(col in df.columns for col in required_cols):
-            self.notes.append("Missing one or more required columns for forecasting.")
             return pd.DataFrame()
         
-        clean_df = df.copy()
-        clean_df[COL_DATE] = pd.to_datetime(clean_df[COL_DATE], errors='coerce').dt.tz_localize(None)
-        clean_df.dropna(subset=[COL_DATE, COL_ITEM], inplace=True)
-        clean_df[COL_STOCK] = convert_to_numeric(clean_df[COL_STOCK], default_value=0.0)
-        clean_df[COL_CONSUMPTION] = convert_to_numeric(clean_df[COL_CONSUMPTION], default_value=0.001)
-        clean_df.loc[clean_df[COL_CONSUMPTION] <= 0, COL_CONSUMPTION] = 0.001
-        return clean_df
+        df_copy = df.copy()
+        if COL_ENCOUNTER_DATE not in df_copy.columns:
+            logger.error(f"'{COL_ENCOUNTER_DATE}' column missing from health data.")
+            return pd.DataFrame()
+        
+        df_copy[COL_ENCOUNTER_DATE] = pd.to_datetime(df_copy[COL_ENCOUNTER_DATE], errors='coerce').dt.tz_localize(None)
+        df_copy.dropna(subset=[COL_ENCOUNTER_DATE], inplace=True)
+        return df_copy
 
-    def _find_items_to_forecast(self) -> List[str]:
-        key_drugs = self._get_setting('KEY_DRUG_SUBSTRINGS_SUPPLY', [])
-        if not key_drugs:
-            self.notes.append("KEY_DRUG_SUBSTRINGS_SUPPLY not defined in settings.")
-            return []
+    def _calculate_symptom_trends(self) -> pd.DataFrame:
+        """Extracts and calculates weekly trends for the top N reported symptoms."""
+        if COL_SYMPTOMS not in self.df_epi.columns or self.df_epi[COL_SYMPTOMS].astype(str).str.strip().eq('').all():
+            return pd.DataFrame()
         
-        drug_pattern = '|'.join([re.escape(s) for s in key_drugs if s])
-        if not drug_pattern or COL_ITEM not in self.df_historical.columns: return []
+        non_info_symptoms = self._get_setting('NON_INFORMATIVE_SYMPTOMS', ["unknown", "n/a", "none", ""])
+        df_symptoms = self.df_epi[[COL_ENCOUNTER_DATE, COL_SYMPTOMS]].dropna(subset=[COL_SYMPTOMS])
+        df_symptoms = df_symptoms[~df_symptoms[COL_SYMPTOMS].str.lower().isin(non_info_symptoms)]
+        
+        if df_symptoms.empty:
+            return pd.DataFrame()
+            
+        exploded = df_symptoms.assign(symptom=df_symptoms[COL_SYMPTOMS].str.split(r'[;,|]')).explode('symptom')
+        exploded['symptom'] = exploded['symptom'].str.strip().str.title()
+        exploded = exploded[exploded['symptom'] != '']
+        
+        top_n = self._get_setting('EPI_TOP_N_SYMPTOMS', 5)
+        top_symptoms = exploded['symptom'].value_counts().nlargest(top_n).index
+        df_top = exploded[exploded['symptom'].isin(top_symptoms)]
+        
+        weekly_counts = df_top.groupby([pd.Grouper(key=COL_ENCOUNTER_DATE, freq='W-MON'), 'symptom']).size().reset_index(name='count')
+        return weekly_counts.rename(columns={COL_ENCOUNTER_DATE: 'week_start_date'})
 
-        all_items = self.df_historical[COL_ITEM].dropna().unique()
-        items = [item for item in all_items if re.search(drug_pattern, item, re.IGNORECASE)]
-        
-        if not items:
-            self.notes.append("No items matching keywords found in data.")
-        return items
+    def _calculate_test_positivity(self) -> Dict[str, pd.Series]:
+        """Calculates weekly positivity trends for key tests in a single, efficient pass."""
+        required_cols = [COL_TEST_RESULT, COL_TEST_TYPE, COL_ENCOUNTER_DATE]
+        if not all(c in self.df_epi.columns for c in required_cols):
+            return {}
 
-    def _add_status_column(self, df: pd.DataFrame) -> pd.DataFrame:
-        if df.empty or 'days_of_supply_remaining' not in df.columns: return df
-        
-        dos_numeric = pd.to_numeric(df['days_of_supply_remaining'], errors='coerce')
-        critical_thresh = self._get_setting('CRITICAL_SUPPLY_DAYS_REMAINING', 7)
-        warning_thresh = self._get_setting('LOW_SUPPLY_DAYS_REMAINING', 14)
-        
-        conditions = [dos_numeric < critical_thresh, dos_numeric < warning_thresh, dos_numeric.notna()]
-        choices = ["Critical Low", "Warning Low", "Sufficient"]
-        df['stock_status'] = np.select(conditions, choices, default="Unknown")
-        return df
+        key_tests = self._get_setting('KEY_TEST_TYPES_FOR_ANALYSIS', {})
+        if not key_tests:
+            return {}
 
-    def prepare(self) -> Dict[str, Any]:
-        items_to_forecast = self._find_items_to_forecast()
+        non_conclusive = self._get_setting('NON_CONCLUSIVE_TEST_RESULTS', ["pending", "rejected"])
+        df_conclusive = self.df_epi[~self.df_epi[COL_TEST_RESULT].str.lower().isin(non_conclusive)]
         
-        if self.use_ai_model:
-            forecaster = AIAdvancedForecaster(self.df_historical, items_to_forecast)
-        else:
-            forecaster = SimpleAggregateForecaster(self.df_historical, items_to_forecast)
+        # Calculate positivity for all tests present
+        df_conclusive['is_positive'] = (df_conclusive[COL_TEST_RESULT].str.lower() == 'positive').astype(float)
         
-        forecast_df, model_notes = forecaster.forecast()
-        self.notes.extend(model_notes)
-        final_df = self._add_status_column(forecast_df)
+        # Efficiently calculate weekly mean for all tests at once
+        weekly_positivity = df_conclusive.groupby([
+            pd.Grouper(key=COL_ENCOUNTER_DATE, freq='W-MON'), COL_TEST_TYPE
+        ])['is_positive'].mean().unstack(COL_TEST_TYPE)
 
-        return {
-            "forecast_items_overview_list": final_df.to_dict('records'),
-            "forecast_model_type_used": forecaster.model_name,
-            "processing_notes": self.notes
+        # Build the final output dictionary by selecting the key tests
+        positivity_trends = {}
+        for internal_name, config in key_tests.items():
+            if not isinstance(config, dict) or internal_name not in weekly_positivity.columns:
+                continue
+            trend = weekly_positivity[internal_name].dropna()
+            if not trend.empty:
+                display_name = config.get("display_name", internal_name)
+                positivity_trends[display_name] = (trend * 100).round(1)
+        
+        return positivity_trends
+
+    def _calculate_demographics(self, df_unique_patients: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+        """Calculates age and gender distributions from a dataframe of unique patients."""
+        demographics = {"age_distribution_df": pd.DataFrame(), "gender_distribution_df": pd.DataFrame()}
+        
+        if COL_AGE in df_unique_patients.columns:
+            age_bins = [0, 5, 18, 60, 75, np.inf]
+            age_labels = ['0-4', '5-17', '18-59', '60-74', '75+']
+            age_df = pd.cut(df_unique_patients[COL_AGE].dropna(), bins=age_bins, labels=age_labels, right=False).value_counts().sort_index().reset_index()
+            age_df.columns = ['Age Group', 'Patient Count']
+            demographics["age_distribution_df"] = age_df
+        
+        if COL_GENDER in df_unique_patients.columns:
+            gender_df = df_unique_patients[COL_GENDER].str.title().value_counts().reset_index()
+            gender_df.columns = ['Gender', 'Patient Count']
+            demographics["gender_distribution_df"] = gender_df[gender_df['Gender'].isin(["Male", "Female"])]
+            
+        return demographics
+
+    def calculate(self) -> Dict[str, Any]:
+        """Orchestrates all epidemiological calculations."""
+        if self.df_epi.empty:
+            self.notes.append("No valid health data provided.")
+            return {"calculation_notes": self.notes}
+
+        output: Dict[str, Any] = {
+            "symptom_trends_weekly_top_n_df": self._calculate_symptom_trends(),
+            "key_test_positivity_trends": self._calculate_test_positivity(),
+            "demographics_by_condition_data": {},
+            "calculation_notes": self.notes
         }
 
-def prepare_clinic_supply_forecast_overview_data(
-    full_historical_health_df: Optional[pd.DataFrame],
-    current_period_context_str: str,
-    use_ai_supply_forecasting_model: bool = False
+        if COL_PATIENT_ID in self.df_epi.columns:
+            df_unique_patients = self.df_epi.drop_duplicates(subset=[COL_PATIENT_ID])
+            if not df_unique_patients.empty:
+                output["demographics_by_condition_data"] = self._calculate_demographics(df_unique_patients)
+        
+        return output
+
+def calculate_clinic_epidemiological_data(
+    filtered_health_df: Optional[pd.DataFrame]
 ) -> Dict[str, Any]:
-    """Factory function to prepare an overview of supply forecasts."""
-    preparer = ClinicSupplyForecastPreparer(full_historical_health_df, use_ai_supply_forecasting_model)
-    return preparer.prepare()
+    """
+    Calculates various epidemiological data sets for a clinic over a specified period.
+    This factory function instantiates and runs the main calculator class.
+    """
+    calculator = ClinicEpiDataCalculator(filtered_health_df)
+    return calculator.calculate()
