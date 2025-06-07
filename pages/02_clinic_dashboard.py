@@ -111,13 +111,17 @@ def render_sidebar(full_health_df: pd.DataFrame, full_iot_df: pd.DataFrame) -> T
     use_ai_supply = st.sidebar.checkbox("Use Advanced AI Forecast", value=True, key="supply_ai_toggle", help="Use a more complex model for supply chain forecasting.")
     return start_date, end_date, use_ai_supply
 
-def render_kpi_snapshot(dashboard_data: Dict[str, Any], current_period_str: str):
+def render_kpi_snapshot(dashboard_data: Dict[str, Any]):
+    """Renders the top-level KPI cards."""
     st.header("🚀 Clinic Performance & Environment Snapshot")
-    # ROBUSTNESS: Use .get() and check for existence before rendering
     kpis = dashboard_data.get('kpis_summary')
     if kpis:
-        main_kpis = structure_main_clinic_kpis(kpis, current_period_str)
-        disease_kpis = structure_disease_specific_clinic_kpis(kpis, current_period_str)
+        # === FIX APPLIED HERE ===
+        # The TypeError indicates these functions now only take one argument (the kpis dictionary).
+        # The context string is no longer passed.
+        main_kpis = structure_main_clinic_kpis(kpis)
+        disease_kpis = structure_disease_specific_clinic_kpis(kpis)
+        
         if main_kpis:
             st.markdown("##### **Overall Service Performance:**")
             cols = st.columns(len(main_kpis))
@@ -143,8 +147,6 @@ def render_deep_dive_tabs(dashboard_data: Dict[str, Any]):
     """Renders the main content tabs with robust checks for data existence."""
     st.header("🛠️ Operational Areas Deep Dive")
     tabs = st.tabs(["📈 Local Epi", "🔬 Testing", "💊 Supply Chain", "🧍 Patient Focus", "🌿 Environment"])
-
-    # ROBUSTNESS PATTERN: For each tab, check for the specific data needed before attempting to render.
     
     with tabs[0]: # Local Epi
         epi_data = dashboard_data.get('epi_data')
@@ -186,7 +188,6 @@ def render_deep_dive_tabs(dashboard_data: Dict[str, Any]):
                  st.dataframe(overdue_df, use_container_width=True, hide_index=True)
             else:
                 st.write("No overdue tests found.")
-
 
     with tabs[2]: # Supply Chain
         st.subheader("Supply Chain Forecast & Status")
@@ -244,15 +245,9 @@ def render_deep_dive_tabs(dashboard_data: Dict[str, Any]):
         else:
             st.info("ℹ️ No environmental data was recorded in this period.")
 
-
 def main():
     """Main function to orchestrate the dashboard page."""
-    st.set_page_config(
-        page_title=f"Clinic Console - {_get_setting('APP_NAME', APP_NAME)}",
-        page_icon="🏥",
-        layout=_get_setting('APP_LAYOUT', "wide")
-    )
-
+    st.set_page_config(page_title=f"Clinic Console - {_get_setting('APP_NAME', APP_NAME)}", page_icon="🏥", layout=_get_setting('APP_LAYOUT', "wide"))
     st.title("🏥 Clinic Operations & Management Console")
     st.markdown("**Service Performance, Patient Care, Resource Management, and Facility Environment**")
     st.divider()
@@ -260,33 +255,22 @@ def main():
     base_health_df = get_base_health_data()
     full_health_df = get_enriched_health_data(base_health_df)
     full_iot_df = get_iot_data()
-    
     start_date, end_date, use_ai_supply = render_sidebar(full_health_df, full_iot_df)
-    
-    health_df_period = full_health_df[
-        (full_health_df[COL_ENCOUNTER_DATE].dt.date >= start_date) & 
-        (full_health_df[COL_ENCOUNTER_DATE].dt.date <= end_date)
-    ]
-    iot_df_period = full_iot_df[
-        (full_iot_df[COL_TIMESTAMP].dt.date >= start_date) & 
-        (full_iot_df[COL_TIMESTAMP].dt.date <= end_date)
-    ]
-    
+    health_df_period = full_health_df[(full_health_df[COL_ENCOUNTER_DATE].dt.date >= start_date) & (full_health_df[COL_ENCOUNTER_DATE].dt.date <= end_date)]
+    iot_df_period = full_iot_df[(full_iot_df[COL_TIMESTAMP].dt.date >= start_date) & (full_iot_df[COL_TIMESTAMP].dt.date <= end_date)]
     current_period_str = f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
     st.info(f"Displaying data for: **{current_period_str}**")
 
     try:
-        dashboard_data = prepare_dashboard_data(
-            _health_df_period=health_df_period, _iot_df_period=iot_df_period, _full_health_df=full_health_df,
-            current_period_str=current_period_str, use_ai_supply_forecast=use_ai_supply
-        )
+        dashboard_data = prepare_dashboard_data(_health_df_period=health_df_period, _iot_df_period=iot_df_period, _full_health_df=full_health_df, current_period_str=current_period_str, use_ai_supply_forecast=use_ai_supply)
     except Exception as e:
         logger.error(f"Fatal error during central data preparation: {e}", exc_info=True)
         st.error("A critical error occurred while analyzing the data. The dashboard cannot be displayed. Please check logs.")
         st.stop()
         
     try:
-        render_kpi_snapshot(dashboard_data, current_period_str)
+        # Pass only dashboard_data, as render_kpi_snapshot no longer needs the context string directly
+        render_kpi_snapshot(dashboard_data)
         render_deep_dive_tabs(dashboard_data)
     except Exception as e:
         logger.error(f"Error rendering dashboard components: {e}", exc_info=True)
