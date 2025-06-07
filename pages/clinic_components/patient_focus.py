@@ -26,7 +26,7 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 
 def prepare_clinic_patient_focus_overview_data(
-    # FIXED: Renamed parameter to `filtered_health_df` to match usage and calling context.
+    # FIXED: Renamed the parameter to a simpler, consistent `filtered_health_df` to fix the NameError.
     filtered_health_df: Optional[pd.DataFrame],
     **kwargs
 ) -> Dict[str, Any]:
@@ -52,33 +52,33 @@ def prepare_clinic_patient_focus_overview_data(
     
     required_cols = ['encounter_date', 'patient_id', 'condition']
     if not all(col in df_load_analysis.columns for col in required_cols):
-        output_data["processing_notes"].append(f"Required columns are missing: {list(set(required_cols) - set(df_load_analysis.columns))}")
-        return output_data
-        
-    df_load_analysis['encounter_date'] = pd.to_datetime(df_load_analysis['encounter_date'], errors='coerce')
-    df_load_analysis.dropna(subset=required_cols, inplace=True)
-    df_load_analysis = df_load_analysis[df_load_analysis['condition'] != "UnknownCondition"]
+        missing_cols = list(set(required_cols) - set(df_load_analysis.columns))
+        output_data["processing_notes"].append(f"Required columns for patient load analysis are missing: {missing_cols}")
+        # Proceed to flagged patients even if load analysis fails
+    else:
+        df_load_analysis['encounter_date'] = pd.to_datetime(df_load_analysis['encounter_date'], errors='coerce')
+        df_load_analysis.dropna(subset=required_cols, inplace=True)
+        df_load_analysis = df_load_analysis[df_load_analysis['condition'] != "UnknownCondition"]
 
-    # --- Patient Load by Key Condition ---
-    if not df_load_analysis.empty:
-        key_conditions = _get_setting('KEY_CONDITIONS_FOR_ACTION', [])
-        if key_conditions:
-            aggregated_summaries = []
-            for condition in key_conditions:
-                try:
-                    mask = df_load_analysis['condition'].str.contains(re.escape(condition), case=False, na=False)
-                    if mask.any():
-                        df_cond = df_load_analysis[mask]
-                        grouped = df_cond.groupby(pd.Grouper(key='encounter_date', freq='W-MON'))['patient_id'].nunique().reset_index()
-                        grouped.rename(columns={'encounter_date': 'period_start_date', 'patient_id': 'unique_patients_count'}, inplace=True)
-                        grouped['condition'] = condition
-                        aggregated_summaries.append(grouped)
-                except Exception as e:
-                    logger.error(f"Error aggregating load for condition '{condition}': {e}", exc_info=True)
-            
-            if aggregated_summaries:
-                final_load_df = pd.concat(aggregated_summaries, ignore_index=True)
-                output_data["patient_load_by_key_condition_df"] = final_load_df[default_load_cols]
+        if not df_load_analysis.empty:
+            key_conditions = _get_setting('KEY_CONDITIONS_FOR_ACTION', [])
+            if key_conditions:
+                aggregated_summaries = []
+                for condition in key_conditions:
+                    try:
+                        mask = df_load_analysis['condition'].str.contains(re.escape(condition), case=False, na=False)
+                        if mask.any():
+                            df_cond = df_load_analysis[mask]
+                            grouped = df_cond.groupby(pd.Grouper(key='encounter_date', freq='W-MON'))['patient_id'].nunique().reset_index()
+                            grouped.rename(columns={'encounter_date': 'period_start_date', 'patient_id': 'unique_patients_count'}, inplace=True)
+                            grouped['condition'] = condition
+                            aggregated_summaries.append(grouped)
+                    except Exception as e:
+                        logger.error(f"Error aggregating load for condition '{condition}': {e}", exc_info=True)
+                
+                if aggregated_summaries:
+                    final_load_df = pd.concat(aggregated_summaries, ignore_index=True)
+                    output_data["patient_load_by_key_condition_df"] = final_load_df[default_load_cols]
     
     # --- Flagged Patients for Review ---
     try:
@@ -89,6 +89,8 @@ def prepare_clinic_patient_focus_overview_data(
         )
         if isinstance(alerts_df, pd.DataFrame) and not alerts_df.empty:
             output_data["flagged_patients_for_review_df"] = alerts_df.reindex(columns=default_flagged_cols, fill_value=np.nan)
+        else:
+            output_data["processing_notes"].append("No patients were flagged for review in this period.")
     except Exception as e:
         logger.error(f"Error getting flagged patients: {e}", exc_info=True)
         output_data["processing_notes"].append("Error generating list of flagged patients.")
