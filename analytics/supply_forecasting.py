@@ -9,7 +9,6 @@ from typing import Optional, List, Dict, Any
 try:
     from config import settings
 except ImportError:
-    # Fallback for standalone execution or testing
     logging.warning("Could not import settings. Using fallback values for supply forecasting.")
     class FallbackSettings:
         DEFAULT_FORECAST_DAYS_OUT = 30
@@ -18,17 +17,15 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 class SimpleForecastingModel:
-    """
-    A simple linear consumption model for supply forecasting.
-    This implementation is vectorized for high performance.
-    """
+    """A simple linear consumption model for supply forecasting."""
     def _prepare_latest_status(self, source_df: pd.DataFrame, item_filter: Optional[List[str]] = None) -> pd.DataFrame:
         """Gets the most recent status for each item."""
         df = source_df.copy()
         if item_filter:
             df = df[df['item'].isin(item_filter)]
         
-        # The loader now guarantees 'encounter_date' is tz-naive and datetime
+        # Ensure encounter_date is a datetime type before proceeding
+        df['encounter_date'] = pd.to_datetime(df['encounter_date'], errors='coerce')
         df.dropna(subset=['encounter_date'], inplace=True)
         if df.empty:
             return pd.DataFrame()
@@ -38,13 +35,15 @@ class SimpleForecastingModel:
             return pd.DataFrame()
         
         # --- DEFINITIVE FIX FOR TypeError ---
-        # Get the current time as a timezone-naive timestamp.
+        # 1. Get the current time and immediately make it timezone-naive.
         today = pd.Timestamp.now().normalize()
         
-        # Subtraction is now safe as both are tz-naive.
+        # 2. Ensure the DataFrame's date column is also timezone-naive.
+        latest['encounter_date'] = latest['encounter_date'].dt.tz_localize(None)
+        
+        # Now both objects are timezone-naive, and subtraction is safe.
         latest['days_since_update'] = (today - latest['encounter_date']).dt.days.clip(lower=0)
         
-        # Ensure consumption rate is a small positive number to avoid division by zero
         latest['consumption_rate_per_day'] = latest['consumption_rate_per_day'].clip(lower=0.001)
         return latest
 
@@ -58,7 +57,6 @@ class SimpleForecastingModel:
         today_naive = pd.Timestamp.now().normalize()
 
         for _, row in latest_status.iterrows():
-            # Vectorized calculation for a single item's forecast
             dates = pd.date_range(start=today_naive, periods=forecast_days, freq='D')
             days_elapsed = np.arange(row['days_since_update'], row['days_since_update'] + forecast_days)
             
@@ -75,7 +73,6 @@ class SimpleForecastingModel:
             
         return pd.concat(all_forecasts, ignore_index=True) if all_forecasts else pd.DataFrame()
 
-# --- Singleton instance and public factory functions ---
 SIMPLE_FORECASTER = SimpleForecastingModel()
 
 def generate_simple_supply_forecast(
@@ -88,16 +85,7 @@ def generate_simple_supply_forecast(
         return pd.DataFrame()
     return SIMPLE_FORECASTER.forecast(source_df, forecast_days_out, item_filter)
 
-
-def forecast_supply_levels_advanced(
-    source_df: pd.DataFrame, 
-    item_filter: Optional[List[str]] = None, 
-    **kwargs
-) -> pd.DataFrame:
-    """
-    Simulates a call to a more advanced AI/ML forecasting model.
-    In a real scenario, this would involve a more complex model (e.g., SARIMA, Prophet).
-    For this simulation, it delegates to the simple model.
-    """
+def forecast_supply_levels_advanced(source_df: pd.DataFrame, item_filter: Optional[List[str]] = None, **kwargs) -> pd.DataFrame:
+    """Simulates a call to a more advanced AI/ML forecasting model."""
     logger.info("Executing AI-Assisted (Simulated) supply forecast.")
     return generate_simple_supply_forecast(source_df, item_filter=item_filter)
