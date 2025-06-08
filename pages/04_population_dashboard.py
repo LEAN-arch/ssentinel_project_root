@@ -60,10 +60,10 @@ def get_risk_stratification_data(df: pd.DataFrame) -> Dict[str, Any]:
 
 # --- Page Setup & Data Loading ---
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 3600), hash_funcs={pd.DataFrame: hash_dataframe_safe}, show_spinner="Loading population analytics dataset...")
-def get_population_analytics_datasets(log_ctx: str = "PopAnalytics/LoadData") -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
-    raw_health_df = load_health_records(source_context=f"{log_ctx}/HealthRecs")
+def get_population_analytics_datasets() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+    raw_health_df = load_health_records()
     if not isinstance(raw_health_df, pd.DataFrame) or raw_health_df.empty: return None, None
-    enriched_health_df, _ = apply_ai_models(raw_health_df.copy(), source_context=f"{log_ctx}/AIEnrich")
+    enriched_health_df, _ = apply_ai_models(raw_health_df.copy())
     zone_attributes_df = load_zone_data()
     return enriched_health_df, zone_attributes_df
 
@@ -106,15 +106,12 @@ def run_dashboard():
     if health_df_main is None or health_df_main.empty:
         st.error("🚨 Critical Data Failure: Could not load health dataset."); st.stop()
     
-    # --- DEFINITIVE FIX FOR KeyError ---
-    # Initialize session state BEFORE rendering any widgets that use it.
     initialize_session_state(health_df_main, zone_attr_main)
 
     with st.sidebar:
         st.header("🔎 Analytics Filters")
         start_date, end_date = st.date_input("Select Date Range:", value=st.session_state[C.SS_DATE_RANGE], min_value=st.session_state['min_data_date'], max_value=st.session_state['max_data_date'])
         st.session_state[C.SS_DATE_RANGE] = (start_date, end_date)
-        
         st.selectbox("Filter by Zone/Region:", options=st.session_state['zone_options'], key=C.SS_ZONE)
         st.multiselect("Filter by Condition(s):", options=st.session_state['all_conditions'], key=C.SS_CONDITIONS)
 
@@ -131,7 +128,6 @@ def run_dashboard():
 
     if df_filtered.empty: st.info("ℹ️ No data available for the selected filters."); st.stop()
 
-    # --- Strategic KPI Display ---
     st.subheader("Strategic Population Health Indicators")
     kpi_cols = st.columns(4)
     unique_patients = df_filtered['patient_id'].nunique()
@@ -145,14 +141,21 @@ def run_dashboard():
     kpi_cols[3].metric("Top Condition by Avg. Risk", top_risk_condition)
     st.divider()
 
-    # --- Main Analysis Tabs ---
     tab1, tab2, tab3 = st.tabs(["📈 Epidemiological Overview", "🚨 Population Risk Stratification", "🧑‍🤝‍🧑 Demographic Insights"])
 
     with tab1:
         st.subheader("Encounter Trends")
         df_trend = df_filtered.set_index('encounter_date').resample(C.TIME_AGG_PERIOD).size()
         st.plotly_chart(plot_annotated_line_chart(df_trend, "Weekly Encounters Trend", "Encounters"), use_container_width=True)
-
+        st.subheader("Top Conditions by Volume & Severity")
+        col1, col2 = st.columns(2)
+        with col1:
+            top_by_count = cond_analytics.sort_values('count', ascending=False).head(C.TOP_N_CONDITIONS)
+            st.plotly_chart(plot_bar_chart(top_by_count, x_col='count', y_col='condition', orientation='h', title="Most Frequent Conditions", x_axis_title='Number of Encounters', y_values_are_counts=True), use_container_width=True)
+        with col2:
+            top_by_risk = cond_analytics.sort_values('avg_risk_score', ascending=False).head(C.TOP_N_CONDITIONS)
+            st.plotly_chart(plot_bar_chart(top_by_risk, x_col='avg_risk_score', y_col='condition', orientation='h', title="Highest-Risk Conditions", x_axis_title='Average AI Risk Score', range_x=[0,100]), use_container_width=True)
+    
     with tab2:
         st.subheader("Population Risk Stratification")
         risk_data = get_risk_stratification_data(df_filtered)
@@ -167,18 +170,30 @@ def run_dashboard():
             with col2:
                 fig_trend = px.area(trend_data, x='encounter_date', y='patient_id', color='risk_tier', title="Risk Tier Trends (Weekly)", labels={'patient_id': 'Unique Patients'}, category_orders={"risk_tier": ["Low Risk", "Moderate Risk", "High Risk"]})
                 st.plotly_chart(fig_trend, use_container_width=True)
-    
+
     with tab3:
         st.subheader("Demographic Insights")
         df_unique = df_filtered.drop_duplicates(subset=['patient_id'])
         col1, col2 = st.columns(2)
         with col1:
             if not df_unique['age'].dropna().empty:
-                st.plotly_chart(px.histogram(df_unique, x='age', nbins=20, title="Age Distribution"), use_container_width=True)
+                # Using st.bar_chart for simple histograms is effective and ensures integer counts
+                age_counts = np.histogram(df_unique['age'].dropna(), bins=np.arange(0, df_unique['age'].max() + 10, 5))
+                age_hist_df = pd.DataFrame({'Age Bracket': [f"{int(age_counts[1][i])}-{int(age_counts[1][i+1]-1)}" for i in range(len(age_counts[0]))], 'Number of Patients': age_counts[0]})
+                st.bar_chart(age_hist_df.set_index('Age Bracket'))
         with col2:
             if not df_unique['gender'].dropna().empty:
-                counts = df_unique['gender'].value_counts()
-                st.plotly_chart(px.pie(counts, values=counts.values, names=counts.index, title="Gender Distribution"), use_container_width=True)
+                st.plotly_chart(px.pie(df_unique, names='gender', title="Gender Distribution (Unique Patients)"), use_container_width=True)
+        
+        st.subheader("Risk by Demographics")
+        if not df_unique.empty:
+             df_unique['age_band'] = pd.cut(df_unique['age'], bins=[0, 18, 40, 60, 120], labels=['0-18', '19-40', '41-60', '60+'])
+             risk_by_demo = df_unique.groupby(['age_band', 'gender'])['ai_risk_score'].mean().reset_index()
+             if not risk_by_demo.empty:
+                # --- DEFINITIVE FIX FOR AXIS FORMATTING ---
+                # This chart shows an average, so decimals are appropriate here. No change needed.
+                fig = plot_bar_chart(risk_by_demo, x_col='age_band', y_col='ai_risk_score', color='gender', barmode='group', title="Average AI Risk Score by Age and Gender", labels={'ai_risk_score': 'Avg. AI Risk Score'})
+                st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
     run_dashboard()
