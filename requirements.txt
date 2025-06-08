@@ -2,12 +2,14 @@
 # Python package dependencies for Sentinel Health Co-Pilot
 
 # Core Streamlit and Data Handling
-streamlit>=1.30.0,<2.0.0
-pandas>=2.0.0,<2.2.0
-numpy>=1.24.0,<1.27.0
+streamlit==1.35.0
+pandas==2.2.2
+numpy==1.26.4
 
 # Plotting and Visualization
-plotly>=5.15.0,<5.20.0
+plotly==5.22.0
+pyarrow==16.1.0
+packaging==24.0
 
 # Geospatial - Lightweight (Only if specific non-GeoPandas geo operations are needed)
 # If using GeoJSON features directly with Plotly Express, these might not be strictly necessary
