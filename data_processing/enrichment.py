@@ -26,17 +26,6 @@ class ZoneDataEnricher:
     and environmental metrics using efficient, vectorized operations.
     """
     def __init__(self, zone_df: pd.DataFrame, health_df: Optional[pd.DataFrame], iot_df: Optional[pd.DataFrame]):
-        """
-        Initializes the enricher with base data.
-
-        Args:
-            zone_df (pd.DataFrame): The base DataFrame of zones, must contain 'zone_id'.
-            health_df (Optional[pd.DataFrame]): DataFrame of health records with 'zone_id'.
-            iot_df (Optional[pd.DataFrame]): DataFrame of IoT records with 'zone_id'.
-        
-        Raises:
-            ValueError: If zone_df is invalid.
-        """
         if not isinstance(zone_df, pd.DataFrame) or zone_df.empty or 'zone_id' not in zone_df.columns:
             raise ValueError("Base zone_df must be a non-empty DataFrame with a 'zone_id' column.")
         
@@ -54,7 +43,6 @@ class ZoneDataEnricher:
         health_agg = self.health_df[self.health_df['zone_id'].notna()].copy()
         health_agg['zone_id'] = health_agg['zone_id'].astype(str).strip()
 
-        # Define base aggregations
         aggregations: Dict[str, Any] = {
             'avg_risk_score': pd.NamedAgg(column='ai_risk_score', aggfunc='mean'),
             'total_patient_encounters': pd.NamedAgg(column='encounter_id', aggfunc='nunique'),
@@ -63,13 +51,11 @@ class ZoneDataEnricher:
         
         health_summary = health_agg.groupby('zone_id').agg(**aggregations)
 
-        # Vectorized key condition counting
         if 'condition' in health_agg.columns and self.key_conditions:
             condition_counts = health_agg[health_agg['condition'].isin(self.key_conditions)].groupby(['zone_id', 'condition'])['patient_id'].nunique().unstack(fill_value=0)
             condition_counts.columns = [f"active_{re.sub(r'[^a-z0-9_]+', '_', c.lower().strip())}_cases" for c in condition_counts.columns]
             health_summary = health_summary.join(condition_counts, how='left')
 
-        # Calculate total key infections
         active_case_cols = [col for col in health_summary.columns if col.startswith('active_')]
         if active_case_cols:
             health_summary['total_active_key_infections'] = health_summary[active_case_cols].sum(axis=1)
@@ -80,17 +66,14 @@ class ZoneDataEnricher:
         """Aggregates all necessary metrics from the IoT data."""
         if self.iot_df.empty or 'zone_id' not in self.iot_df.columns or 'avg_co2_ppm' not in self.iot_df.columns:
             return pd.DataFrame(columns=['zone_id'])
-
         iot_agg = self.iot_df[['zone_id', 'avg_co2_ppm']].dropna().copy()
         iot_agg['zone_id'] = iot_agg['zone_id'].astype(str).strip()
-        
         return iot_agg.groupby('zone_id').agg(zone_avg_co2=('avg_co2_ppm', 'mean')).reset_index()
 
     def _merge_aggregates(self, health_summary: pd.DataFrame, iot_summary: pd.DataFrame) -> pd.DataFrame:
         """Merges all aggregated summaries into the base zone DataFrame."""
         enriched_df = self.zone_df.copy()
         enriched_df['zone_id'] = enriched_df['zone_id'].astype(str).strip()
-        
         if not health_summary.empty:
             enriched_df = pd.merge(enriched_df, health_summary, on='zone_id', how='left')
         if not iot_summary.empty:
@@ -115,11 +98,7 @@ class ZoneDataEnricher:
         enriched_df = self._merge_aggregates(health_summary, iot_summary)
         final_df = self._calculate_derived_metrics(enriched_df)
         
-        # Define and apply sensible defaults for all potentially new columns
-        default_fills = {
-            'avg_risk_score': np.nan, 'total_patient_encounters': 0, 'total_active_key_infections': 0,
-            'prevalence_per_1000': 0.0, 'zone_avg_co2': np.nan, 'avg_daily_steps_zone': np.nan
-        }
+        default_fills = {'avg_risk_score': np.nan, 'total_patient_encounters': 0, 'total_active_key_infections': 0, 'prevalence_per_1000': 0.0, 'zone_avg_co2': np.nan, 'avg_daily_steps_zone': np.nan}
         for cond in self.key_conditions:
             default_fills[f"active_{re.sub(r'[^a-z0-9_]+', '_', cond.lower().strip())}_cases"] = 0
         
@@ -133,28 +112,11 @@ def enrich_zone_geodata_with_health_aggregates(
     iot_df: Optional[pd.DataFrame] = None
 ) -> pd.DataFrame:
     """
-    Public factory function to enrich zone geographical data with aggregated health and environmental metrics.
-    
-    This function serves as a robust, public-facing API that encapsulates the complex
-    enrichment logic within the `ZoneDataEnricher` class.
-
-    Args:
-        zone_df (Optional[pd.DataFrame]): The base DataFrame of zones. Must contain a unique 'zone_id' column
-                                         and is expected to have a 'population' column for derived metrics.
-        health_df (Optional[pd.DataFrame]): A DataFrame containing health records, each with a 'zone_id' to
-                                            enable joining. Expected to contain columns like 'ai_risk_score',
-                                            'encounter_id', 'condition', etc.
-        iot_df (Optional[pd.DataFrame]): An optional DataFrame containing IoT records with a 'zone_id'.
-                                         Used for environmental metric aggregation.
-        
-    Returns:
-        pd.DataFrame: The enriched zone DataFrame with new columns for each aggregated metric.
-                      Returns the original zone_df if initialization fails or an error occurs.
+    Public factory function to enrich zone geographical data.
     """
     if not isinstance(zone_df, pd.DataFrame) or zone_df.empty:
         logger.warning("Base zone DataFrame is empty. Cannot perform enrichment.")
         return pd.DataFrame()
-        
     try:
         enricher = ZoneDataEnricher(zone_df, health_df, iot_df)
         return enricher.enrich()
