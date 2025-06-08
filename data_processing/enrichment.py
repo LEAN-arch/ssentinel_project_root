@@ -41,7 +41,7 @@ class ZoneDataEnricher:
             return pd.DataFrame(columns=['zone_id'])
 
         health_agg = self.health_df[self.health_df['zone_id'].notna()].copy()
-        health_agg['zone_id'] = health_agg['zone_id'].astype(str).strip()
+        health_agg['zone_id'] = health_agg['zone_id'].astype(str).str.strip()
 
         aggregations: Dict[str, Any] = {
             'avg_risk_score': pd.NamedAgg(column='ai_risk_score', aggfunc='mean'),
