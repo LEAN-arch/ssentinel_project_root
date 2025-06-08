@@ -37,10 +37,22 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
 
 @st.cache_data
 def get_condition_analytics(df: pd.DataFrame) -> pd.DataFrame:
+    """Analyzes conditions by frequency and risk."""
     if df.empty or 'condition' not in df.columns or 'ai_risk_score' not in df.columns:
         return pd.DataFrame(columns=['condition', 'count', 'avg_risk_score'])
-    df['ai_risk_score'] = convert_to_numeric(df['ai_risk_score'])
-    return df.groupby('condition').agg(count=('patient_id', 'size'), avg_risk_score=('ai_risk_score', 'mean')).reset_index().dropna(subset=['avg_risk_score'])
+    
+    # --- DEFINITIVE FIX ---
+    # Ensure ai_risk_score is numeric before aggregation
+    df_copy = df.copy()
+    df_copy['ai_risk_score'] = convert_to_numeric(df_copy['ai_risk_score'])
+    
+    # Aggregate, then fill na for avg_risk_score to keep all conditions
+    agg_df = df_copy.groupby('condition').agg(
+        count=('patient_id', 'size'),
+        avg_risk_score=('ai_risk_score', 'mean')
+    ).reset_index()
+    agg_df['avg_risk_score'] = agg_df['avg_risk_score'].fillna(0)
+    return agg_df
 
 @st.cache_data
 def get_risk_stratification_data(df: pd.DataFrame) -> Dict[str, Any]:
@@ -152,10 +164,16 @@ def run_dashboard():
         col1, col2 = st.columns(2)
         with col1:
             top_by_count = cond_analytics.sort_values('count', ascending=False).head(C.TOP_N_CONDITIONS)
-            st.plotly_chart(plot_bar_chart(top_by_count, x_col='count', y_col='condition', orientation='h', title="Most Frequent Conditions", x_axis_title='Number of Encounters', y_values_are_counts=True), use_container_width=True)
+            if not top_by_count.empty:
+                st.plotly_chart(plot_bar_chart(top_by_count, x_col='count', y_col='condition', orientation='h', title="Most Frequent Conditions", x_axis_title='Number of Encounters', y_values_are_counts=True), use_container_width=True)
+            else:
+                st.info("No condition data to display for volume analysis.")
         with col2:
             top_by_risk = cond_analytics.sort_values('avg_risk_score', ascending=False).head(C.TOP_N_CONDITIONS)
-            st.plotly_chart(plot_bar_chart(top_by_risk, x_col='avg_risk_score', y_col='condition', orientation='h', title="Highest-Risk Conditions", x_axis_title='Average AI Risk Score', range_x=[0,100]), use_container_width=True)
+            if not top_by_risk.empty:
+                st.plotly_chart(plot_bar_chart(top_by_risk, x_col='avg_risk_score', y_col='condition', orientation='h', title="Highest-Risk Conditions", x_axis_title='Average AI Risk Score', range_x=[0,100]), use_container_width=True)
+            else:
+                st.info("No condition data to display for severity analysis.")
     
     with tab2:
         st.header("Population Risk Stratification")
@@ -175,7 +193,6 @@ def run_dashboard():
     with tab3:
         st.header("Geospatial Analysis")
         if zone_attr_main is not None and not zone_attr_main.empty and 'geometry_obj' in zone_attr_main.columns:
-            st.info("This map shows metrics aggregated by zone for the filtered data.")
             geo_agg = df_filtered.groupby('zone_id').agg(avg_risk_score=('ai_risk_score', 'mean'), unique_patients=('patient_id', 'nunique')).reset_index()
             map_df = pd.merge(zone_attr_main, geo_agg, on='zone_id', how='left').fillna(0)
             map_df['prevalence_per_1000'] = (map_df['unique_patients'] / map_df['population'] * 1000).where(map_df['population'] > 0, 0)
@@ -197,7 +214,6 @@ def run_dashboard():
         with col2:
             if not df_unique['gender'].dropna().empty:
                 st.plotly_chart(px.pie(df_unique, names='gender', title="Gender Distribution"), use_container_width=True)
-        
         st.subheader("Risk by Demographics")
         if not df_unique.empty:
              df_unique['age_band'] = pd.cut(df_unique['age'], bins=[0, 18, 40, 60, 120], labels=['0-18', '19-40', '41-60', '60+'])
