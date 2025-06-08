@@ -57,13 +57,13 @@ def get_clinic_console_processed_data(start_date: date, end_date: date) -> Tuple
     
     # 3. Filter data for the selected period
     health_df_period = pd.DataFrame()
-    if not ai_enriched_health_df.empty:
+    if not ai_enriched_health_df.empty and 'encounter_date' in ai_enriched_health_df.columns:
         # The 'encounter_date' column is guaranteed to be datetime and tz-naive from the loader
         mask = ai_enriched_health_df['encounter_date'].dt.date.between(start_date, end_date)
         health_df_period = ai_enriched_health_df.loc[mask].copy()
 
     iot_df_period = pd.DataFrame()
-    if iot_available:
+    if iot_available and 'timestamp' in raw_iot_df.columns:
         # The 'timestamp' column is guaranteed to be datetime and tz-naive
         mask = raw_iot_df['timestamp'].dt.date.between(start_date, end_date)
         iot_df_period = raw_iot_df.loc[mask].copy()
@@ -115,8 +115,9 @@ abs_min_date, abs_max_date = date.today() - timedelta(days=365), date.today()
 default_start = max(abs_min_date, abs_max_date - timedelta(days=settings.WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS - 1))
 session_key = "clinic_date_range"
 if session_key not in st.session_state: st.session_state[session_key] = (default_start, abs_max_date)
-start_date, end_date = st.sidebar.date_input("Select Date Range:", value=st.session_state[session_key], min_value=abs_min_date, max_value=abs_max_date)
-if isinstance(start_date, date) and isinstance(end_date, date) and start_date > end_date: end_date = start_date
+selected_range = st.sidebar.date_input("Select Date Range:", value=st.session_state[session_key], min_value=abs_min_date, max_value=abs_max_date)
+start_date, end_date = (selected_range[0], selected_range[1]) if isinstance(selected_range, (list, tuple)) and len(selected_range) == 2 else (default_start, abs_max_date)
+if start_date > end_date: end_date = start_date
 MAX_DAYS = 90
 if (end_date - start_date).days >= MAX_DAYS: end_date = min(start_date + timedelta(days=MAX_DAYS - 1), abs_max_date); st.sidebar.warning(f"Range limited to {MAX_DAYS} days.")
 st.session_state[session_key] = (start_date, end_date)
@@ -169,12 +170,9 @@ with tab_testing:
     st.subheader(f"Testing & Diagnostics Performance")
     testing_data = prepare_clinic_lab_testing_insights_data(kpis_summary=period_kpis, health_df_period=period_health_df)
     summary_df, overdue_df = testing_data.get("all_critical_tests_summary_table_df"), testing_data.get("overdue_pending_tests_list_df")
-    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
-        st.markdown("###### **Critical Tests Performance Summary**"); st.dataframe(summary_df, use_container_width=True, hide_index=True)
-    if isinstance(overdue_df, pd.DataFrame) and not overdue_df.empty:
-        st.markdown("###### **Overdue Pending Tests (Top 15)**"); st.dataframe(overdue_df.head(15), use_container_width=True, hide_index=True)
-    elif isinstance(overdue_df, pd.DataFrame):
-        st.success("✅ No tests are currently flagged as overdue.")
+    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty: st.markdown("###### **Critical Tests Performance Summary**"); st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    if isinstance(overdue_df, pd.DataFrame) and not overdue_df.empty: st.markdown("###### **Overdue Pending Tests (Top 15)**"); st.dataframe(overdue_df.head(15), use_container_width=True, hide_index=True)
+    elif isinstance(overdue_df, pd.DataFrame): st.success("✅ No tests are currently flagged as overdue.")
     display_processing_notes(testing_data.get("processing_notes", []))
 
 with tab_patient:
