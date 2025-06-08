@@ -25,22 +25,7 @@ class DataCleaner:
     Designed to be instantiated once and used across a data processing pipeline.
     """
     def clean_column_names(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Cleans DataFrame column names for consistency and usability.
-
-        Transformations:
-        - Converts to lowercase.
-        - Replaces non-alphanumeric characters with underscores.
-        - Collapses multiple underscores into one.
-        - Strips leading/trailing underscores.
-        - Appends a numeric suffix to de-duplicate column names.
-
-        Args:
-            df (pd.DataFrame): The input DataFrame.
-
-        Returns:
-            pd.DataFrame: A new DataFrame with cleaned column names.
-        """
+        """Cleans DataFrame column names for consistency and usability."""
         if not isinstance(df, pd.DataFrame):
             logger.error(f"clean_column_names expects a pandas DataFrame, got {type(df)}.")
             return pd.DataFrame()
@@ -48,14 +33,11 @@ class DataCleaner:
 
         df_cleaned = df.copy()
         try:
-            # Vectorized cleaning for performance
             new_cols = (df_cleaned.columns.astype(str).str.lower()
                         .str.replace(r'[^0-9a-zA-Z_]+', '_', regex=True)
                         .str.replace(r'_+', '_', regex=True).str.strip('_'))
-
             new_cols = [f"unnamed_col_{i}" if not name else name for i, name in enumerate(new_cols)]
-
-            # Use collections.Counter for efficient de-duplication
+            
             counts = Counter(new_cols)
             final_cols = []
             for i, name in enumerate(new_cols):
@@ -63,7 +45,6 @@ class DataCleaner:
                     final_cols.append(f"{name}_{new_cols[:i].count(name)}")
                 else:
                     final_cols.append(name)
-            
             df_cleaned.columns = final_cols
         except Exception as e:
             logger.error(f"Error cleaning column names: {e}", exc_info=True)
@@ -71,24 +52,12 @@ class DataCleaner:
         return df_cleaned
 
     def standardize_missing_values(self, df: pd.DataFrame, string_cols_defaults: Dict[str, str], numeric_cols_defaults: Dict[str, Any]) -> pd.DataFrame:
-        """
-        Standardizes missing values in specified columns using defaults and regex replacement.
-
-        Args:
-            df (pd.DataFrame): The input DataFrame.
-            string_cols_defaults (Dict[str, str]): A mapping of string columns to their default values.
-            numeric_cols_defaults (Dict[str, Any]): A mapping of numeric columns to their default values.
-
-        Returns:
-            pd.DataFrame: A new DataFrame with standardized missing values.
-        """
+        """Standardizes missing values in specified columns using defaults and regex replacement."""
         if not isinstance(df, pd.DataFrame): return df
         df_copy = df.copy()
-
         for col, default in string_cols_defaults.items():
             series = pd.Series(df_copy.get(col), dtype=object).replace(NA_REGEX_PATTERN, np.nan, regex=True)
             df_copy[col] = series.fillna(default).astype(str).str.strip()
-            
         for col, default in numeric_cols_defaults.items():
             target_type = int if isinstance(default, int) else float
             df_copy[col] = convert_to_numeric(df_copy.get(col), default_value=default, target_type=target_type)
@@ -96,35 +65,19 @@ class DataCleaner:
 
 
 def convert_to_numeric(data_input: Any, default_value: Any = np.nan, target_type: Optional[Type] = None) -> Any:
-    """
-    Robustly converts various inputs to a numeric pandas Series or scalar,
-    handling common "Not Available" string representations.
-
-    Args:
-        data_input (Any): The data to convert (can be a scalar, list, or pandas Series).
-        default_value (Any): The value to use for elements that cannot be converted. Defaults to np.nan.
-        target_type (Optional[Type]): If `int` or `float`, attempts to cast the result to this type.
-
-    Returns:
-        Any: The converted data in the same format as the input (scalar or Series).
-    """
+    """Robustly converts various inputs to a numeric pandas Series or scalar."""
     is_series = isinstance(data_input, pd.Series)
     series = data_input if is_series else pd.Series(data_input, dtype=object)
-
     if pd.api.types.is_object_dtype(series.dtype):
         series = series.replace(NA_REGEX_PATTERN, np.nan, regex=True)
-
     numeric_series = pd.to_numeric(series, errors='coerce')
     if not pd.isna(default_value):
         numeric_series = numeric_series.fillna(default_value)
-    
     if target_type is int and pd.api.types.is_numeric_dtype(numeric_series.dtype):
-        # Only convert to nullable Int64 if NaNs are present after filling the default.
         if numeric_series.isnull().any():
             numeric_series = numeric_series.astype(pd.Int64Dtype())
-        else: # Otherwise, convert to standard int.
+        else:
             numeric_series = numeric_series.astype(int)
-
     return numeric_series if is_series else (numeric_series.iloc[0] if not numeric_series.empty else default_value)
 
 
@@ -141,7 +94,6 @@ def robust_json_load(file_path: Union[str, Path]) -> Optional[Union[Dict, List]]
         logger.error(f"Error decoding JSON from {path_obj.resolve()}: {e}")
         return None
 
-
 def hash_dataframe_safe(df: Optional[pd.DataFrame]) -> Optional[str]:
     """Creates a consistent SHA256 hash for a DataFrame, suitable for caching."""
     if df is None: return None
@@ -150,9 +102,7 @@ def hash_dataframe_safe(df: Optional[pd.DataFrame]) -> Optional[str]:
     if df.empty:
         return hashlib.sha256(f"empty_df_cols:{'_'.join(sorted(df.columns))}".encode()).hexdigest()
     try:
-        # Sort columns before hashing for consistency.
         df_sorted = df.reindex(sorted(df.columns), axis=1)
-        # Use a more stable hashing method.
         return hashlib.sha256(pd.util.hash_pandas_object(df_sorted, index=True).values).hexdigest()
     except Exception as e:
         logger.warning(f"Standard DataFrame hashing failed: {e}. Falling back to a less precise hash.", exc_info=True)
