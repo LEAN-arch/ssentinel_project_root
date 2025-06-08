@@ -61,6 +61,7 @@ class ChartFactory:
     def create_bar_chart(self, df: pd.DataFrame, x: str, y: str, title: str, y_values_are_counts: bool, **px_kwargs) -> go.Figure:
         """Creates a standardized bar chart from a DataFrame."""
         color = px_kwargs.get('color')
+        orientation = px_kwargs.get('orientation', 'v')
         required_cols = [x, y]
         if color: required_cols.append(color)
 
@@ -71,24 +72,36 @@ class ChartFactory:
         
         try:
             y_title = px_kwargs.pop('y_axis_title', y.replace('_', ' ').title())
-            labels = {x: px_kwargs.pop('x_axis_title', x.replace('_', ' ').title()), y: y_title}
+            x_title = px_kwargs.pop('x_axis_title', x.replace('_', ' ').title())
+            labels = {x: x_title, y: y_title}
             
             fig = px.bar(df, x=x, y=y, title=f"<b>{html.escape(title)}</b>", labels=labels, text_auto=True, **px_kwargs)
             
-            if df[y].notna().any():
-                if px_kwargs.get('barmode') == 'stack': max_y = df.groupby(x)[y].sum().max()
-                else: max_y = df[y].max()
-                fig.update_yaxes(range=[0, max_y * 1.15])
+            # --- DEFINITIVE FIX FOR TypeError ---
+            # Correctly pad the value axis based on orientation.
+            value_col = x if orientation == 'h' else y
+            if df[value_col].notna().any():
+                if px_kwargs.get('barmode') == 'stack':
+                    group_col = y if orientation == 'h' else x
+                    max_val = df.groupby(group_col)[value_col].sum().max()
+                else:
+                    max_val = df[value_col].max()
+                
+                if orientation == 'h':
+                    fig.update_xaxes(range=[0, max_val * 1.15])
+                else:
+                    fig.update_yaxes(range=[0, max_val * 1.15])
             
             text_template = ',.0f' if y_values_are_counts else ',.2f'
-            hover_template = f'<b>%{{x}}</b><br>{html.escape(y_title)}: %{{y:{text_template}}}<extra></extra>'
+            hover_template = f'<b>%{{y}}</b><br>{html.escape(x_title)}: %{{x:{text_template}}}<extra></extra>' if orientation == 'h' else f'<b>%{{x}}</b><br>{html.escape(y_title)}: %{{y:{text_template}}}<extra></extra>'
             if color:
-                hover_template = f'<b>%{{x}}</b><br>{html.escape(color.replace("_", " ").title())}: %{{fullData.name}}<br>{html.escape(y_title)}: %{{y:{text_template}}}<extra></extra>'
+                 hover_template = f'<b>%{{y if orientation == "h" else x}}</b><br>{html.escape(color.replace("_", " ").title())}: %{{fullData.name}}<br>{html.escape(value_col.replace("_", " ").title())}: %{{x if orientation == "h" else y}}:{text_template}<extra></extra>'
             
-            fig.update_traces(textposition='outside', cliponaxis=False, hovertemplate=hover_template, texttemplate=f'%{{y:{text_template}}}')
+            fig.update_traces(textposition='outside', cliponaxis=False, hovertemplate=hover_template, texttemplate=f'%{{x if orientation == "h" else y}}:{text_template}')
             
             if y_values_are_counts:
-                fig.update_yaxes(tickformat='d')
+                if orientation == 'h': fig.update_xaxes(tickformat='d')
+                else: fig.update_yaxes(tickformat='d')
 
             return self._apply_layout(fig, legend_title_text=color.replace("_", " ").title() if color else "")
         except Exception as e:
@@ -96,8 +109,7 @@ class ChartFactory:
             return self.create_empty_figure(title, "Error generating chart")
 
     def create_donut_chart(self, df: pd.DataFrame, labels: str, values: str, title: str) -> go.Figure:
-        if not all(c in df.columns for c in [labels, values]):
-            return self.create_empty_figure(title, "Missing required data columns.")
+        if not all(c in df.columns for c in [labels, values]): return self.create_empty_figure(title, "Missing required data columns.")
         try:
             fig = px.pie(df, names=labels, values=values, title=f"<b>{html.escape(title)}</b>", hole=0.4, color_discrete_sequence=get_theme_color(None, category='categorical_sequence'))
             fig.update_traces(textinfo='percent', hoverinfo='label+percent+value')
@@ -129,23 +141,19 @@ class ChartFactory:
 _factory = ChartFactory(theme=sentinel_theme)
 
 def create_empty_figure(title: str, message: str = "No data available") -> go.Figure:
-    """Public factory function to create a themed empty figure with a title."""
     return _factory.create_empty_figure(title, message)
 
 def plot_bar_chart(df_input: pd.DataFrame, x_col: str, y_col: str, title: str, y_values_are_counts: bool = False, **kwargs: Any) -> go.Figure:
-    """Creates a standardized, theme-aware bar chart."""
     if not isinstance(df_input, pd.DataFrame) or df_input.empty:
         return create_empty_figure(title, f"No data for '{title}'")
     return _factory.create_bar_chart(df_input, x_col, y_col, title, y_values_are_counts=y_values_are_counts, **kwargs)
 
 def plot_donut_chart(df_input: pd.DataFrame, labels_col: str, values_col: str, title: str) -> go.Figure:
-    """Creates a standardized, theme-aware donut chart."""
     if not isinstance(df_input, pd.DataFrame) or df_input.empty:
         return create_empty_figure(title, f"No data for '{title}'")
     return _factory.create_donut_chart(df_input, labels_col, values_col, title)
 
 def plot_annotated_line_chart(series_input: pd.Series, title: str, y_axis_title: str) -> go.Figure:
-    """Creates a standardized, theme-aware line chart with annotations for min/max values."""
     if not isinstance(series_input, pd.Series) or series_input.empty:
         return create_empty_figure(title, f"No data for '{title}'")
     return _factory.create_annotated_line_chart(series_input, title, y_axis_title)
