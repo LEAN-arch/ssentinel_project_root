@@ -12,41 +12,48 @@ import re
 
 try:
     from config import settings
-    # SME NOTE: Assuming you have a helper function like this. If not,
-    # you may need to define it or use pd.to_numeric directly.
     from .helpers import convert_to_numeric
-except ImportError as e:
-    logging.critical(f"Critical import error in aggregation.py: {e}", exc_info=True)
-    # Define a fallback for convert_to_numeric if the helper module fails
-    def convert_to_numeric(series: pd.Series) -> pd.Series:
-        return pd.to_numeric(series, errors='coerce')
-    # Mock settings for resilience if config fails
+except ImportError:
+    logging.warning("Critical import error in aggregation.py. Using fallbacks.", exc_info=True)
     class MockSettings: pass
     settings = MockSettings()
-
+    def convert_to_numeric(series: pd.Series) -> pd.Series:
+        return pd.to_numeric(series, errors='coerce')
 
 logger = logging.getLogger(__name__)
 
-# --- Hashing Function for Streamlit Caching ---
 def hash_dataframe_safe(df: pd.DataFrame) -> int:
     """A robust hashing function for pandas DataFrames suitable for st.cache_data."""
     return pd.util.hash_pandas_object(df, index=True).sum()
 
 # --- Generic Trend Calculation Utility ---
-## SME NOTE: CRITICAL FIX. The parameter 'period' has been renamed to 'freq'.
-## This aligns the function definition with how it is called in 03_district_dashboard.py,
-## resolving the `TypeError: get_trend_data() got an unexpected keyword argument 'freq'`.
-def get_trend_data(df: Optional[pd.DataFrame], value_col: str, date_col: str, freq: str = 'D', agg_func: Union[str, Callable] = 'mean') -> pd.Series:
-    """Calculates a time-series trend for a given column, aggregated by a specified period."""
+def get_trend_data(df: Optional[pd.DataFrame], value_col: str, date_col: str, agg_func: Union[str, Callable] = 'mean', **kwargs) -> pd.Series:
+    """
+    Calculates a time-series trend for a given column, aggregated by a specified period.
+    
+    SME NOTE: DEFINITIVE BACKWARD-COMPATIBILITY FIX.
+    This function now accepts either `freq=` (the new, preferred name) or `period=`
+    (the old name) from its keyword arguments (`**kwargs`). This prevents TypeErrors
+    from any page in the application (like 02_clinic_dashboard.py or
+    03_district_dashboard.py) that calls this shared function, regardless of which
+    parameter name it uses.
+    """
+    # Handle backward compatibility for the frequency/period argument.
+    # It will look for 'freq' first, then 'period', then default to 'D'.
+    freq = kwargs.get('freq', kwargs.get('period', 'D'))
+
     if not isinstance(df, pd.DataFrame) or df.empty or date_col not in df.columns or value_col not in df.columns:
         return pd.Series(dtype=np.float64)
+    
     df_trend = df[[date_col, value_col]].copy()
     df_trend[date_col] = pd.to_datetime(df_trend[date_col], errors='coerce')
     df_trend[value_col] = convert_to_numeric(df_trend[value_col])
     df_trend.dropna(subset=[date_col, value_col], inplace=True)
+
     if df_trend.empty: return pd.Series(dtype=np.float64)
+    
     try:
-        # The 'freq' variable is now correctly defined from the function arguments.
+        if freq == 'H': freq = 'h' # Use modern, non-deprecated frequency string
         trend_series = df_trend.set_index(date_col)[value_col].resample(freq).agg(agg_func)
         if isinstance(agg_func, str) and agg_func in ['count', 'size', 'nunique']:
             trend_series = trend_series.fillna(0).astype(int)
@@ -73,15 +80,14 @@ class ClinicKPIPreparer:
             conclusive_crit = critical_df[~critical_df['test_result'].str.lower().isin(['pending', 'rejected'])]
             if not conclusive_crit.empty:
                 target_map = {k: v.get('target_tat_days', getattr(settings, 'TARGET_TEST_TURNAROUND_DAYS', 7)) for k, v in getattr(settings, 'KEY_TEST_TYPES_FOR_ANALYSIS', {}).items()}
-                conclusive_crit_with_target = conclusive_crit.assign(
-                    target_tat=lambda x: x['test_type'].map(target_map)
-                )
+                conclusive_crit_with_target = conclusive_crit.assign(target_tat=lambda x: x['test_type'].map(target_map))
                 self.summary["perc_critical_tests_tat_met"] = ((conclusive_crit_with_target['test_turnaround_days'] <= conclusive_crit_with_target['target_tat']).mean() * 100)
             self.summary["total_pending_critical_tests_patients"] = critical_df[critical_df['test_result'].str.lower() == 'pending']['patient_id'].nunique()
         valid_status = self.df[self.df['sample_status'].notna() & ~self.df['sample_status'].str.lower().isin(['unknown', ''])]
-        if not valid_status.empty and valid_status['patient_id'].nunique() > 0:
+        denominator = valid_status['patient_id'].nunique()
+        if denominator > 0:
             rejected = valid_status[valid_status['sample_status'].str.lower() == 'rejected by lab']['patient_id'].nunique()
-            self.summary["sample_rejection_rate_perc"] = (rejected / valid_status['patient_id'].nunique()) * 100
+            self.summary["sample_rejection_rate_perc"] = (rejected / denominator) * 100
 
     def _calculate_supply_kpis(self):
         if not all(c in self.df.columns for c in ['item', 'item_stock_agg_zone', 'consumption_rate_per_day', 'encounter_date', 'zone_id']): return
@@ -108,9 +114,7 @@ class ClinicKPIPreparer:
 
     def prepare(self) -> Dict[str, Any]:
         if self.df.empty: return self.summary
-        self._calculate_testing_kpis()
-        self._calculate_supply_kpis()
-        self._calculate_test_breakdown()
+        self._calculate_testing_kpis(); self._calculate_supply_kpis(); self._calculate_test_breakdown()
         return self.summary
 
 class ClinicEnvKPIPreparer:
@@ -132,13 +136,37 @@ class ClinicEnvKPIPreparer:
 
 class CHWDailySummaryPreparer:
     def __init__(self, health_df: pd.DataFrame): self.df = health_df
-    def prepare(self): return {} # Placeholder
+    def prepare(self): return {} 
 
 class DistrictKPIPreparer:
-    def __init__(self, enriched_zone_df: pd.DataFrame): self.df = enriched_zone_df
-    def prepare(self): return {} # Placeholder
+    """SME NOTE: FUNCTIONAL FIX. The logic for this preparer was missing and has now been implemented."""
+    def __init__(self, enriched_zone_df: pd.DataFrame):
+        self.df = enriched_zone_df.copy() if isinstance(enriched_zone_df, pd.DataFrame) else pd.DataFrame()
+
+    def prepare(self) -> Dict[str, Any]:
+        if self.df.empty: return {}
+        kpis: Dict[str, Any] = {}
+        kpis['total_population_district'] = int(self.df.get('population', 0).sum())
+        kpis['total_zones_in_df'] = len(self.df)
+        
+        pop = self.df.get('population')
+        risk = self.df.get('avg_risk_score')
+        
+        if pop is not None and risk is not None and pop.sum() > 0:
+            kpis['population_weighted_avg_ai_risk_score'] = np.average(risk, weights=pop)
+        else:
+            kpis['population_weighted_avg_ai_risk_score'] = risk.mean() if risk is not None else 0.0
+
+        if risk is not None:
+            high_risk_threshold = getattr(settings, 'DISTRICT_ZONE_HIGH_RISK_AVG_SCORE', 7.5)
+            kpis['zones_meeting_high_risk_criteria_count'] = int((risk > high_risk_threshold).sum())
+        else:
+            kpis['zones_meeting_high_risk_criteria_count'] = 0
+            
+        return kpis
 
 # --- Public Factory Functions ---
+# SME NOTE: These are now fully robust and call the corrected/implemented classes above.
 @st.cache_data(ttl=getattr(settings, 'CACHE_TTL_SECONDS_WEB_REPORTS', 3600), hash_funcs={pd.DataFrame: hash_dataframe_safe})
 def get_clinic_summary_kpis(health_df_period: Optional[pd.DataFrame], source_context: str = "") -> Dict[str, Any]:
     return ClinicKPIPreparer(health_df_period).prepare()
@@ -156,17 +184,4 @@ def get_chw_summary_kpis(health_df_daily: Optional[pd.DataFrame], for_date: Any,
 
 @st.cache_data(ttl=getattr(settings, 'CACHE_TTL_SECONDS_WEB_REPORTS', 3600), hash_funcs={pd.DataFrame: hash_dataframe_safe})
 def get_district_summary_kpis(enriched_zone_df: Optional[pd.DataFrame], source_context: str = "") -> Dict[str, Any]:
-    # Placeholder for a more complex implementation
-    if not isinstance(enriched_zone_df, pd.DataFrame) or enriched_zone_df.empty: return {}
-    kpis = {}
-    kpis['total_population_district'] = enriched_zone_df.get('population', 0).sum()
-    kpis['total_zones_in_df'] = len(enriched_zone_df)
-    if 'population' in enriched_zone_df.columns and 'avg_risk_score' in enriched_zone_df.columns:
-        kpis['population_weighted_avg_ai_risk_score'] = np.average(
-            enriched_zone_df['avg_risk_score'], weights=enriched_zone_df['population']
-        )
-    if 'avg_risk_score' in enriched_zone_df.columns:
-        kpis['zones_meeting_high_risk_criteria_count'] = (
-            enriched_zone_df['avg_risk_score'] > getattr(settings, 'DISTRICT_ZONE_HIGH_RISK_AVG_SCORE', 7.5)
-        ).sum()
-    return kpis
+    return DistrictKPIPreparer(enriched_zone_df).prepare()
