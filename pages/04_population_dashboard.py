@@ -141,23 +141,16 @@ def run_dashboard():
     kpi_cols[3].metric("Top Condition by Avg. Risk", top_risk_condition)
     st.divider()
 
-    tab1, tab2, tab3 = st.tabs(["📈 Epidemiological Overview", "🚨 Population Risk Stratification", "🧑‍🤝‍🧑 Demographic Insights"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 Epidemiological Overview", "🚨 Population Risk Stratification", "🗺️ Geospatial Analysis", "🧑‍🤝‍🧑 Demographic Insights"])
 
     with tab1:
+        st.header("Epidemiological Overview")
         st.subheader("Encounter Trends")
         df_trend = df_filtered.set_index('encounter_date').resample(C.TIME_AGG_PERIOD).size()
         st.plotly_chart(plot_annotated_line_chart(df_trend, "Weekly Encounters Trend", "Encounters"), use_container_width=True)
-        st.subheader("Top Conditions by Volume & Severity")
-        col1, col2 = st.columns(2)
-        with col1:
-            top_by_count = cond_analytics.sort_values('count', ascending=False).head(C.TOP_N_CONDITIONS)
-            st.plotly_chart(plot_bar_chart(top_by_count, x_col='count', y_col='condition', orientation='h', title="Most Frequent Conditions", x_axis_title='Number of Encounters', y_values_are_counts=True), use_container_width=True)
-        with col2:
-            top_by_risk = cond_analytics.sort_values('avg_risk_score', ascending=False).head(C.TOP_N_CONDITIONS)
-            st.plotly_chart(plot_bar_chart(top_by_risk, x_col='avg_risk_score', y_col='condition', orientation='h', title="Highest-Risk Conditions", x_axis_title='Average AI Risk Score', range_x=[0,100]), use_container_width=True)
     
     with tab2:
-        st.subheader("Population Risk Stratification")
+        st.header("Population Risk Stratification")
         risk_data = get_risk_stratification_data(df_filtered)
         pyramid_data, trend_data = risk_data.get('pyramid_data'), risk_data.get('trend_data')
         col1, col2 = st.columns([1, 2])
@@ -171,29 +164,50 @@ def run_dashboard():
                 fig_trend = px.area(trend_data, x='encounter_date', y='patient_id', color='risk_tier', title="Risk Tier Trends (Weekly)", labels={'patient_id': 'Unique Patients'}, category_orders={"risk_tier": ["Low Risk", "Moderate Risk", "High Risk"]})
                 st.plotly_chart(fig_trend, use_container_width=True)
 
+    # --- DEFINITIVE FIX: Geospatial Tab Restored ---
     with tab3:
-        st.subheader("Demographic Insights")
+        st.header("Geospatial Analysis")
+        if zone_attr_main is not None and not zone_attr_main.empty and 'geometry_obj' in zone_attr_main.columns:
+            st.info("This map shows metrics aggregated by zone for the filtered data.")
+            geo_agg = df_filtered.groupby('zone_id').agg(
+                avg_risk_score=('ai_risk_score', 'mean'),
+                unique_patients=('patient_id', 'nunique')
+            ).reset_index()
+            map_df = pd.merge(zone_attr_main, geo_agg, on='zone_id', how='left').fillna(0)
+            
+            map_df['prevalence_per_1000'] = (map_df['unique_patients'] / map_df['population'] * 1000).where(map_df['population'] > 0, 0)
+            
+            geojson_data = {
+                "type": "FeatureCollection",
+                "features": [
+                    {"type": "Feature", "geometry": row['geometry_obj'], "id": str(row['zone_id']), 
+                     "properties": {"name": row['name'], "avg_risk_score": row['avg_risk_score'], "prevalence_per_1000": row['prevalence_per_1000']}}
+                    for _, row in map_df.iterrows()
+                ]
+            }
+
+            map_metric = st.selectbox("Select Map Metric:", ["Prevalence per 1,000", "Average AI Risk Score"])
+            color_metric = 'prevalence_per_1000' if map_metric == "Prevalence per 1,000" else 'avg_risk_score'
+            
+            fig = px.choropleth_mapbox(map_df, geojson=geojson_data, locations="zone_id", color=color_metric,
+                                       mapbox_style="carto-positron", zoom=8, center={"lat": -1.28, "lon": 36.81},
+                                       opacity=0.6, hover_name="name",
+                                       hover_data={"avg_risk_score": ":.2f", "prevalence_per_1000": ":.2f"},
+                                       labels={color_metric: map_metric})
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Geospatial data is unavailable. Cannot render map.")
+    
+    with tab4:
+        st.header("Demographic Insights")
         df_unique = df_filtered.drop_duplicates(subset=['patient_id'])
         col1, col2 = st.columns(2)
         with col1:
             if not df_unique['age'].dropna().empty:
-                # Using st.bar_chart for simple histograms is effective and ensures integer counts
-                age_counts = np.histogram(df_unique['age'].dropna(), bins=np.arange(0, df_unique['age'].max() + 10, 5))
-                age_hist_df = pd.DataFrame({'Age Bracket': [f"{int(age_counts[1][i])}-{int(age_counts[1][i+1]-1)}" for i in range(len(age_counts[0]))], 'Number of Patients': age_counts[0]})
-                st.bar_chart(age_hist_df.set_index('Age Bracket'))
+                st.plotly_chart(px.histogram(df_unique, x='age', nbins=20, title="Age Distribution"), use_container_width=True)
         with col2:
             if not df_unique['gender'].dropna().empty:
-                st.plotly_chart(px.pie(df_unique, names='gender', title="Gender Distribution (Unique Patients)"), use_container_width=True)
-        
-        st.subheader("Risk by Demographics")
-        if not df_unique.empty:
-             df_unique['age_band'] = pd.cut(df_unique['age'], bins=[0, 18, 40, 60, 120], labels=['0-18', '19-40', '41-60', '60+'])
-             risk_by_demo = df_unique.groupby(['age_band', 'gender'])['ai_risk_score'].mean().reset_index()
-             if not risk_by_demo.empty:
-                # --- DEFINITIVE FIX FOR AXIS FORMATTING ---
-                # This chart shows an average, so decimals are appropriate here. No change needed.
-                fig = plot_bar_chart(risk_by_demo, x_col='age_band', y_col='ai_risk_score', color='gender', barmode='group', title="Average AI Risk Score by Age and Gender", labels={'ai_risk_score': 'Avg. AI Risk Score'})
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(px.pie(df_unique, names='gender', title="Gender Distribution"), use_container_width=True)
 
 if __name__ == "__main__":
     run_dashboard()
