@@ -2,11 +2,7 @@
 """
 Initializes the visualization package, making key functions and classes
 available at the top level for easier, cleaner imports in other modules.
-
-This file defines the public API of the visualization package.
 """
-
-# --- Import functions from submodules to expose them publicly ---
 
 # From plots.py
 from .plots import (
