@@ -1,5 +1,4 @@
 # sentinel_project_root/pages/02_clinic_dashboard.py
-# Clinic Operations & Management Console for Sentinel Health Co-Pilot.
 # Definitive, functional, and self-contained version with advanced visualizations.
 
 import streamlit as st
@@ -11,7 +10,6 @@ from typing import Dict, Any, Tuple, List, Optional
 import os
 import plotly.graph_objects as go
 
-# --- Page Specific Logger ---
 logger = logging.getLogger(__name__)
 
 # --- Sentinel System Imports ---
@@ -29,26 +27,14 @@ except ImportError as e:
 
 
 # --- Self-Contained Data Science & Visualization Logic ---
-
 def create_sparkline_bytes(data: pd.Series, color: str) -> Optional[bytes]:
     """Creates a sparkline and returns it as PNG bytes to embed in a DataFrame."""
-    if data is None or data.empty or data.isna().all():
-        return None
-    
+    if data is None or data.empty or data.isna().all(): return None
     fig = go.Figure(go.Scatter(x=data.index, y=data, mode='lines', line=dict(color=color, width=2.5)))
-    fig.update_layout(
-        width=150, height=50,
-        margin=dict(l=0, r=0, t=5, b=5),
-        xaxis=dict(visible=False, showticklabels=False),
-        yaxis=dict(visible=False, showticklabels=False),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)'
-    )
-    try:
-        return fig.to_image(format="png", engine="kaleido")
+    fig.update_layout(width=150, height=50, margin=dict(l=0, r=0, t=5, b=5), xaxis=dict(visible=False), yaxis=dict(visible=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    try: return fig.to_image(format="png", engine="kaleido")
     except Exception as e:
-        logger.warning(f"Could not generate sparkline image. Is 'kaleido' installed? Error: {e}")
-        return None
+        logger.warning(f"Could not generate sparkline image. Is 'kaleido' installed? Error: {e}"); return None
 
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS)
 def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: date) -> pd.DataFrame:
@@ -59,45 +45,22 @@ def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: da
     prev_start_date = start_date - timedelta(days=period_days)
     previous_period_df = full_df[full_df['encounter_date'].dt.date.between(prev_start_date, start_date - timedelta(days=1))]
     
-    kpi_current = get_clinic_summary_kpis(current_period_df) if not current_period_df.empty else {}
-    kpi_previous = get_clinic_summary_kpis(previous_period_df) if not previous_period_df.empty else {}
+    kpi_current, kpi_previous = get_clinic_summary_kpis(current_period_df), get_clinic_summary_kpis(previous_period_df)
     
-    kpi_defs = {
-        "Avg. Test TAT (Days)": ("overall_avg_test_turnaround_conclusive_days", 'test_turnaround_days', 'lower_is_better'),
-        "Sample Rejection (%)": ("sample_rejection_rate_perc", 'sample_rejection_rate_perc', 'lower_is_better'),
-        "Pending Critical Tests": ("total_pending_critical_tests_patients", 'total_pending_critical_tests_patients', 'lower_is_better'),
-        "Key Drug Stockouts": ("key_drug_stockouts_count", 'key_drug_stockouts_count', 'lower_is_better'),
-    }
+    kpi_defs = {"Avg. Test TAT (Days)": "overall_avg_test_turnaround_conclusive_days", "Sample Rejection (%)": "sample_rejection_rate_perc", "Pending Critical Tests": "total_pending_critical_tests_patients", "Key Drug Stockouts": "key_drug_stockouts_count"}
     
     analysis_data = []
     trend_start_date = end_date - timedelta(days=90)
     trend_df = full_df[full_df['encounter_date'].dt.date.between(trend_start_date, end_date)]
     
-    for name, (key, trend_key, trend_logic) in kpi_defs.items():
-        current_val = kpi_current.get(key)
-        prev_val = kpi_previous.get(key)
+    for name, key in kpi_defs.items():
+        current_val, prev_val = kpi_current.get(key), kpi_previous.get(key)
+        trend_series = get_trend_data(trend_df, value_col=key, period='W-MON') if not trend_df.empty and key in trend_df.columns else pd.Series()
+        change_str = "N/A"
+        if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0: change_str = f"{((current_val - prev_val) / prev_val) * 100:+.1f}%"
         
-        trend_series = pd.Series()
-        if not trend_df.empty and trend_key in trend_df.columns:
-            trend_series = get_trend_data(trend_df, value_col=trend_key, period='W-MON')
-        
-        change_str, delta_color = "N/A", "gray"
-        if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
-            change = ((current_val - prev_val) / prev_val) * 100
-            change_str = f"{change:+.1f}%"
-            if trend_logic == 'lower_is_better': delta_color = "red" if change > 0 else "green"
-            else: delta_color = "green" if change > 0 else "red"
-        
-        analysis_data.append({
-            "Metric": str(name),
-            "Current Period": f"{current_val:.1f}" if isinstance(current_val, (float, np.floating)) and pd.notna(current_val) else str(current_val if pd.notna(current_val) else 'N/A'),
-            "Previous Period": f"{prev_val:.1f}" if isinstance(prev_val, (float, np.floating)) and pd.notna(prev_val) else str(prev_val if pd.notna(prev_val) else 'N/A'),
-            "Change": f'<p style="color:{delta_color}; margin:0; font-weight:bold;">{change_str}</p>',
-            "90-Day Trend": create_sparkline_bytes(trend_series, "#007BFF")
-        })
-        
+        analysis_data.append({"Metric": name, "Current Period": current_val, "Previous Period": prev_val, "Change (%)": change_str, "90-Day Trend": create_sparkline_bytes(trend_series, "#007BFF")})
     return pd.DataFrame(analysis_data)
-
 
 # --- Page Title & Setup ---
 st.title(f"🏥 {settings.APP_NAME} - Clinic Operations & Management Console")
@@ -107,8 +70,7 @@ st.divider()
 # --- Data Loading ---
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, show_spinner="Loading and processing all operational data...")
 def get_dashboard_data() -> Tuple[pd.DataFrame, pd.DataFrame, bool, date, date]:
-    health_df = load_health_records()
-    iot_df = load_iot_clinic_environment_data()
+    health_df = load_health_records(); iot_df = load_iot_clinic_environment_data()
     iot_available = isinstance(iot_df, pd.DataFrame) and not iot_df.empty
     min_date, max_date = date.today() - timedelta(days=365), date.today()
     if not health_df.empty and 'encounter_date' in health_df.columns:
@@ -142,7 +104,11 @@ st.info(f"**Displaying Clinic Console for:** `{period_str}`")
 st.header("🚀 Performance Snapshot with Trend Analysis")
 if not period_health_df.empty:
     kpi_analysis_df = get_kpi_analysis_table(full_health_df, start_date, end_date)
-    st.write(kpi_analysis_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+    # --- DEFINITIVE FIX for InvalidCharacterError ---
+    # Use st.dataframe with ImageColumn, which is now possible with the 'kaleido' package.
+    st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True,
+                 column_config={"90-Day Trend": st.column_config.ImageColumn(width="medium"),
+                                "Change (%)": st.column_config.TextColumn(help="Change vs. previous period")})
 else:
     st.info("No data available for this period to generate KPI analysis.")
 st.divider()
