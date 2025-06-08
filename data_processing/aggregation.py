@@ -64,10 +64,10 @@ class ClinicKPIPreparer:
             if not conclusive_crit.empty:
                 target_map = {k: v.get('target_tat_days', settings.TARGET_TEST_TURNAROUND_DAYS) for k, v in settings.KEY_TEST_TYPES_FOR_ANALYSIS.items()}
 
-                ## SME Note: ROBUSTNESS FIX. The original code `conclusive_crit['target_tat'] = ...`
+                ## SME Note: ROBUSTNESS FIX 1. The original code `conclusive_crit['target_tat'] = ...`
                 ## would cause a SettingWithCopyWarning because `conclusive_crit` is a slice.
                 ## Using `.assign()` creates a new, safe DataFrame with the new column, eliminating the warning
-                ## and ensuring the calculation is reliable.
+                ## and ensuring the calculation is reliable and predictable.
                 conclusive_crit_with_target = conclusive_crit.assign(
                     target_tat=lambda x: x['test_type'].map(target_map)
                 )
@@ -86,14 +86,17 @@ class ClinicKPIPreparer:
     def _calculate_supply_kpis(self):
         if not all(c in self.df.columns for c in ['item', 'item_stock_agg_zone', 'consumption_rate_per_day', 'encounter_date', 'zone_id']): return
 
-        ## SME Note: ROBUSTNESS FIX. Added `.copy()` here. While `drop_duplicates` often returns a copy,
-        ## explicitly adding `.copy()` guarantees it and makes the code's intent clear, preventing
-        ## any future SettingWithCopyWarning on the subsequent assignments to `latest`.
+        # Using .copy() guarantees 'latest' is a new DataFrame, preventing any potential SettingWithCopyWarning.
         latest = self.df.sort_values('encounter_date').drop_duplicates(subset=['item', 'zone_id'], keep='last').copy()
 
         latest['consumption_rate_per_day'] = latest['consumption_rate_per_day'].replace(0, 0.001)
         latest['days_of_supply'] = latest['item_stock_agg_zone'] / latest['consumption_rate_per_day']
+
+        ## SME Note: ROBUSTNESS FIX 2. Used `re.escape` on each substring. This prevents errors or incorrect
+        ## matching if a drug name in settings contains a special regex character (e.g., "Drug (XR)", "Vitamin C+").
+        ## This makes the function resilient to a wider range of data inputs.
         key_drugs_pattern = '|'.join(map(re.escape, settings.KEY_DRUG_SUBSTRINGS_SUPPLY))
+
         key_drugs_stock_df = latest[latest['item'].str.contains(key_drugs_pattern, case=False, na=False)]
         if not key_drugs_stock_df.empty:
             self.summary["key_drug_stockouts_count"] = key_drugs_stock_df[key_drugs_stock_df['days_of_supply'] < settings.CRITICAL_SUPPLY_DAYS_REMAINING]['item'].nunique()
