@@ -14,11 +14,16 @@ except ImportError as e:
     logger_init = logging.getLogger(__name__)
     logger_init.critical(f"Critical import error in kpi_structuring.py: {e}. Using fallback settings.", exc_info=True)
     
+    # A fallback class in case the main settings file fails, ensuring the module is still importable.
     class FallbackSettings:
-        TARGET_TEST_TURNAROUND_DAYS = 2.0; TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY = 85.0
-        TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY = 5.0; KEY_TEST_TYPES_FOR_ANALYSIS = {}
-        TARGET_MALARIA_POSITIVITY_RATE = 10.0; CRITICAL_SUPPLY_DAYS_REMAINING = 7
-        TARGET_PENDING_CRITICAL_TESTS = 0; TARGET_DRUG_STOCKOUTS = 0
+        TARGET_TEST_TURNAROUND_DAYS = 2.0
+        TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY = 85.0
+        TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY = 5.0
+        KEY_TEST_TYPES_FOR_ANALYSIS = {}
+        TARGET_MALARIA_POSITIVITY_RATE = 10.0
+        CRITICAL_SUPPLY_DAYS_REMAINING = 7
+        TARGET_PENDING_CRITICAL_TESTS = 0
+        TARGET_DRUG_STOCKOUTS = 0
     settings = FallbackSettings()
 
 logger = logging.getLogger(__name__)
