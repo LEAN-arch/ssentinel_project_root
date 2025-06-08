@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 try:
     from config import settings
     from data_processing.loaders import load_health_records, load_iot_clinic_environment_data
-    from data_processing.aggregation import get_clinic_summary_kpis, get_trend_data
+    from data_processing.aggregation import get_clinic_summary_kpis, get_clinic_environmental_summary_kpis
     from analytics.orchestrator import apply_ai_models
     from analytics.supply_forecasting import generate_simple_supply_forecast
     from analytics.alerting import get_patient_alerts_for_clinic
@@ -29,31 +29,9 @@ except ImportError as e:
 
 
 # --- Self-Contained Data Science & Visualization Logic ---
-
-def create_sparkline_bytes(data: pd.Series, color: str) -> Optional[bytes]:
-    """Creates a sparkline and returns it as PNG bytes to embed in a DataFrame."""
-    if data is None or data.empty or data.isna().all():
-        return None
-    
-    fig = go.Figure(go.Scatter(x=data.index, y=data, mode='lines', line=dict(color=color, width=2.5)))
-    fig.update_layout(
-        width=150, height=50,
-        margin=dict(l=0, r=0, t=5, b=5),
-        xaxis=dict(visible=False, showticklabels=False),
-        yaxis=dict(visible=False, showticklabels=False),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)'
-    )
-    try:
-        # Use kaleido engine to convert plot to image bytes
-        return fig.to_image(format="png", engine="kaleido")
-    except Exception as e:
-        logger.warning(f"Could not generate sparkline image. Is 'kaleido' installed? Error: {e}")
-        return None
-
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS)
 def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: date) -> pd.DataFrame:
-    """Performs a period-over-period KPI analysis and generates sparklines."""
+    """Performs a period-over-period KPI analysis."""
     current_period_df = full_df[full_df['encounter_date'].dt.date.between(start_date, end_date)]
     period_days = (end_date - start_date).days + 1
     if period_days <= 0: period_days = 1
@@ -71,18 +49,9 @@ def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: da
     }
     
     analysis_data = []
-    trend_start_date = end_date - timedelta(days=90)
-    trend_df = full_df[full_df['encounter_date'].dt.date.between(trend_start_date, end_date)]
-    
     for name, (key, trend_logic) in kpi_defs.items():
         current_val = kpi_current.get(key)
         prev_val = kpi_previous.get(key)
-        
-        trend_series = pd.Series()
-        # The key for trend data might be different from the KPI key (e.g., without _perc)
-        trend_key = key.replace("_perc", "").replace("_days", "")
-        if not trend_df.empty and trend_key in trend_df.columns:
-            trend_series = get_trend_data(trend_df, value_col=trend_key, period='W-MON')
         
         change_str, delta_color = "N/A", "gray"
         if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
@@ -96,11 +65,8 @@ def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: da
             "Current Period": f"{current_val:.1f}" if isinstance(current_val, (float, np.floating)) and pd.notna(current_val) else str(current_val if pd.notna(current_val) else 'N/A'),
             "Previous Period": f"{prev_val:.1f}" if isinstance(prev_val, (float, np.floating)) and pd.notna(prev_val) else str(prev_val if pd.notna(prev_val) else 'N/A'),
             "Change": f'<p style="color:{delta_color}; margin:0; font-weight:bold;">{change_str}</p>',
-            "90-Day Trend": create_sparkline_bytes(trend_series, "#007BFF")
         })
-        
     return pd.DataFrame(analysis_data)
-
 
 # --- Page Title & Setup ---
 st.title(f"🏥 {settings.APP_NAME} - Clinic Operations & Management Console")
@@ -168,8 +134,6 @@ with tab1:
         if not symptom_weekly.empty:
             fig = plot_bar_chart(symptom_weekly, x_col='encounter_date', y_col='count', color='symptom', title='Weekly Encounters for Top 5 Symptoms', x_axis_title='Week', y_axis_title='Number of Encounters', y_values_are_counts=True)
             st.plotly_chart(fig, use_container_width=True)
-            with st.expander("View Symptom Data Table"): st.dataframe(symptom_weekly, hide_index=True, use_container_width=True)
-        else: st.info("No significant symptom data to plot for this period.")
 
 with tab2:
     st.subheader("Testing & Diagnostics Performance")
@@ -199,12 +163,7 @@ with tab3:
     forecastable_items = sorted([item for item in full_health_df['item'].dropna().unique() if any(sub in item for sub in getattr(settings, 'KEY_DRUG_SUBSTRINGS_SUPPLY', []))])
     if not forecastable_items: st.info("No forecastable supply items found in the data.")
     else:
-        with st.spinner("Checking current stock levels..."):
-            latest_stock = full_health_df.sort_values('encounter_date').drop_duplicates('item', keep='last')
-            latest_stock['days_of_supply'] = latest_stock['item_stock_agg_zone'] / latest_stock['consumption_rate_per_day'].clip(lower=0.001)
-            short_supply_items = latest_stock[latest_stock['days_of_supply'] < settings.LOW_SUPPLY_DAYS_REMAINING]['item'].tolist()
-
-        selected_items = st.multiselect("Select items to forecast (items in short supply are pre-selected):", options=forecastable_items, default=short_supply_items)
+        selected_items = st.multiselect("Select items to forecast:", options=forecastable_items, default=forecastable_items[:3])
         if selected_items:
             with st.spinner(f"Generating forecasts for selected items..."):
                 forecast_df = generate_simple_supply_forecast(full_health_df, item_filter=selected_items)
@@ -215,7 +174,7 @@ with tab3:
                     fig.add_trace(go.Scatter(x=item_data['forecast_date'], y=item_data['forecasted_days_of_supply'], mode='lines+markers', name=item))
                 fig.add_hrect(y0=0, y1=settings.CRITICAL_SUPPLY_DAYS_REMAINING, fillcolor="red", opacity=0.1, line_width=0, annotation_text="Critical")
                 fig.add_hrect(y0=settings.CRITICAL_SUPPLY_DAYS_REMAINING, y1=settings.LOW_SUPPLY_DAYS_REMAINING, fillcolor="orange", opacity=0.1, line_width=0, annotation_text="Warning")
-                fig.update_layout(title_text="<b>Forecasted Days of Supply for Critical Items</b>", xaxis_title="Date", yaxis_title="Days of Supply Remaining", legend_title="Item", yaxis_tickformat='d')
+                fig.update_layout(title_text="<b>Forecasted Days of Supply</b>", xaxis_title="Date", yaxis_title="Days of Supply Remaining", legend_title="Item", yaxis_tickformat='d')
                 st.plotly_chart(fig, use_container_width=True)
             else: st.warning("Could not generate supply forecast.")
 
@@ -241,37 +200,16 @@ with tab5:
     st.subheader("Facility Environment Monitoring")
     if period_iot_df.empty: st.info("No environmental data for this period.")
     else:
-        cols = st.columns(2)
-        with cols[0]:
-            st.markdown("###### **Hourly Average CO2 Levels**")
-            co2_trend = get_trend_data(period_iot_df, 'avg_co2_ppm', date_col='timestamp', period='h')
-            if not co2_trend.empty:
-                fig = plot_annotated_line_chart(co2_trend, "", y_axis_title="CO2 (ppm)")
-                fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_HIGH_PPM, y1=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, fillcolor="orange", opacity=0.2, line_width=0, annotation_text="High")
-                fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, y1=co2_trend.max()*1.1 if not co2_trend.empty else 3000, fillcolor="red", opacity=0.2, line_width=0, annotation_text="Very High")
-                fig.update_yaxes(tickformat='d')
-                st.plotly_chart(fig, use_container_width=True)
-        with cols[1]:
-            st.markdown("###### **Hourly Average Temperature**")
-            temp_trend = get_trend_data(period_iot_df, 'avg_temp_celsius', date_col='timestamp', period='h')
-            if not temp_trend.empty:
-                fig = go.Figure(go.Scatter(x=temp_trend.index, y=temp_trend.values, mode='lines', fill='tozeroy', line_color='#ff7f0e'))
-                fig.update_layout(title_text="<b>Hourly Temperature</b>", yaxis_title="Temperature (°C)")
-                st.plotly_chart(fig, use_container_width=True)
-
-        cols = st.columns(2)
-        with cols[0]:
-            st.markdown("###### **Hourly Average PM2.5 (Air Quality)**")
-            pm25_trend = get_trend_data(period_iot_df, 'avg_pm25', date_col='timestamp', period='h')
-            if not pm25_trend.empty:
-                fig = go.Figure(go.Scatter(x=pm25_trend.index, y=pm25_trend.values, mode='lines', fill='tozeroy', line_color='#2ca02c'))
-                fig.update_layout(title_text="<b>Hourly PM2.5 Levels</b>", yaxis_title="PM2.5 (µg/m³)")
-                st.plotly_chart(fig, use_container_width=True)
-        with cols[1]:
-            st.markdown("###### **Hourly Average Noise Levels**")
-            noise_trend = get_trend_data(period_iot_df, 'avg_noise_db', date_col='timestamp', period='h')
-            if not noise_trend.empty:
-                fig = go.Figure(go.Scatter(x=noise_trend.index, y=noise_trend.values, mode='lines', fill='tozeroy', line_color='#9467bd'))
-                fig.add_hline(y=settings.ALERT_AMBIENT_NOISE_HIGH_DBA, line_dash="dash", line_color="red", annotation_text="High Noise Level")
-                fig.update_layout(title_text="<b>Hourly Noise Levels</b>", yaxis_title="Noise (dBA)")
-                st.plotly_chart(fig, use_container_width=True)
+        st.markdown("###### **Hourly Average CO2 Levels**")
+        co2_trend = get_trend_data(period_iot_df, 'avg_co2_ppm', date_col='timestamp', period='h')
+        if not co2_trend.empty:
+            fig = plot_annotated_line_chart(co2_trend, "", y_axis_title="CO2 (ppm)")
+            fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_HIGH_PPM, y1=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, fillcolor="orange", opacity=0.2, line_width=0, annotation_text="High")
+            fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, y1=co2_trend.max()*1.1 if not co2_trend.empty else 3000, fillcolor="red", opacity=0.2, line_width=0, annotation_text="Very High")
+            fig.update_yaxes(tickformat='d')
+            st.plotly_chart(fig, use_container_width=True)
+        else: st.info("No CO2 trend data to display.")
+        
+        st.markdown("###### **Latest Environmental Readings by Room**")
+        latest_readings = period_iot_df.sort_values('timestamp', ascending=False).drop_duplicates('room_name', keep='first')
+        st.dataframe(latest_readings[['room_name', 'timestamp', 'avg_co2_ppm', 'avg_pm25', 'avg_temp_celsius', 'avg_noise_db']], use_container_width=True, hide_index=True)
