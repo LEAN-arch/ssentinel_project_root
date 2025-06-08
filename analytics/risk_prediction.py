@@ -11,6 +11,7 @@ from typing import Dict, Any, List
 
 try:
     from config import settings
+    # The data_cleaner instance handles standardization based on settings
     from data_processing.helpers import data_cleaner
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
@@ -47,10 +48,23 @@ class RiskPredictionModel:
         ]
 
     def _prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Ensures all required columns exist and are of the correct numeric type."""
+        """
+        Ensures all required columns exist and are of the correct numeric type
+        by using the centralized data_cleaner and configurations from settings.
+        """
+        prepared_df = df.copy()
+        
+        # --- DEFINITIVE FIX FOR TypeError ---
+        # Use the declarative defaults from settings to ensure all required
+        # columns for the model are present and correctly typed.
         numeric_defaults = getattr(settings, 'RISK_MODEL_NUMERIC_DEFAULTS', {})
         string_defaults = getattr(settings, 'RISK_MODEL_STRING_DEFAULTS', {})
-        return data_cleaner.standardize_missing_values(df, string_defaults, numeric_defaults)
+        
+        return data_cleaner.standardize_missing_values(
+            prepared_df,
+            string_cols_defaults=string_defaults,
+            numeric_cols_defaults=numeric_defaults
+        )
 
     def predict_risk_scores(self, health_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -70,7 +84,8 @@ class RiskPredictionModel:
                 triggered_mask = rule["condition"](df)
                 risk_scores.loc[triggered_mask] += rule["points"]
             except Exception as e:
-                logger.error(f"Error evaluating risk rule for condition: {rule['condition']}. Error: {e}")
+                condition_str = str(rule.get('condition'))
+                logger.error(f"Error evaluating risk rule ({condition_str}): {e}")
 
         df['ai_risk_score'] = risk_scores.clip(0, 100).round(1)
         logger.info(f"Generated {len(df)} AI risk scores.")
@@ -79,12 +94,6 @@ class RiskPredictionModel:
 def calculate_risk_score(health_df: pd.DataFrame) -> pd.DataFrame:
     """
     Public factory function to calculate AI risk scores.
-
-    Args:
-        health_df (pd.DataFrame): The input DataFrame containing patient health data.
-
-    Returns:
-        pd.DataFrame: The DataFrame enriched with an 'ai_risk_score' column.
     """
     model = RiskPredictionModel()
     return model.predict_risk_scores(health_df)
