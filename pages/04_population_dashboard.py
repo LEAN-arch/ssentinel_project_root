@@ -40,22 +40,15 @@ def get_condition_analytics(df: pd.DataFrame) -> pd.DataFrame:
     """Analyzes conditions by frequency and risk."""
     if df.empty or 'condition' not in df.columns or 'ai_risk_score' not in df.columns:
         return pd.DataFrame(columns=['condition', 'count', 'avg_risk_score'])
-    
-    # --- DEFINITIVE FIX ---
-    # Ensure ai_risk_score is numeric before aggregation
     df_copy = df.copy()
     df_copy['ai_risk_score'] = convert_to_numeric(df_copy['ai_risk_score'])
-    
-    # Aggregate, then fill na for avg_risk_score to keep all conditions
-    agg_df = df_copy.groupby('condition').agg(
-        count=('patient_id', 'size'),
-        avg_risk_score=('ai_risk_score', 'mean')
-    ).reset_index()
+    agg_df = df_copy.groupby('condition').agg(count=('patient_id', 'size'), avg_risk_score=('ai_risk_score', 'mean')).reset_index()
     agg_df['avg_risk_score'] = agg_df['avg_risk_score'].fillna(0)
     return agg_df
 
 @st.cache_data
 def get_risk_stratification_data(df: pd.DataFrame) -> Dict[str, Any]:
+    """Segments the population into risk tiers and calculates trends."""
     if df.empty or 'patient_id' not in df.columns or 'ai_risk_score' not in df.columns:
         return {'pyramid_data': pd.DataFrame(), 'trend_data': pd.DataFrame()}
     risk_low, risk_mod = _get_setting('RISK_SCORE_LOW_THRESHOLD', 40), _get_setting('RISK_SCORE_MODERATE_THRESHOLD', 60)
@@ -147,7 +140,7 @@ def run_dashboard():
     prevalence = (unique_patients / total_population * 1000) if total_population > 0 else 0
     kpi_cols[1].metric("Prevalence per 1,000 Pop.", f"{prevalence:.1f}")
     high_risk_patients = df_filtered[df_filtered['ai_risk_score'] >= settings.RISK_SCORE_MODERATE_THRESHOLD]['patient_id'].nunique()
-    kpi_cols[2].metric("High-Risk Patient Cohort", f"{high_risk_patients:,}", f"{high_risk_patients/unique_patients:.1%}" if unique_patients > 0 else "0.0%")
+    kpi_cols[2].metric("High-Risk Patient Cohort", f"{high_risk_patients/unique_patients:.1%}" if unique_patients > 0 else "0.0%")
     cond_analytics = get_condition_analytics(df_filtered)
     top_risk_condition = cond_analytics.sort_values('avg_risk_score', ascending=False).iloc[0]['condition'] if not cond_analytics.empty else "N/A"
     kpi_cols[3].metric("Top Condition by Avg. Risk", top_risk_condition)
@@ -164,16 +157,10 @@ def run_dashboard():
         col1, col2 = st.columns(2)
         with col1:
             top_by_count = cond_analytics.sort_values('count', ascending=False).head(C.TOP_N_CONDITIONS)
-            if not top_by_count.empty:
-                st.plotly_chart(plot_bar_chart(top_by_count, x_col='count', y_col='condition', orientation='h', title="Most Frequent Conditions", x_axis_title='Number of Encounters', y_values_are_counts=True), use_container_width=True)
-            else:
-                st.info("No condition data to display for volume analysis.")
+            st.plotly_chart(plot_bar_chart(top_by_count, x_col='count', y_col='condition', orientation='h', title="Most Frequent Conditions", x_axis_title='Number of Encounters', y_values_are_counts=True), use_container_width=True)
         with col2:
             top_by_risk = cond_analytics.sort_values('avg_risk_score', ascending=False).head(C.TOP_N_CONDITIONS)
-            if not top_by_risk.empty:
-                st.plotly_chart(plot_bar_chart(top_by_risk, x_col='avg_risk_score', y_col='condition', orientation='h', title="Highest-Risk Conditions", x_axis_title='Average AI Risk Score', range_x=[0,100]), use_container_width=True)
-            else:
-                st.info("No condition data to display for severity analysis.")
+            st.plotly_chart(plot_bar_chart(top_by_risk, x_col='avg_risk_score', y_col='condition', orientation='h', title="Highest-Risk Conditions", x_axis_title='Average AI Risk Score', range_x=[0,100]), use_container_width=True)
     
     with tab2:
         st.header("Population Risk Stratification")
@@ -206,7 +193,8 @@ def run_dashboard():
     
     with tab4:
         st.header("Demographic Insights")
-        df_unique = df_filtered.drop_duplicates(subset=['patient_id'])
+        # --- DEFINITIVE FIX for SettingWithCopyWarning ---
+        df_unique = df_filtered.drop_duplicates(subset=['patient_id']).copy()
         col1, col2 = st.columns(2)
         with col1:
             if not df_unique['age'].dropna().empty:
@@ -214,10 +202,12 @@ def run_dashboard():
         with col2:
             if not df_unique['gender'].dropna().empty:
                 st.plotly_chart(px.pie(df_unique, names='gender', title="Gender Distribution"), use_container_width=True)
+        
         st.subheader("Risk by Demographics")
         if not df_unique.empty:
              df_unique['age_band'] = pd.cut(df_unique['age'], bins=[0, 18, 40, 60, 120], labels=['0-18', '19-40', '41-60', '60+'])
-             risk_by_demo = df_unique.groupby(['age_band', 'gender'])['ai_risk_score'].mean().reset_index()
+             # --- DEFINITIVE FIX for FutureWarning ---
+             risk_by_demo = df_unique.groupby(['age_band', 'gender'], observed=True)['ai_risk_score'].mean().reset_index()
              if not risk_by_demo.empty:
                 fig = plot_bar_chart(risk_by_demo, x_col='age_band', y_col='ai_risk_score', color='gender', barmode='group', title="Average AI Risk Score by Age and Gender", y_axis_title='Avg. AI Risk Score')
                 st.plotly_chart(fig, use_container_width=True)
