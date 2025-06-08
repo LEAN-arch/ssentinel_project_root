@@ -96,12 +96,8 @@ def _get_structured_env_kpis(env_kpis: Dict[str, Any]) -> List[Dict[str, Any]]:
 st.sidebar.header("Console Filters")
 if os.path.exists(settings.APP_LOGO_SMALL_PATH): st.sidebar.image(settings.APP_LOGO_SMALL_PATH, width=120)
 abs_min_date, abs_max_date = date.today() - timedelta(days=365), date.today()
-
-# --- DEFINITIVE FIX FOR AttributeError ---
-# Use the correct setting name from the provided settings.py file.
 default_date_range_days = getattr(settings, 'WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND', 30)
 default_start = max(abs_min_date, abs_max_date - timedelta(days=default_date_range_days - 1))
-
 session_key = "clinic_date_range"
 if session_key not in st.session_state: st.session_state[session_key] = (default_start, abs_max_date)
 selected_range = st.sidebar.date_input("Select Date Range:", value=st.session_state[session_key], min_value=abs_min_date, max_value=abs_max_date)
@@ -122,11 +118,18 @@ st.info(f"**Displaying Clinic Console for:** `{period_str}`")
 
 # --- KPI Snapshot Section ---
 st.header("🚀 Performance & Environment Snapshot")
-if period_kpis and period_kpis.get("test_summary_details"):
-    render_kpi_row("Overall Service Performance", structure_main_clinic_kpis(kpis_summary=period_kpis))
-    render_kpi_row("Key Disease & Supply Indicators", structure_disease_specific_clinic_kpis(kpis_summary=period_kpis))
-else:
-    st.warning("Core service KPIs could not be generated. Health data may be missing for the selected period.")
+# --- DEFINITIVE FIX ---
+# Always attempt to structure the KPIs. The downstream functions are robust
+# and will return empty lists if there is no data, which the render function handles.
+# This prevents the incorrect warning message from showing on valid "no data" periods.
+main_kpis = structure_main_clinic_kpis(kpis_summary=period_kpis)
+disease_kpis = structure_disease_specific_clinic_kpis(kpis_summary=period_kpis)
+render_kpi_row("Overall Service Performance", main_kpis)
+render_kpi_row("Key Disease & Supply Indicators", disease_kpis)
+
+if not main_kpis and not disease_kpis:
+    st.info("No service performance data available for the selected period.")
+
 if iot_available and not period_iot_df.empty:
     env_summary_kpis = get_clinic_environmental_summary_kpis(period_iot_df)
     render_kpi_row("Clinic Environment Quick Check", _get_structured_env_kpis(env_summary_kpis))
