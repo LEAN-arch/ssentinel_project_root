@@ -53,6 +53,7 @@ class RiskPredictionModel:
         """
         prepared_df = df.copy()
         
+        # --- DEFINITIVE FIX FOR TypeError ---
         # Use the declarative defaults from settings to ensure all required
         # columns for the model are present and correctly typed.
         numeric_defaults = getattr(settings, 'RISK_MODEL_NUMERIC_DEFAULTS', {})
@@ -73,9 +74,7 @@ class RiskPredictionModel:
                 health_df['ai_risk_score'] = np.nan
             return health_df
 
-        # --- DEFINITIVE FIX FOR TypeError ---
-        # The prepare_data method must be called here to clean the data
-        # before any rules are evaluated against it.
+        # Call the prepare_data method to clean the data before rule evaluation
         df = self._prepare_data(health_df)
         
         risk_scores = pd.Series(0.0, index=df.index)
