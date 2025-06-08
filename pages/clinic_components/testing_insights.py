@@ -48,14 +48,13 @@ class TestingInsightsPreparer:
         summary_list = []
         test_details = self.kpis_summary.get("test_summary_details", {})
         critical_tests = [k for k, v in self.key_test_configs.items() if isinstance(v, dict) and v.get("critical")]
-
         if not critical_tests:
             self.notes.append("Configuration note: No tests are marked as 'critical' in settings.")
             return pd.DataFrame(columns=SUMMARY_COLS)
 
         for test_name in critical_tests:
             config = self.key_test_configs.get(test_name, {})
-            # The test_details from aggregation now uses internal names, not display names, as keys
+            # The test_details from aggregation uses internal names as keys.
             stats = test_details.get(test_name, {})
             summary_list.append({
                 "Test Group (Critical)": config.get("display_name", test_name),
@@ -64,7 +63,6 @@ class TestingInsightsPreparer:
                 "% Met TAT Target": self._format_value(stats.get("perc_met_tat_target"), suffix="%"),
                 "Pending (Patients)": self._format_value(stats.get("pending_count_patients", 0), is_int=True),
             })
-
         return pd.DataFrame(summary_list, columns=SUMMARY_COLS)
 
     def _get_overdue_threshold(self, test_type: str) -> int:
@@ -89,19 +87,18 @@ class TestingInsightsPreparer:
             self.notes.append(f"Overdue test analysis skipped: missing required columns {missing_cols}.")
             return pd.DataFrame(columns=OVERDUE_COLS)
         
-        # Explicitly cast to string before using .str accessor to prevent TypeError
         df_pending = self.df_health[
             (self.df_health['test_result'].astype(str).str.lower() == 'pending') & 
             (self.df_health[date_col].notna())
         ].copy()
-
         if df_pending.empty: return pd.DataFrame(columns=OVERDUE_COLS)
 
         # --- DEFINITIVE FIX FOR Timezone Error ---
         # Data from loader is now guaranteed to be tz-naive. Use a naive 'now'.
         now_naive = pd.Timestamp.now().normalize()
-        df_pending['days_pending'] = (now_naive - df_pending[date_col].dt.normalize()).dt.days
-
+        df_pending[date_col] = df_pending[date_col].dt.normalize()
+        df_pending['days_pending'] = (now_naive - df_pending[date_col]).dt.days
+        
         # Data integrity check: filter out any records where the date is in the future
         df_pending = df_pending[df_pending['days_pending'] >= 0]
         if df_pending.empty: return pd.DataFrame(columns=OVERDUE_COLS)
@@ -112,7 +109,7 @@ class TestingInsightsPreparer:
         
         df_overdue = df_pending[df_pending['days_pending'] > df_pending['overdue_threshold_days']]
         if df_overdue.empty: return pd.DataFrame(columns=OVERDUE_COLS)
-
+        
         df_display = df_overdue.rename(columns={date_col: "Sample Collection/Registered Date"})
         return df_display[OVERDUE_COLS].sort_values('days_pending', ascending=False).reset_index(drop=True)
 
@@ -121,14 +118,10 @@ class TestingInsightsPreparer:
         if self.df_health.empty or 'sample_status' not in self.df_health.columns or 'rejection_reason' not in self.df_health.columns:
             return pd.DataFrame(columns=REJECTION_COLS)
         
-        # Explicitly cast to string before using .str accessor to prevent TypeError
         df_rejected = self.df_health[self.df_health['sample_status'].astype(str).str.lower() == 'rejected by lab'].copy()
         df_rejected.dropna(subset=['rejection_reason'], inplace=True)
-        
-        # Further clean the reason text by ensuring it's a string and stripping whitespace
         df_rejected['rejection_reason'] = df_rejected['rejection_reason'].astype(str).str.strip()
         df_rejected = df_rejected[df_rejected['rejection_reason'] != '']
-
         if df_rejected.empty: return pd.DataFrame(columns=REJECTION_COLS)
 
         top_n = self._get_setting('TESTING_TOP_N_REJECTION_REASONS', 10)
@@ -153,8 +146,6 @@ def prepare_clinic_lab_testing_insights_data(
     health_df_period: Optional[pd.DataFrame],
     **kwargs # Absorb unused parameters for API stability
 ) -> Dict[str, Any]:
-    """
-    Factory function to prepare structured data for detailed testing insights.
-    """
+    """Factory function to prepare structured data for detailed testing insights."""
     preparer = TestingInsightsPreparer(kpis_summary=kpis_summary, health_df_period=health_df_period)
     return preparer.prepare()
