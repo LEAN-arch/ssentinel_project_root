@@ -5,6 +5,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import logging
+import re
 from datetime import date, timedelta
 from typing import Dict, Any, Tuple, List, Optional
 import os
@@ -14,15 +15,16 @@ import sys
 logger = logging.getLogger(__name__)
 
 # --- Sentinel System Imports ---
+# This ensures all necessary functions from your project are available.
 try:
     from config import settings
     from data_processing.loaders import load_health_records, load_iot_clinic_environment_data
-    from data_processing.aggregation import get_clinic_summary_kpis, get_clinic_environmental_summary_kpis
+    from data_processing.aggregation import get_clinic_summary_kpis, get_clinic_environmental_summary_kpis, get_trend_data
     from analytics.orchestrator import apply_ai_models
-    from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator
-    from visualization.plots import plot_annotated_line_chart, plot_bar_chart
     from analytics.supply_forecasting import generate_simple_supply_forecast, forecast_supply_levels_advanced
     from analytics.alerting import get_patient_alerts_for_clinic
+    from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator
+    from visualization.plots import plot_annotated_line_chart, plot_bar_chart, plot_donut_chart
 except ImportError as e:
     st.error(f"Fatal Error: A required module could not be imported.\nDetails: {e}\nThis may be due to an incorrect project structure or missing dependencies.")
     st.stop()
@@ -34,7 +36,7 @@ class _KPIStructurer:
     def __init__(self, kpis_summary: Optional[Dict[str, Any]]):
         self.summary_data = kpis_summary if isinstance(kpis_summary, dict) else {}
         self._MAIN_KPI_DEFS = [
-            {"title": "Avg. Test TAT", "source_key": "overall_avg_test_turnaround_conclusive_days", "target_setting": "TARGET_TEST_TURNAROUND_DAYS", "default_target": 2.0, "units": "days", "icon": "⏱️", "help_template": "Avg. Turnaround Time. Target: ~{target:.1f} days.", "status_logic": "lower_is_better", "precision": 1},
+            {"title": "Overall Avg. TAT", "source_key": "overall_avg_test_turnaround_conclusive_days", "target_setting": "TARGET_TEST_TURNAROUND_DAYS", "default_target": 2.0, "units": "days", "icon": "⏱️", "help_template": "Avg. Turnaround Time. Target: ~{target:.1f} days.", "status_logic": "lower_is_better", "precision": 1},
             {"title": "% Critical Tests TAT Met", "source_key": "perc_critical_tests_tat_met", "target_setting": "TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY", "default_target": 85.0, "units": "%", "icon": "🎯", "help_template": "Critical tests meeting TAT. Target: ≥{target:.1f}%.", "status_logic": "higher_is_better", "precision": 1},
             {"title": "Pending Critical Tests", "source_key": "total_pending_critical_tests_patients", "target_setting": "TARGET_PENDING_CRITICAL_TESTS", "default_target": 0, "units": "patients", "icon": "⏳", "help_template": "Patients with pending critical tests. Target: {target}.", "status_logic": "lower_is_better_count", "is_count": True},
             {"title": "Sample Rejection Rate", "source_key": "sample_rejection_rate_perc", "target_setting": "TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY", "default_target": 5.0, "units": "%", "icon": "🧪", "help_template": "Rate of rejected lab samples. Target: <{target:.1f}%.", "status_logic": "lower_is_better", "precision": 1},
@@ -67,13 +69,7 @@ class _KPIStructurer:
         target = conf.get("target_value", getattr(settings, conf.get("target_setting", ""), conf.get("default_target")))
         value_num = pd.to_numeric(value, errors='coerce')
         status = self._get_status(value_num, target, conf["status_logic"])
-        val_str = self._format_kpi_value(
-            value,
-            conf.get("precision", 1),
-            conf.get("units", "") if conf.get("units") == "%" else "",
-            "N/A",
-            conf.get("is_count", False)
-        )
+        val_str = self._format_kpi_value(value, conf.get("precision", 1), conf.get("units", "") if conf.get("units") == "%" else "", "N/A", conf.get("is_count", False))
         help_text = conf["help_template"].format(target=target, days_remaining=getattr(settings, 'CRITICAL_SUPPLY_DAYS_REMAINING', 7))
         units = conf.get("units", "")
         return {"title": conf["title"], "value_str": val_str, "units": units if units != "%" else "", "icon": conf["icon"], "status_level": status, "help_text": help_text}
@@ -97,6 +93,7 @@ st.divider()
 # --- Data Loading ---
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, show_spinner="Loading and processing all operational data...")
 def get_dashboard_data() -> Tuple[pd.DataFrame, pd.DataFrame, bool, date, date]:
+    """Loads all data and determines the available date range from the data itself."""
     health_df = load_health_records()
     iot_df = load_iot_clinic_environment_data()
     iot_available = isinstance(iot_df, pd.DataFrame) and not iot_df.empty
@@ -141,7 +138,6 @@ if main_kpis or disease_kpis:
     for i, kpi in enumerate(main_kpis):
         with cols[i]:
             render_kpi_card(**kpi)
-            
     st.markdown("##### **Key Disease & Supply Indicators**")
     cols = st.columns(len(disease_kpis))
     for i, kpi in enumerate(disease_kpis):
@@ -153,48 +149,84 @@ st.divider()
 
 # --- Tabbed Section ---
 st.header("🛠️ Operational Areas Deep Dive")
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Epidemiology", "🔬 Testing", "💊 Supply Chain", "🧍 Patients", "🌿 Environment"])
+tab_titles = ["📈 Epidemiology", "🔬 Testing", "💊 Supply Chain", "🧍 Patients", "🌿 Environment"]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_titles)
 
 with tab1:
     st.subheader("Local Epidemiological Intelligence")
     if period_health_df.empty:
         st.info("No data for epidemiological analysis.")
     else:
-        st.markdown("###### Top Reported Symptoms")
         symptoms = period_health_df['patient_reported_symptoms'].dropna().str.split(r'[;,|]').explode().str.strip().str.title()
         symptom_counts = symptoms[symptoms != ''].value_counts().nlargest(10).reset_index()
         symptom_counts.columns = ['Symptom', 'Count']
-        st.dataframe(symptom_counts, hide_index=True, use_container_width=True)
+        st.plotly_chart(
+            plot_bar_chart(symptom_counts, x_col='Count', y_col='Symptom', title="Top 10 Reported Symptoms in Period", orientation='h'),
+            use_container_width=True
+        )
 
 with tab2:
     st.subheader("Testing & Diagnostics Performance")
     if period_health_df.empty:
         st.info("No data for testing analysis.")
     else:
-        st.markdown("###### Test Result Distribution")
-        st.dataframe(period_health_df['test_result'].value_counts())
+        col1, col2 = st.columns(2)
+        with col1:
+            tat_df = period_health_df.groupby('test_type')['test_turnaround_days'].mean().dropna().sort_values().reset_index()
+            tat_df.columns = ['Test Type', 'Avg. TAT (Days)']
+            st.plotly_chart(
+                plot_bar_chart(tat_df, x_col='Avg. TAT (Days)', y_col='Test Type', title="Average Turnaround Time by Test", orientation='h'),
+                use_container_width=True
+            )
+        with col2:
+            rejection_df = period_health_df[period_health_df['sample_status'].str.lower() == 'rejected by lab']['rejection_reason'].value_counts().reset_index()
+            rejection_df.columns = ['Reason', 'Count']
+            if not rejection_df.empty:
+                st.plotly_chart(
+                    plot_donut_chart(rejection_df, labels_col='Reason', values_col='Count', title="Sample Rejection Reasons"),
+                    use_container_width=True
+                )
+            else:
+                st.info("No sample rejections in this period.")
 
 with tab3:
     st.subheader("Medical Supply Forecast")
-    use_ai = st.checkbox("Use Advanced AI Forecast", key="supply_ai_toggle")
-    with st.spinner("Generating supply forecast..."):
-        forecast_df = generate_simple_supply_forecast(full_health_df) if not use_ai else forecast_supply_levels_advanced(full_health_df)
-    
-    if not forecast_df.empty:
-        st.markdown("###### Forecasted Days of Supply")
-        st.dataframe(forecast_df.sort_values('forecast_date').drop_duplicates('item', keep='first'))
+    forecastable_items = sorted([item for item in full_health_df['item'].dropna().unique() if any(sub in item for sub in getattr(settings, 'KEY_DRUG_SUBSTRINGS_SUPPLY', []))])
+    if not forecastable_items:
+        st.info("No forecastable supply items found in the data based on configuration.")
     else:
-        st.info("Could not generate supply forecast.")
+        selected_item = st.selectbox("Select an item to forecast:", options=forecastable_items)
+        if selected_item:
+            with st.spinner(f"Generating forecast for {selected_item}..."):
+                forecast_df = generate_simple_supply_forecast(full_health_df, item_filter=[selected_item])
+            
+            if not forecast_df.empty:
+                forecast_df = forecast_df.set_index('forecast_date')
+                st.plotly_chart(
+                    plot_annotated_line_chart(forecast_df['forecasted_days_of_supply'], title=f"Forecasted Days of Supply for {selected_item}", y_axis_title="Days of Supply Remaining"),
+                    use_container_width=True
+                )
+            else:
+                st.warning(f"Could not generate supply forecast for {selected_item}.")
 
 with tab4:
     st.subheader("High-Interest Patient Cases")
     if period_health_df.empty:
         st.info("No data for patient analysis.")
     else:
+        key_conditions = getattr(settings, 'KEY_CONDITIONS_FOR_ACTION', [])
+        patient_load = period_health_df[period_health_df['condition'].isin(key_conditions)].copy()
+        if not patient_load.empty:
+            patient_load_agg = patient_load.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'condition']).size().reset_index(name='count')
+            st.plotly_chart(
+                plot_bar_chart(patient_load_agg, x_col='encounter_date', y_col='count', color='condition', barmode='stack', title="Weekly Patient Load by Key Condition", x_axis_title="Week", y_axis_title="Patient Count"),
+                use_container_width=True
+            )
+        
         flagged_patients = get_patient_alerts_for_clinic(health_df_period=period_health_df)
         st.markdown("###### Flagged Patients for Clinical Review")
         if not flagged_patients.empty:
-            st.dataframe(flagged_patients[['patient_id', 'age', 'gender', 'condition', 'ai_risk_score', 'Alert Reason']].head(15))
+            st.dataframe(flagged_patients[['patient_id', 'age', 'gender', 'condition', 'ai_risk_score', 'Alert Reason']].head(15), use_container_width=True)
         else:
             st.success("✅ No patients currently flagged for review.")
 
@@ -203,5 +235,15 @@ with tab5:
     if period_iot_df.empty:
         st.info("No environmental data for this period.")
     else:
-        st.markdown("###### Latest Sensor Readings")
-        st.dataframe(period_iot_df.sort_values('timestamp', ascending=False).drop_duplicates('room_name', keep='first'))
+        co2_trend = period_iot_df.set_index('timestamp')['avg_co2_ppm'].resample('H').mean()
+        st.plotly_chart(
+            plot_annotated_line_chart(co2_trend, "Hourly Average CO2 Levels", "CO2 (ppm)"),
+            use_container_width=True
+        )
+
+        latest_readings = period_iot_df.sort_values('timestamp', ascending=False).drop_duplicates('room_name', keep='first')
+        latest_readings_melted = latest_readings.melt(id_vars='room_name', value_vars=['avg_co2_ppm', 'avg_pm25', 'avg_temp_celsius'], var_name='Metric', value_name='Value')
+        st.plotly_chart(
+            plot_bar_chart(latest_readings_melted, x_col='Value', y_col='room_name', color='Metric', barmode='group', orientation='h', title="Latest Environmental Readings by Room"),
+            use_container_width=True
+        )
