@@ -21,7 +21,6 @@ try:
     from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator
     from visualization.plots import plot_annotated_line_chart, plot_bar_chart
 
-    # Import all data preparation components
     from pages.clinic_components.env_details import prepare_clinic_environmental_detail_data
     from pages.clinic_components.kpi_structuring import structure_main_clinic_kpis, structure_disease_specific_clinic_kpis
     from pages.clinic_components.epi_data import calculate_clinic_epidemiological_data
@@ -35,7 +34,6 @@ except ImportError as e:
 
 
 # --- Page Configuration and Title ---
-# st.set_page_config should be called only once, in the main app.py
 st.title(f"🏥 {settings.APP_NAME} - Clinic Operations & Management Console")
 st.markdown("**Service Performance, Patient Care Quality, Resource Management, and Facility Environment Monitoring**")
 st.divider()
@@ -44,52 +42,39 @@ st.divider()
 # --- Data Loading and Caching ---
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, show_spinner="Loading and processing clinic operational data...")
 def get_clinic_console_processed_data(start_date: date, end_date: date) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, Any], bool]:
-    """Loads, enriches, and filters all necessary data for the Clinic Console. This function is cached for performance."""
     log_ctx = "ClinicConsoleDataLoad"; logger.info(f"({log_ctx}) Executing data load for period: {start_date} to {end_date}")
-    
-    # 1. Load base data - loaders now handle cleaning and timezone normalization
     raw_health_df = load_health_records(source_context=log_ctx)
     raw_iot_df = load_iot_clinic_environment_data(source_context=log_ctx)
     iot_available = isinstance(raw_iot_df, pd.DataFrame) and not raw_iot_df.empty
-
-    # 2. Enrich full historical data with AI models
     ai_enriched_health_df, _ = apply_ai_models(raw_health_df, source_context=f"{log_ctx}/AIEnrich")
     
-    # 3. Filter data for the selected period
     health_df_period = pd.DataFrame()
-    if not ai_enriched_health_df.empty and 'encounter_date' in ai_enriched_health_df.columns:
-        # The 'encounter_date' column is guaranteed to be datetime and tz-naive from the loader
+    if not ai_enriched_health_df.empty:
         mask = ai_enriched_health_df['encounter_date'].dt.date.between(start_date, end_date)
         health_df_period = ai_enriched_health_df.loc[mask].copy()
 
     iot_df_period = pd.DataFrame()
-    if iot_available and 'timestamp' in raw_iot_df.columns:
-        # The 'timestamp' column is guaranteed to be datetime and tz-naive
+    if iot_available:
         mask = raw_iot_df['timestamp'].dt.date.between(start_date, end_date)
         iot_df_period = raw_iot_df.loc[mask].copy()
 
-    # 4. Calculate summary KPIs on the period-filtered data
     kpis_for_period = get_clinic_summary_kpis(health_df_period) if not health_df_period.empty else {"test_summary_details": {}}
-    
     return ai_enriched_health_df, health_df_period, iot_df_period, kpis_for_period, iot_available
 
 
 # --- UI Rendering Helper Functions ---
 def render_kpi_row(title: str, kpi_list: List[Dict[str, Any]]):
-    """Renders a titled row of KPI cards."""
     if not kpi_list: return
     st.markdown(f"##### **{title}**"); cols = st.columns(min(len(kpi_list), 4))
     for i, kpi in enumerate(kpi_list):
         with cols[i % 4]: render_kpi_card(**kpi)
 
 def display_processing_notes(notes: List[str]):
-    """Displays a list of processing notes in an expander if any exist."""
     if notes:
         with st.expander("Show Processing Notes"):
             for note in notes: st.caption(f"ℹ️ {note}")
 
 def _get_structured_env_kpis(env_kpis: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Takes raw environmental KPIs and structures them for rendering using a declarative config."""
     kpi_defs = [
         {"key": "avg_co2_overall_ppm", "title": "Avg. CO2", "units": "ppm", "icon": "💨", "target": settings.ALERT_AMBIENT_CO2_HIGH_PPM, "logic": "lower_is_better"},
         {"key": "avg_pm25_overall_ugm3", "title": "Avg. PM2.5", "units": "µg/m³", "icon": "🌫️", "target": settings.ALERT_AMBIENT_PM25_HIGH_UGM3, "logic": "lower_is_better"},
@@ -107,12 +92,16 @@ def _get_structured_env_kpis(env_kpis: Dict[str, Any]) -> List[Dict[str, Any]]:
         structured_kpis.append({"title": kpi['title'], "value_str": value_str, "units": kpi['units'], "icon": kpi['icon'], "status_level": status, "help_text": f"Target: {'<' if 'better' in kpi['logic'] else '=='} {kpi['target']}{kpi['units']}"})
     return structured_kpis
 
-
 # --- Sidebar and Main Data Loading ---
 st.sidebar.header("Console Filters")
 if os.path.exists(settings.APP_LOGO_SMALL_PATH): st.sidebar.image(settings.APP_LOGO_SMALL_PATH, width=120)
 abs_min_date, abs_max_date = date.today() - timedelta(days=365), date.today()
-default_start = max(abs_min_date, abs_max_date - timedelta(days=settings.WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS - 1))
+
+# --- DEFINITIVE FIX FOR AttributeError ---
+# Use the correct setting name from the provided settings.py file.
+default_date_range_days = getattr(settings, 'WEB_DASHBOARD_DEFAULT_DATE_RANGE_DAYS_TREND', 30)
+default_start = max(abs_min_date, abs_max_date - timedelta(days=default_date_range_days - 1))
+
 session_key = "clinic_date_range"
 if session_key not in st.session_state: st.session_state[session_key] = (default_start, abs_max_date)
 selected_range = st.sidebar.date_input("Select Date Range:", value=st.session_state[session_key], min_value=abs_min_date, max_value=abs_max_date)
@@ -131,7 +120,6 @@ if not iot_available: st.sidebar.warning("IoT environmental data is unavailable.
 period_str = f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
 st.info(f"**Displaying Clinic Console for:** `{period_str}`")
 
-
 # --- KPI Snapshot Section ---
 st.header("🚀 Performance & Environment Snapshot")
 if period_kpis and period_kpis.get("test_summary_details"):
@@ -143,7 +131,6 @@ if iot_available and not period_iot_df.empty:
     env_summary_kpis = get_clinic_environmental_summary_kpis(period_iot_df)
     render_kpi_row("Clinic Environment Quick Check", _get_structured_env_kpis(env_summary_kpis))
 st.divider()
-
 
 # --- Tabbed Deep Dive Section ---
 st.header("🛠️ Operational Areas Deep Dive")
