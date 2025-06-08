@@ -1,4 +1,4 @@
-# ssentinel_project_root/config/settings.py
+# sentinel_project_root/config/settings.py
 import os
 import logging
 from datetime import datetime
@@ -117,9 +117,10 @@ KEY_TEST_TYPES_FOR_ANALYSIS = {
     "PulseOx": {"disease_group": "Vitals", "target_tat_days": 0, "critical": False, "display_name": "Pulse Oximetry"},
 }
 CRITICAL_TESTS = [k for k, v in KEY_TEST_TYPES_FOR_ANALYSIS.items() if v.get("critical", False)]
-TARGET_TEST_TURNAROUND_DAYS = 2
+TARGET_TEST_TURNAROUND_DAYS = 2.0
 TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY = 85.0
 TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY = 5.0
+OVERDUE_TEST_BUFFER_DAYS = 2
 OVERDUE_PENDING_TEST_DAYS_GENERAL_FALLBACK = 7
 KEY_CONDITIONS_FOR_ACTION = ['TB', 'Malaria', 'HIV-Positive', 'Pneumonia', 'Severe Dehydration', 'Heat Stroke', 'Sepsis', 'Diarrheal Diseases (Severe)']
 KEY_DRUG_SUBSTRINGS_SUPPLY = ['TB-Regimen', 'ACT', 'ARV-Regimen', 'ORS', 'Amoxicillin', 'Paracetamol', 'Penicillin', 'Iron-Folate', 'Insulin']
@@ -163,7 +164,7 @@ COLOR_BACKGROUND_PAGE = "#f8f9fa"
 COLOR_BACKGROUND_CONTENT = "#ffffff"
 COLOR_BACKGROUND_SUBTLE = "#e9ecef"
 COLOR_BACKGROUND_WHITE = "#FFFFFF"
-COLOR_BACKGROUND_CONTENT_TRANSPARENT = 'rgba(255,255,255,0.85)'
+COLOR_BACKGROUND_CONTENT_TRANSPARENT = 'rgba(255,25s55,255,0.85)'
 COLOR_BORDER_LIGHT = "#dee2e6"
 COLOR_BORDER_MEDIUM = "#ced4da"
 
@@ -175,6 +176,12 @@ LEGACY_DISEASE_COLORS_WEB = {
     "Other": "#6B7280"
 }
 
+
+# --- Final Validation & Logging ---
+if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    settings_logger.warning(f"Invalid LOG_LEVEL '{LOG_LEVEL}' from env. The root logger may default to INFO.")
+    
+settings_logger.info(f"Sentinel settings module loaded. APP_NAME: {APP_NAME} v{APP_VERSION}.")
 
 # --- Final Validation & Logging ---
 if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
