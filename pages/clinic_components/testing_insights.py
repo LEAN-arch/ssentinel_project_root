@@ -27,7 +27,7 @@ class TestingInsightsPreparer:
 
     def __init__(self, kpis_summary: Optional[Dict[str, Any]], health_df_period: Optional[pd.DataFrame]):
         self.kpis_summary = kpis_summary if isinstance(kpis_summary, dict) else {}
-        self.df_health = health_df_period if isinstance(health_df_period, pd.DataFrame) else pd.DataFrame()
+        self.df_health = health_df_period.copy() if isinstance(health_df_period, pd.DataFrame) else pd.DataFrame()
         self.key_test_configs = getattr(settings, 'KEY_TEST_TYPES_FOR_ANALYSIS', {})
         self.notes: List[str] = []
 
@@ -56,10 +56,12 @@ class TestingInsightsPreparer:
             return pd.DataFrame(columns=SUMMARY_COLS)
 
         for test_name in critical_tests:
-            config = self.key_test_configs[test_name]
+            config = self.key_test_configs.get(test_name, {})
+            # Use the display_name from the test_details if available, falling back to config
+            display_name = test_details.get(test_name, {}).get('display_name', config.get('display_name', test_name))
             stats = test_details.get(test_name, {})
             summary_list.append({
-                "Test Group (Critical)": config.get("display_name", test_name),
+                "Test Group (Critical)": display_name,
                 "Positivity (%)": self._format_value(stats.get("positive_rate_perc"), suffix="%"),
                 "Avg. TAT (Days)": self._format_value(stats.get("avg_tat_days")),
                 "% Met TAT Target": self._format_value(stats.get("perc_met_tat_target"), suffix="%"),
@@ -68,8 +70,16 @@ class TestingInsightsPreparer:
 
         return pd.DataFrame(summary_list, columns=SUMMARY_COLS)
 
+    def _get_overdue_threshold(self, test_type: str) -> int:
+        """Robustly calculates the overdue threshold in days for a given test type."""
+        test_config = self.key_test_configs.get(test_type, {})
+        tat = test_config.get('target_tat_days', self._get_setting('TARGET_TEST_TURNAROUND_DAYS', 2))
+        buffer = self._get_setting('OVERDUE_TEST_BUFFER_DAYS', 2)
+        numeric_tat = pd.to_numeric(tat, errors='coerce')
+        return int(numeric_tat if pd.notna(numeric_tat) else 2) + buffer
+
     def _prepare_overdue_list(self) -> pd.DataFrame:
-        """Identifies and lists all pending tests that have exceeded their TAT threshold using vectorized operations."""
+        """Identifies and lists all pending tests that have exceeded their TAT threshold."""
         if self.df_health.empty:
             self.notes.append("Overdue test analysis skipped: no detailed health data provided.")
             return pd.DataFrame(columns=OVERDUE_COLS)
@@ -81,25 +91,30 @@ class TestingInsightsPreparer:
             missing_cols = sorted(list(set(required_cols) - set(self.df_health.columns)))
             self.notes.append(f"Overdue test analysis skipped: missing required columns {missing_cols}.")
             return pd.DataFrame(columns=OVERDUE_COLS)
+        
+        # FIX: Explicitly cast to string before using .str accessor to prevent TypeError
+        df_pending = self.df_health[
+            (self.df_health['test_result'].astype(str).str.lower() == 'pending') & 
+            (self.df_health[date_col].notna())
+        ].copy()
 
-        df_pending = self.df_health[(self.df_health['test_result'].str.lower() == 'pending') & (self.df_health[date_col].notna())].copy()
         if df_pending.empty: return pd.DataFrame(columns=OVERDUE_COLS)
 
         df_pending[date_col] = pd.to_datetime(df_pending[date_col], errors='coerce')
-        df_pending['days_pending'] = (pd.Timestamp.now(tz=None).normalize() - df_pending[date_col]).dt.days
-        
-        # Data integrity check: remove any records where the date is in the future.
-        df_pending = df_pending[df_pending['days_pending'] >= 0]
+        # Data integrity check: filter out any records where the date is in the future
+        df_pending = df_pending[df_pending[date_col] <= pd.Timestamp.now(tz=None)]
         if df_pending.empty: return pd.DataFrame(columns=OVERDUE_COLS)
         
+        df_pending['days_pending'] = (pd.Timestamp.now(tz=None).normalize() - df_pending[date_col].dt.normalize()).dt.days
+
         # Vectorized approach: Create a threshold map and apply it using .map for performance.
         default_tat = self._get_setting('TARGET_TEST_TURNAROUND_DAYS', 2)
         buffer = self._get_setting('OVERDUE_TEST_BUFFER_DAYS', 2)
         default_threshold = int(default_tat) + buffer
 
         threshold_map = {
-            name: int(pd.to_numeric(conf.get('target_tat_days', default_tat), errors='coerce').fillna(default_tat)) + buffer
-            for name, conf in self.key_test_configs.items() if isinstance(conf, dict)
+            name: self._get_overdue_threshold(name)
+            for name in df_pending['test_type'].unique()
         }
         df_pending['overdue_threshold_days'] = df_pending['test_type'].map(threshold_map).fillna(default_threshold).astype(int)
         
@@ -114,15 +129,16 @@ class TestingInsightsPreparer:
         if self.df_health.empty or 'sample_status' not in self.df_health.columns or 'rejection_reason' not in self.df_health.columns:
             return pd.DataFrame(columns=REJECTION_COLS)
         
-        # Filter for rejected samples and clean up the reason text.
-        df_rejected = self.df_health[self.df_health['sample_status'].str.lower() == 'rejected by lab'].copy()
+        # FIX: Explicitly cast to string before using .str accessor to prevent TypeError
+        df_rejected = self.df_health[self.df_health['sample_status'].astype(str).str.lower() == 'rejected by lab'].copy()
         df_rejected.dropna(subset=['rejection_reason'], inplace=True)
+        
+        # Further clean the reason text by ensuring it's a string and stripping whitespace
         df_rejected['rejection_reason'] = df_rejected['rejection_reason'].astype(str).str.strip()
         df_rejected = df_rejected[df_rejected['rejection_reason'] != '']
 
         if df_rejected.empty: return pd.DataFrame(columns=REJECTION_COLS)
 
-        # Count and select the top N reasons, as configured in settings.
         top_n = self._get_setting('TESTING_TOP_N_REJECTION_REASONS', 10)
         rejection_counts = df_rejected['rejection_reason'].value_counts().nlargest(top_n).reset_index()
         return rejection_counts.rename(columns={'index': 'Reason', 'rejection_reason': 'Count'})
@@ -141,38 +157,12 @@ class TestingInsightsPreparer:
 
 
 def prepare_clinic_lab_testing_insights_data(
-    clinic_overall_kpis_summary: Optional[Dict[str, Any]],
-    filtered_health_df_for_clinic_period: Optional[pd.DataFrame],
+    kpis_summary: Optional[Dict[str, Any]],
+    health_df_period: Optional[pd.DataFrame],
     **kwargs # Absorb unused parameters for API stability
 ) -> Dict[str, Any]:
     """
     Factory function to prepare structured data for detailed testing insights.
-
-    This function serves as a clean, public-facing entry point, abstracting the
-    internal `TestingInsightsPreparer` class.
-
-    Args:
-        clinic_overall_kpis_summary (Optional[Dict[str, Any]]): 
-            A dictionary of pre-aggregated KPIs, typically generated by `get_clinic_summary_kpis`.
-        filtered_health_df_for_clinic_period (Optional[pd.DataFrame]): 
-            A DataFrame of health data for the period, required for detailed analysis like overdue tests.
-    
-    Returns:
-        Dict[str, Any]: A dictionary containing structured DataFrames for the UI.
-            - 'all_critical_tests_summary_table_df' (pd.DataFrame): 
-              A UI-ready summary of critical test performance.
-              Schema: ["Test Group (Critical)", "Positivity (%)", "Avg. TAT (Days)", "% Met TAT Target", "Pending (Patients)"]
-            - 'overdue_pending_tests_list_df' (pd.DataFrame): 
-              A list of tests that have passed their TAT threshold, sorted by days pending.
-              Schema: ['patient_id', 'test_type', 'Sample Collection/Registered Date', 'days_pending', 'overdue_threshold_days']
-            - 'rejection_reasons_df' (pd.DataFrame): 
-              A summary of the top N sample rejection reasons.
-              Schema: ['Reason', 'Count']
-            - 'processing_notes' (List[str]): 
-              A list of informational or warning messages generated during processing.
     """
-    preparer = TestingInsightsPreparer(
-        kpis_summary=clinic_overall_kpis_summary,
-        health_df_period=filtered_health_df_for_clinic_period
-    )
+    preparer = TestingInsightsPreparer(kpis_summary=kpis_summary, health_df_period=health_df_period)
     return preparer.prepare()
