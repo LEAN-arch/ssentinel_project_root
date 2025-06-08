@@ -1,5 +1,6 @@
 # sentinel_project_root/pages/02_clinic_dashboard.py
 # Clinic Operations & Management Console for Sentinel Health Co-Pilot.
+# Definitive, functional, and self-contained version with advanced visualizations.
 
 import streamlit as st
 import pandas as pd
@@ -8,6 +9,7 @@ import logging
 from datetime import date, timedelta
 from typing import Dict, Any, Tuple, List, Optional
 import os
+import plotly.graph_objects as go
 
 # --- Page Specific Logger ---
 logger = logging.getLogger(__name__)
@@ -16,73 +18,79 @@ logger = logging.getLogger(__name__)
 try:
     from config import settings
     from data_processing.loaders import load_health_records, load_iot_clinic_environment_data
-    from data_processing.aggregation import get_clinic_summary_kpis, get_clinic_environmental_summary_kpis
+    from data_processing.aggregation import get_clinic_summary_kpis, get_trend_data
     from analytics.orchestrator import apply_ai_models
-    from visualization.ui_elements import render_kpi_card, render_traffic_light_indicator
-    from visualization.plots import plot_annotated_line_chart, plot_bar_chart, plot_donut_chart
-    from analytics.supply_forecasting import generate_simple_supply_forecast, forecast_supply_levels_advanced
+    from analytics.supply_forecasting import generate_simple_supply_forecast
     from analytics.alerting import get_patient_alerts_for_clinic
+    from visualization.plots import plot_bar_chart, plot_donut_chart, plot_annotated_line_chart
 except ImportError as e:
-    st.error(f"Fatal Error: A required module could not be imported.\nDetails: {e}\nThis may be due to an incorrect project structure or missing dependencies.")
+    st.error(f"Fatal Error: A required module could not be imported.\nDetails: {e}\nThis may be due to an incorrect project structure or dependencies.")
     st.stop()
 
 
-# --- Self-Contained Page Components ---
-class _KPIStructurer:
-    """A data-driven class to structure raw KPI data into a display-ready format."""
-    def __init__(self, kpis_summary: Optional[Dict[str, Any]]):
-        self.summary_data = kpis_summary if isinstance(kpis_summary, dict) else {}
-        self._MAIN_KPI_DEFS = [
-            {"title": "Avg. Test TAT", "source_key": "overall_avg_test_turnaround_conclusive_days", "target_setting": "TARGET_TEST_TURNAROUND_DAYS", "default_target": 2.0, "units": "days", "icon": "⏱️", "help_template": "Avg. Turnaround Time. Target: ~{target:.1f} days.", "status_logic": "lower_is_better", "precision": 1},
-            {"title": "% Critical Tests TAT Met", "source_key": "perc_critical_tests_tat_met", "target_setting": "TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY", "default_target": 85.0, "units": "%", "icon": "🎯", "help_template": "Critical tests meeting TAT. Target: ≥{target:.1f}%.", "status_logic": "higher_is_better", "precision": 1},
-            {"title": "Pending Critical Tests", "source_key": "total_pending_critical_tests_patients", "target_setting": "TARGET_PENDING_CRITICAL_TESTS", "default_target": 0, "units": "patients", "icon": "⏳", "help_template": "Patients with pending critical tests. Target: {target}.", "status_logic": "lower_is_better_count", "is_count": True},
-            {"title": "Sample Rejection Rate", "source_key": "sample_rejection_rate_perc", "target_setting": "TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY", "default_target": 5.0, "units": "%", "icon": "🧪", "help_template": "Rate of rejected lab samples. Target: <{target:.1f}%.", "status_logic": "lower_is_better", "precision": 1},
-        ]
+# --- Self-Contained Data Science & Visualization Logic ---
 
-    def _format_kpi_value(self, value: Any, precision: int, suffix: str, default_str: str, is_count: bool) -> str:
-        if pd.isna(value): return default_str
-        try:
-            num_value = pd.to_numeric(value)
-            return f"{int(num_value):,}" if is_count else f"{num_value:,.{precision}f}{suffix}"
-        except (ValueError, TypeError): return str(value)
+def create_sparkline(data: pd.Series, color: str) -> go.Figure:
+    """Creates a compact, minimalist line chart for KPI tables."""
+    fig = go.Figure(go.Scatter(x=data.index, y=data, mode='lines', line=dict(color=color, width=2)))
+    fig.update_layout(
+        width=120, height=40,
+        margin=dict(l=0, r=0, t=0, b=0),
+        xaxis=dict(visible=False), yaxis=dict(visible=False),
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
+    )
+    return fig
+
+def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: date) -> pd.DataFrame:
+    """
+    Performs a period-over-period KPI analysis and generates sparklines.
+    """
+    # Define current and previous periods
+    current_period_df = full_df[full_df['encounter_date'].dt.date.between(start_date, end_date)]
+    period_days = (end_date - start_date).days + 1
+    prev_start_date = start_date - timedelta(days=period_days)
+    previous_period_df = full_df[full_df['encounter_date'].dt.date.between(prev_start_date, start_date - timedelta(days=1))]
     
-    def _get_status(self, v, t, l):
-        if pd.isna(v): return "NO_DATA"
-        if l == "lower_is_better": return "GOOD_PERFORMANCE" if v <= t else "MODERATE_CONCERN" if v <= t * 1.5 else "HIGH_CONCERN"
-        if l == "higher_is_better": return "GOOD_PERFORMANCE" if v >= t else "ACCEPTABLE" if v >= t * 0.8 else "HIGH_CONCERN"
-        if l == "lower_is_better_count": return "GOOD_PERFORMANCE" if v == t else "ACCEPTABLE" if v <= t + 2 else "HIGH_CONCERN"
-        return "NEUTRAL"
-
-    def _get_nested_value(self, key_path: str):
-        keys = key_path.split('.')
-        value = self.summary_data
-        for key in keys:
-            if isinstance(value, dict): value = value.get(key)
-            else: return None
-        return value
-
-    def _build_kpi(self, conf):
-        value = self._get_nested_value(conf["source_key"])
-        target = conf.get("target_value", getattr(settings, conf.get("target_setting", ""), conf.get("default_target")))
-        value_num = pd.to_numeric(value, errors='coerce')
-        status = self._get_status(value_num, target, conf["status_logic"])
-        val_str = self._format_kpi_value(value, conf.get("precision", 1), conf.get("units", "") if conf.get("units") == "%" else "", "N/A", conf.get("is_count", False))
-        help_text = conf["help_template"].format(target=target, days_remaining=getattr(settings, 'CRITICAL_SUPPLY_DAYS_REMAINING', 7))
-        units = conf.get("units", "")
-        return {"title": conf["title"], "value_str": val_str, "units": units if units != "%" else "", "icon": conf["icon"], "status_level": status, "help_text": help_text}
-
-    def structure_main_kpis(self): return [self._build_kpi(c) for c in self._MAIN_KPI_DEFS]
+    # Calculate KPIs for both periods
+    kpi_current = get_clinic_summary_kpis(current_period_df) if not current_period_df.empty else {}
+    kpi_previous = get_clinic_summary_kpis(previous_period_df) if not previous_period_df.empty else {}
     
-    def structure_disease_and_supply_kpis(self):
-        kpi_defs = []
-        for name, conf in getattr(settings, 'KEY_TEST_TYPES_FOR_ANALYSIS', {}).items():
-            if isinstance(conf, dict):
-                kpi_defs.append({"title": f"{conf.get('display_name', name)} Positivity", "source_key": f"test_summary_details.{name}.positive_rate_perc", "target_value": float(conf.get("target_max_positivity_pct", 10.0)), "units": "%", "icon": conf.get("icon", "🔬"), "help_template": "Positivity rate. Target: <{target:.1f}%.", "status_logic": "lower_is_better", "precision": 1})
-        kpi_defs.append({"title": "Key Drug Stockouts", "source_key": "key_drug_stockouts_count", "target_setting": "TARGET_DRUG_STOCKOUTS", "default_target": 0, "units": "items", "icon": "💊", "help_template": "Key drugs with <{days_remaining} days of stock. Target: {target}.", "status_logic": "lower_is_better_count", "is_count": True, "precision": 0})
-        return [self._build_kpi(conf) for conf in kpi_defs]
+    kpi_defs = {
+        "Avg. Test TAT (Days)": "overall_avg_test_turnaround_conclusive_days",
+        "Sample Rejection Rate (%)": "sample_rejection_rate_perc",
+        "Pending Critical Tests": "total_pending_critical_tests_patients",
+    }
+    
+    analysis_data = []
+    trend_start_date = end_date - timedelta(days=60)
+    trend_df = full_df[full_df['encounter_date'].dt.date.between(trend_start_date, end_date)]
+    
+    for name, key in kpi_defs.items():
+        current_val = kpi_current.get(key)
+        prev_val = kpi_previous.get(key)
+        
+        # Calculate trend
+        trend_series = get_trend_data(trend_df, value_col=key.replace("_perc", "").replace("_days", ""), period='W-MON') if not trend_df.empty else pd.Series()
+        
+        # Calculate % change
+        if pd.notna(current_val) and pd.notna(prev_val) and prev_val != 0:
+            change = ((current_val - prev_val) / prev_val) * 100
+            change_str = f"{change:+.1f}%"
+        else:
+            change_str = "N/A"
+            
+        analysis_data.append({
+            "Metric": name,
+            "Current Period": f"{current_val:.1f}" if isinstance(current_val, float) else current_val,
+            "Previous Period": f"{prev_val:.1f}" if isinstance(prev_val, float) else prev_val,
+            "% Change": change_str,
+            "60-Day Trend": create_sparkline(trend_series, "#007BFF") if not trend_series.empty else None
+        })
+        
+    return pd.DataFrame(analysis_data)
 
 
-# --- Page Title ---
+# --- Page Title & Setup ---
 st.title(f"🏥 {settings.APP_NAME} - Clinic Operations & Management Console")
 st.markdown("**Service Performance, Patient Care Quality, Resource Management, and Facility Environment Monitoring**")
 st.divider()
@@ -117,51 +125,42 @@ st.session_state[session_key] = (start_date, end_date)
 # --- Filter Data for Display ---
 period_health_df = full_health_df[full_health_df['encounter_date'].dt.date.between(start_date, end_date)]
 period_iot_df = full_iot_df[full_iot_df['timestamp'].dt.date.between(start_date, end_date)] if iot_available and not full_iot_df.empty else pd.DataFrame()
-period_kpis = get_clinic_summary_kpis(period_health_df) if not period_health_df.empty else {}
 
 period_str = f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
 st.info(f"**Displaying Clinic Console for:** `{period_str}`")
 
 # --- KPI Section ---
-st.header("🚀 Performance & Environment Snapshot")
-kpi_structurer = _KPIStructurer(period_kpis)
-main_kpis = kpi_structurer.structure_main_kpis()
-disease_kpis = kpi_structurer.structure_disease_and_supply_kpis()
-
-if main_kpis or disease_kpis:
-    st.markdown("##### **Overall Service Performance**"); cols = st.columns(len(main_kpis)); [render_kpi_card(**k) for i, (c, k) in enumerate(zip(cols, main_kpis))]
-    st.markdown("##### **Key Disease & Supply Indicators**"); cols = st.columns(len(disease_kpis)); [render_kpi_card(**k) for i, (c, k) in enumerate(zip(cols, disease_kpis))]
+st.header("🚀 Performance Snapshot with Trend Analysis")
+if not period_health_df.empty:
+    kpi_analysis_df = get_kpi_analysis_table(full_health_df, start_date, end_date)
+    st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True, column_config={"60-Day Trend": st.column_config.ImageColumn()})
 else:
-    st.info("No service performance data available for the selected period.")
-
-if iot_available and not period_iot_df.empty:
-    env_summary_kpis = get_clinic_environmental_summary_kpis(period_iot_df)
-    st.markdown("##### **Clinic Environment Quick Check**"); cols = st.columns(4)
-    with cols[0]: render_kpi_card("Avg. CO2", f"{env_summary_kpis.get('avg_co2_overall_ppm', 0):.0f}", "ppm", "💨")
-    with cols[1]: render_kpi_card("Avg. PM2.5", f"{env_summary_kpis.get('avg_pm25_overall_ugm3', 0):.1f}", "µg/m³", "🌫️")
-    with cols[2]: render_kpi_card("Avg. Waiting Occupancy", f"{env_summary_kpis.get('avg_waiting_room_occupancy_overall_persons', 0):.1f}", "persons", "👨‍👩‍👧‍👦")
-    with cols[3]: render_kpi_card("High Noise Alerts", str(env_summary_kpis.get('rooms_noise_high_alert_latest_count', 0)), "areas", "🔊")
+    st.info("No data available for this period to generate KPI analysis.")
 st.divider()
 
 # --- Tabbed Section ---
 st.header("🛠️ Operational Areas Deep Dive")
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Epidemiology", "🔬 Testing", "💊 Supply Chain", "🧍 Patients", "🌿 Environment"])
 
-with tab1:
+with tab1: # Epidemiology
     st.subheader("Local Epidemiological Intelligence")
     if period_health_df.empty:
-        st.info("No data for epidemiological analysis.")
+        st.info("No health data for epidemiological analysis.")
     else:
-        symptom_agg = period_health_df.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'patient_reported_symptoms']).size().reset_index(name='count')
-        symptom_agg.rename(columns={'encounter_date': 'week', 'patient_reported_symptoms': 'symptom'}, inplace=True)
-        top_symptoms = symptom_agg['symptom'].value_counts().nlargest(5).index
-        symptom_agg = symptom_agg[symptom_agg['symptom'].isin(top_symptoms)]
+        st.markdown("###### **Weekly Symptom Trends (Top 5)**")
+        symptoms_df = period_health_df[['encounter_date', 'patient_reported_symptoms']].dropna()
+        symptoms_df = symptoms_df.assign(symptom=symptoms_df['patient_reported_symptoms'].str.split(r'[;,|]')).explode('symptom')
+        symptoms_df['symptom'] = symptoms_df['symptom'].str.strip().str.title()
+        top_5_symptoms = symptoms_df['symptom'].value_counts().nlargest(5).index
+        symptom_trend_data = symptoms_df[symptoms_df['symptom'].isin(top_5_symptoms)]
+        symptom_weekly = symptom_trend_data.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'symptom']).size().reset_index(name='count')
         
-        st.plotly_chart(plot_bar_chart(symptom_agg, x_col='week', y_col='count', color='symptom', title='Weekly Symptom Frequency (Top 5)'), use_container_width=True)
+        fig = plot_bar_chart(symptom_weekly, x_col='encounter_date', y_col='count', color='symptom', title='Weekly Encounters for Top 5 Symptoms', x_axis_title='Week', y_axis_title='Number of Encounters')
+        st.plotly_chart(fig, use_container_width=True)
         with st.expander("View Symptom Data Table"):
-            st.dataframe(symptom_agg, use_container_width=True)
+            st.dataframe(symptom_weekly, hide_index=True, use_container_width=True)
 
-with tab2:
+with tab2: # Testing
     st.subheader("Testing & Diagnostics Performance")
     if period_health_df.empty:
         st.info("No data for testing analysis.")
@@ -170,73 +169,76 @@ with tab2:
         with col1:
             tat_df = period_health_df.groupby('test_type')['test_turnaround_days'].mean().dropna().sort_values().reset_index()
             tat_df.columns = ['Test Type', 'Avg. TAT (Days)']
-            st.plotly_chart(plot_bar_chart(tat_df, x_col='Avg. TAT (Days)', y_col='Test Type', title="Average Turnaround Time by Test", orientation='h'), use_container_width=True)
-            with st.expander("View Turnaround Time Data"):
-                st.dataframe(tat_df, hide_index=True, use_container_width=True)
+            tat_df['On Target'] = tat_df['Avg. TAT (Days)'] <= settings.TARGET_TEST_TURNAROUND_DAYS
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=tat_df['Avg. TAT (Days)'], y=tat_df['Test Type'], orientation='h', marker_color=np.where(tat_df['On Target'], 'green', 'red'), name='Avg. TAT'))
+            fig.add_vline(x=settings.TARGET_TEST_TURNAROUND_DAYS, line_width=2, line_dash="dash", line_color="black", annotation_text="Target TAT")
+            fig.update_layout(title_text="<b>Average Turnaround Time (TAT) by Test</b>", yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig, use_container_width=True)
         with col2:
-            rejection_df = period_health_df[period_health_df['sample_status'].str.lower() == 'rejected by lab']['rejection_reason'].value_counts().reset_index()
+            rejection_df = period_health_df[period_health_df['sample_status'].str.lower() == 'rejected by lab']['rejection_reason'].value_counts().nlargest(5).reset_index()
             rejection_df.columns = ['Reason', 'Count']
             if not rejection_df.empty:
-                st.plotly_chart(plot_donut_chart(rejection_df, labels_col='Reason', values_col='Count', title="Sample Rejection Reasons"), use_container_width=True)
-                with st.expander("View Rejection Data"):
-                    st.dataframe(rejection_df, hide_index=True, use_container_width=True)
+                st.plotly_chart(plot_donut_chart(rejection_df, labels_col='Reason', values_col='Count', title="Top 5 Sample Rejection Reasons"), use_container_width=True)
             else:
                 st.info("No sample rejections in this period.")
+        st.markdown("###### Overdue Pending Tests")
+        overdue_df = get_patient_alerts_for_clinic(period_health_df, alert_type_filter='Overdue Test')
+        st.dataframe(overdue_df, hide_index=True, use_container_width=True)
 
-with tab3:
+
+with tab3: # Supply Chain
     st.subheader("Medical Supply Forecast")
     forecastable_items = sorted([item for item in full_health_df['item'].dropna().unique() if any(sub in item for sub in getattr(settings, 'KEY_DRUG_SUBSTRINGS_SUPPLY', []))])
     if not forecastable_items:
-        st.info("No forecastable supply items found in the data based on configuration.")
+        st.info("No forecastable supply items found in the data.")
     else:
-        selected_item = st.selectbox("Select an item to forecast:", options=forecastable_items)
-        if selected_item:
-            with st.spinner(f"Generating forecast for {selected_item}..."):
-                forecast_df = generate_simple_supply_forecast(full_health_df, item_filter=[selected_item])
+        with st.spinner("Generating forecasts for all critical items..."):
+            forecast_df = generate_simple_supply_forecast(full_health_df, item_filter=forecastable_items)
+        
+        if not forecast_df.empty:
+            fig = go.Figure()
+            for item in forecastable_items:
+                item_data = forecast_df[forecast_df['item'] == item]
+                fig.add_trace(go.Scatter(x=item_data['forecast_date'], y=item_data['forecasted_days_of_supply'], mode='lines', name=item))
             
-            if not forecast_df.empty:
-                forecast_df = forecast_df.set_index('forecast_date')
-                st.plotly_chart(plot_annotated_line_chart(forecast_df['forecasted_days_of_supply'], title=f"Forecasted Days of Supply for {selected_item}", y_axis_title="Days of Supply Remaining"), use_container_width=True)
-                with st.expander("View Forecast Data Table"):
-                    st.dataframe(forecast_df, use_container_width=True)
-            else:
-                st.warning(f"Could not generate supply forecast for {selected_item}.")
+            fig.add_hline(y=settings.CRITICAL_SUPPLY_DAYS_REMAINING, line_dash="dash", line_color="red", annotation_text="Critical Level")
+            fig.add_hline(y=settings.LOW_SUPPLY_DAYS_REMAINING, line_dash="dot", line_color="orange", annotation_text="Warning Level")
+            fig.update_layout(title_text="<b>Forecasted Days of Supply for Critical Items</b>", xaxis_title="Date", yaxis_title="Days of Supply Remaining")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Could not generate supply forecast.")
 
-with tab4:
-    st.subheader("High-Interest Patient Cases")
+with tab4: # Patients
+    st.subheader("Patient Risk & Demographics")
     if period_health_df.empty:
         st.info("No data for patient analysis.")
     else:
-        key_conditions = getattr(settings, 'KEY_CONDITIONS_FOR_ACTION', [])
-        patient_load = period_health_df[period_health_df['condition'].isin(key_conditions)].copy()
-        if not patient_load.empty:
-            patient_load_agg = patient_load.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'condition']).size().reset_index(name='count')
-            st.plotly_chart(
-                plot_bar_chart(patient_load_agg, x_col='encounter_date', y_col='count', color='condition', barmode='stack', title="Weekly Patient Load by Key Condition", x_axis_title="Week", y_axis_title="Patient Count"),
-                use_container_width=True
-            )
-        
+        st.markdown("###### **Patient Risk Quadrant**")
+        risk_df = period_health_df[['patient_id', 'age', 'ai_risk_score']].dropna().drop_duplicates('patient_id')
+        risk_df['Risk Category'] = pd.cut(risk_df['ai_risk_score'], bins=[0, 60, 75, 100], labels=['Low-Moderate', 'High', 'Very High'])
+        fig = plot_bar_chart(risk_df, x_col='age', y_col='ai_risk_score', color='Risk Category', title="Patient Risk Score vs. Age", x_axis_title="Patient Age", y_axis_title="AI Risk Score")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("###### **Flagged Patients for Clinical Review**")
         flagged_patients = get_patient_alerts_for_clinic(health_df_period=period_health_df)
-        st.markdown("###### Flagged Patients for Clinical Review")
         if not flagged_patients.empty:
             st.dataframe(flagged_patients[['patient_id', 'age', 'gender', 'condition', 'ai_risk_score', 'Alert Reason']].head(15), use_container_width=True)
         else:
             st.success("✅ No patients currently flagged for review.")
 
-with tab5:
+with tab5: # Environment
     st.subheader("Facility Environment Monitoring")
     if period_iot_df.empty:
         st.info("No environmental data for this period.")
     else:
-        co2_trend = period_iot_df.set_index('timestamp')['avg_co2_ppm'].resample('H').mean()
-        st.plotly_chart(plot_annotated_line_chart(co2_trend, "Hourly Average CO2 Levels", "CO2 (ppm)"), use_container_width=True)
-
+        st.markdown("###### **Hourly Average CO2 Levels**")
+        co2_trend = get_trend_data(period_iot_df, 'avg_co2_ppm', date_col='timestamp', period='H')
+        fig = plot_annotated_line_chart(co2_trend, "", y_axis_label="CO2 (ppm)")
+        fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_HIGH_PPM, y1=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, fillcolor="orange", opacity=0.2, line_width=0, annotation_text="High")
+        fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, y1=co2_trend.max()*1.1 if not co2_trend.empty else 3000, fillcolor="red", opacity=0.2, line_width=0, annotation_text="Very High")
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.markdown("###### **Latest Environmental Readings by Room**")
         latest_readings = period_iot_df.sort_values('timestamp', ascending=False).drop_duplicates('room_name', keep='first')
-        latest_readings_melted = latest_readings.melt(id_vars='room_name', value_vars=['avg_co2_ppm', 'avg_pm25', 'avg_temp_celsius'], var_name='Metric', value_name='Value')
-        if not latest_readings_melted.empty:
-            st.plotly_chart(
-                plot_bar_chart(latest_readings_melted, x_col='Value', y_col='room_name', color='Metric', barmode='group', orientation='h', title="Latest Environmental Readings by Room"),
-                use_container_width=True
-            )
-        with st.expander("View Latest Readings Data Table"):
-            st.dataframe(latest_readings, use_container_width=True)
+        st.dataframe(latest_readings[['room_name', 'timestamp', 'avg_co2_ppm', 'avg_pm25', 'avg_temp_celsius', 'avg_noise_db']], use_container_width=True, hide_index=True)
