@@ -32,7 +32,7 @@ except ImportError as e:
 # --- Self-Contained Data Science & Visualization Logic ---
 
 def create_sparkline_bytes(data: pd.Series, color: str) -> Optional[bytes]:
-    """Creates a sparkline and returns it as PNG bytes."""
+    """Creates a sparkline and returns it as PNG bytes to embed in a DataFrame."""
     if data is None or data.empty:
         return None
         
@@ -46,7 +46,6 @@ def create_sparkline_bytes(data: pd.Series, color: str) -> Optional[bytes]:
         plot_bgcolor='rgba(0,0,0,0)'
     )
     try:
-        # Use kaleido engine to convert plot to image bytes
         return fig.to_image(format="png", engine="kaleido")
     except Exception as e:
         logger.warning(f"Could not generate sparkline image. Error: {e}")
@@ -64,38 +63,40 @@ def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: da
     kpi_previous = get_clinic_summary_kpis(previous_period_df) if not previous_period_df.empty else {}
     
     kpi_defs = {
-        "Avg. Test TAT (Days)": ("overall_avg_test_turnaround_conclusive_days", 'test_turnaround_days'),
-        "Sample Rejection (%)": ("sample_rejection_rate_perc", 'sample_rejection_rate_perc'),
-        "Pending Critical Tests": ("total_pending_critical_tests_patients", 'total_pending_critical_tests_patients'),
-        "Key Drug Stockouts": ("key_drug_stockouts_count", 'key_drug_stockouts_count'),
+        "Avg. Test TAT (Days)": ("overall_avg_test_turnaround_conclusive_days", 'lower_is_better'),
+        "Sample Rejection Rate (%)": ("sample_rejection_rate_perc", 'lower_is_better'),
+        "Pending Critical Tests": ("total_pending_critical_tests_patients", 'lower_is_better'),
+        "Key Drug Stockouts": ("key_drug_stockouts_count", 'lower_is_better'),
     }
     
     analysis_data = []
-    trend_start_date = end_date - timedelta(days=60)
+    trend_start_date = end_date - timedelta(days=90)
     trend_df = full_df[full_df['encounter_date'].dt.date.between(trend_start_date, end_date)]
     
-    for name, (key, trend_key) in kpi_defs.items():
+    for name, (key, trend_logic) in kpi_defs.items():
         current_val = kpi_current.get(key)
         prev_val = kpi_previous.get(key)
         
-        trend_series = pd.Series()
-        if not trend_df.empty and trend_key in trend_df.columns:
-            trend_series = get_trend_data(trend_df, value_col=trend_key, period='W-MON')
+        trend_series = get_trend_data(trend_df, value_col=key, period='W-MON') if not trend_df.empty and key in trend_df.columns else pd.Series()
         
         change_str = "N/A"
+        delta_color = "gray"
         if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
             change = ((current_val - prev_val) / prev_val) * 100
             change_str = f"{change:+.1f}%"
-            
+            if trend_logic == 'lower_is_better': delta_color = "red" if change > 0 else "green"
+            else: delta_color = "green" if change > 0 else "red"
+        
         analysis_data.append({
-            "Metric": str(name),
+            "Metric": name,
             "Current Period": f"{current_val:.1f}" if isinstance(current_val, (float, np.floating)) and pd.notna(current_val) else str(current_val if pd.notna(current_val) else 'N/A'),
             "Previous Period": f"{prev_val:.1f}" if isinstance(prev_val, (float, np.floating)) and pd.notna(prev_val) else str(prev_val if pd.notna(prev_val) else 'N/A'),
-            "Change": change_str,
-            "60-Day Trend": create_sparkline_bytes(trend_series, "#007BFF")
+            "Change": f'<span style="color: {delta_color};">{change_str}</span>',
+            "90-Day Trend": create_sparkline_bytes(trend_series, "#007BFF")
         })
         
     return pd.DataFrame(analysis_data)
+
 
 # --- Page Title & Setup ---
 st.title(f"🏥 {settings.APP_NAME} - Clinic Operations & Management Console")
@@ -140,7 +141,8 @@ st.info(f"**Displaying Clinic Console for:** `{period_str}`")
 st.header("🚀 Performance Snapshot with Trend Analysis")
 if not period_health_df.empty:
     kpi_analysis_df = get_kpi_analysis_table(full_health_df, start_date, end_date)
-    st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True, column_config={"60-Day Trend": st.column_config.ImageColumn(width="small")})
+    # Convert the 'Change' column to be rendered as HTML
+    st.write(kpi_analysis_df.to_html(escape=False, index=False), unsafe_allow_html=True)
 else:
     st.info("No data available for this period to generate KPI analysis.")
 st.divider()
@@ -177,7 +179,8 @@ with tab2:
             tat_df.columns = ['Test Type', 'Avg. TAT (Days)']
             if not tat_df.empty:
                 tat_df['On Target'] = tat_df['Avg. TAT (Days)'] <= settings.TARGET_TEST_TURNAROUND_DAYS
-                fig = go.Figure(go.Bar(x=tat_df['Avg. TAT (Days)'], y=tat_df['Test Type'], orientation='h', marker_color=np.where(tat_df['On Target'], '#27AE60', '#D32F2F')))
+                fig = go.Figure()
+                fig.add_trace(go.Bar(x=tat_df['Avg. TAT (Days)'], y=tat_df['Test Type'], orientation='h', marker_color=np.where(tat_df['On Target'], '#27AE60', '#D32F2F')))
                 fig.add_vline(x=settings.TARGET_TEST_TURNAROUND_DAYS, line_width=2, line_dash="dash", line_color="black", annotation_text="Target TAT")
                 fig.update_layout(title_text="<b>Average Turnaround Time (TAT) by Test</b>", yaxis={'categoryorder':'total ascending'}, xaxis_title="Average Days")
                 st.plotly_chart(fig, use_container_width=True)
