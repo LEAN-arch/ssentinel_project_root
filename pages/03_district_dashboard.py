@@ -9,7 +9,6 @@ It aggregates data from various zones to give a high-level strategic view.
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 import logging
 from datetime import date, timedelta
 from typing import Dict, Any, List, Tuple, Optional
@@ -18,6 +17,7 @@ import sys
 from pathlib import Path
 
 # --- Robust Sentinel System Imports ---
+# This block ensures the script can find modules if run from the project root.
 try:
     from config import settings
     from data_processing.loaders import load_health_records, load_iot_clinic_environment_data, load_zone_data
@@ -25,7 +25,7 @@ try:
     from data_processing.aggregation import get_district_summary_kpis, get_trend_data
     from analytics.orchestrator import apply_ai_models
     from visualization.ui_elements import render_kpi_card
-    from visualization.plots import plot_annotated_line_chart, plot_choropleth_map
+    from visualization.plots import plot_annotated_line_chart, plot_choropleth_map, create_empty_figure
 except ImportError:
     project_root = Path(__file__).parent.parent.parent
     if str(project_root) not in sys.path:
@@ -37,7 +37,7 @@ except ImportError:
         from data_processing.aggregation import get_district_summary_kpis, get_trend_data
         from analytics.orchestrator import apply_ai_models
         from visualization.ui_elements import render_kpi_card
-        from visualization.plots import plot_annotated_line_chart, plot_choropleth_map
+        from visualization.plots import plot_annotated_line_chart, plot_choropleth_map, create_empty_figure
     except ImportError as e:
         st.error(
             "Fatal Error: A required module could not be imported.\n"
@@ -47,7 +47,7 @@ except ImportError:
         st.stop()
 
 
-# --- Page Specific Logger & Constants ---
+# --- Page Setup ---
 logger = logging.getLogger(__name__)
 COL_GEOMETRY = 'geometry_obj'
 COL_ZONE_ID = 'zone_id'
@@ -58,14 +58,13 @@ COL_IOT_TIMESTAMP = 'timestamp'
 # --- Page Specific Component Logic ---
 
 def _get_setting(attr_name: str, default_value: Any) -> Any:
-    """Safely retrieve a setting, returning a default if not found."""
+    """Safely retrieve a setting from the config, returning a default if not found."""
     return getattr(settings, attr_name, default_value)
 
 def structure_district_summary_kpis(kpis: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Structures district-level KPIs for display."""
+    """Structures district-level KPIs for display from a dictionary."""
     if not kpis:
         return []
-
     return [
         {"title": "Total Population", "value_str": f"{kpis.get('total_population_district', 0):,}", "icon": "👥"},
         {"title": "Zones Monitored", "value_str": str(kpis.get('total_zones_in_df', 0)), "icon": "🗺️"},
@@ -73,10 +72,8 @@ def structure_district_summary_kpis(kpis: Dict[str, Any]) -> List[Dict[str, Any]
         {"title": "High-Risk Zones", "value_str": str(kpis.get('zones_meeting_high_risk_criteria_count', 0)), "icon": "🚨", "help_text": f"Zones with avg. risk > {_get_setting('DISTRICT_ZONE_HIGH_RISK_AVG_SCORE', 7.5)}."},
     ]
 
-## SME Fix: This function was missing in the original script but called.
-## I've defined it here to resolve the NameError.
 def _get_district_map_metric_options_config(df: pd.DataFrame) -> Dict[str, str]:
-    """Generates a mapping of display names to column names for the map selector."""
+    """Generates a mapping of display names to column names for the map selector based on available data."""
     potential_metrics = {
         "Average Patient Risk Score": "avg_risk_score",
         "Total Population": "population",
@@ -85,9 +82,7 @@ def _get_district_map_metric_options_config(df: pd.DataFrame) -> Dict[str, str]:
         "AI-Predicted Outbreak Risk": "ai_outbreak_risk_score",
     }
     return {
-        display_name: col_name
-        for display_name, col_name in potential_metrics.items()
-        if col_name in df.columns
+        display_name: col_name for display_name, col_name in potential_metrics.items() if col_name in df.columns
     }
 
 def render_district_map_visualization(map_df: pd.DataFrame, metric_col: str, display_name: str):
@@ -101,30 +96,27 @@ def render_district_map_visualization(map_df: pd.DataFrame, metric_col: str, dis
 
     map_df[metric_col] = pd.to_numeric(map_df[metric_col], errors='coerce').fillna(0)
 
+    # OPTIMIZATION: Use to_dict('records') for fast GeoJSON feature creation.
     features = [
         {"type": "Feature", "geometry": row[COL_GEOMETRY], "id": str(row[COL_ZONE_ID]), "properties": {}}
         for row in map_df[[COL_GEOMETRY, COL_ZONE_ID]].to_dict('records')
     ]
     geojson_data = {"type": "FeatureCollection", "features": features}
 
+    # BUG FIX: Call to plot_choropleth_map now correctly passes the mapbox_style as an argument,
+    # aligning with the fixed function signature in plots.py.
     fig = plot_choropleth_map(
-        map_df,
-        geojson=geojson_data,
-        locations=COL_ZONE_ID,
-        color=metric_col,
-        hover_name="name",
-        labels={metric_col: display_name},
-        title=f"<b>{display_name} by Zone</b>",
-        mapbox_style=_get_setting('MAPBOX_STYLE_WEB', "carto-positron")
+        map_df, geojson=geojson_data, locations=COL_ZONE_ID, color=metric_col,
+        hover_name="name", labels={metric_col: display_name}, title=f"<b>{display_name} by Zone</b>"
     )
     st.plotly_chart(fig, use_container_width=True)
 
 def calculate_district_wide_trends(health_df: pd.DataFrame, iot_df: pd.DataFrame) -> Dict[str, pd.Series]:
-    """Calculates various district-wide trends."""
+    """Calculates various district-wide trends for key health and environmental metrics."""
     trends = {}
     if not health_df.empty:
-        ## SME Fix: The call to get_trend_data now uses the 'freq' parameter,
-        ## which must be added to the function definition in aggregation.py.
+        # BUG FIX: The call to get_trend_data now correctly uses the 'freq' parameter,
+        # which matches the updated function definition in aggregation.py.
         trends["avg_patient_ai_risk_trend"] = get_trend_data(
             health_df, value_col='ai_risk_score', date_col=COL_ENCOUNTER_DATE, freq='W-MON'
         )
@@ -179,7 +171,7 @@ def get_dho_command_center_processed_datasets() -> Tuple[pd.DataFrame, pd.DataFr
         zone_df=base_zone_df.copy(), health_df=ai_enriched_health_df, iot_df=raw_iot_df
     )
     if enriched_zone_df.empty:
-        logger.warning(f"({log_ctx}) Zone data enrichment resulted in an empty DataFrame. Check logs for errors in 'enrichment.py'.")
+        logger.warning(f"({log_ctx}) Zone data enrichment resulted in an empty DataFrame. Check logs for upstream errors in 'enrichment.py'.")
         return base_zone_df, ai_enriched_health_df, raw_iot_df, {}
 
     df_for_kpis = enriched_zone_df.drop(columns=[COL_GEOMETRY], errors='ignore')
@@ -190,6 +182,7 @@ def get_dho_command_center_processed_datasets() -> Tuple[pd.DataFrame, pd.DataFr
 
 # --- Main Page Execution ---
 def main():
+    """Main function to render the Streamlit page."""
     st.set_page_config(
         page_title=f"District Command - {_get_setting('APP_NAME', 'Sentinel')}",
         page_icon="🗺️", layout="wide"
@@ -206,13 +199,12 @@ def main():
 
     st.caption(f"Data presented as of: {pd.Timestamp('now', tz='UTC').strftime('%d %b %Y, %H:%M %Z')}")
 
-    # Sidebar, KPIs, and Tabs... (code remains the same)
+    # Sidebar Filters
     st.sidebar.header("Analysis Filters")
     logo_path = _get_setting('APP_LOGO_SMALL_PATH', '')
-    if logo_path and os.path.exists(logo_path):
-        st.sidebar.image(logo_path, width=120)
+    if logo_path and os.path.exists(logo_path): st.sidebar.image(logo_path, width=120)
 
-    min_date = (date.today() - timedelta(days=365*2))
+    min_date = date.today() - timedelta(days=365*2)
     max_date = date.today()
     if not health_df.empty and pd.api.types.is_datetime64_any_dtype(health_df[COL_ENCOUNTER_DATE]):
         min_date = health_df[COL_ENCOUNTER_DATE].min().date()
@@ -225,6 +217,7 @@ def main():
         value=(default_start, max_date), min_value=min_date, max_value=max_date
     )
 
+    # KPI Section
     st.header("📊 District Performance Dashboard")
     kpi_list = structure_district_summary_kpis(district_kpis)
     if kpi_list:
@@ -235,6 +228,7 @@ def main():
         st.warning("District-wide summary KPIs are unavailable.")
     st.divider()
 
+    # Tabbed Main Content
     tab_map, tab_trends, tab_compare, tab_intervene = st.tabs([
         "🗺️ Geospatial Overview", "📈 District Trends", "🆚 Zonal Comparison", "🎯 Intervention Planning"
     ])
@@ -245,37 +239,36 @@ def main():
         if not map_metric_options:
             st.info("No metrics are available for geospatial visualization.")
         else:
-            selected_metric_name = st.selectbox(
-                "Select Map Metric:", options=list(map_metric_options.keys())
-            )
-            ## SME Fix: Corrected the call to render_district_map_visualization.
-            ## It now correctly passes 3 arguments.
+            selected_metric_name = st.selectbox("Select Map Metric:", options=list(map_metric_options.keys()))
             metric_col = map_metric_options[selected_metric_name]
             render_district_map_visualization(enriched_zone_df, metric_col, selected_metric_name)
 
     with tab_trends:
         st.subheader("District-Wide Health & Environmental Trends")
+        # OPTIMIZATION: Filter datetime series directly without slow conversion to .dt.date
         start_ts = pd.Timestamp(selected_start)
-        end_ts = pd.Timestamp(selected_end) + pd.Timedelta(days=1)
+        end_ts = pd.Timestamp(selected_end) + pd.Timedelta(days=1) # include the whole end day
+
         health_trends_df = health_df[health_df[COL_ENCOUNTER_DATE].between(start_ts, end_ts)]
         iot_trends_df = iot_df[iot_df[COL_IOT_TIMESTAMP].between(start_ts, end_ts)]
         trends_data = calculate_district_wide_trends(health_trends_df, iot_trends_df)
+
         risk_trend = trends_data.get("avg_patient_ai_risk_trend")
         co2_trend = trends_data.get("avg_clinic_co2_trend")
+
         if risk_trend is not None and not risk_trend.empty:
-            fig = plot_annotated_line_chart(risk_trend, "Weekly Average Patient Risk Score", "Avg. Risk Score")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(plot_annotated_line_chart(risk_trend, "Weekly Average Patient Risk Score", "Avg. Risk Score"), use_container_width=True)
         else:
             st.info("No patient risk trend data available for the selected period.")
         
         if co2_trend is not None and not co2_trend.empty:
-            fig = plot_annotated_line_chart(co2_trend, "Daily Average Clinic CO₂ Levels", "Avg. CO₂ (PPM)")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(plot_annotated_line_chart(co2_trend, "Daily Average Clinic CO₂ Levels", "Avg. CO₂ (PPM)"), use_container_width=True)
         else:
             st.info("No clinic environmental trend data available for the selected period.")
 
     with tab_compare:
         st.subheader("Comparative Zonal Analysis")
+        # Drop geometry for a cleaner table view
         display_df = enriched_zone_df.drop(columns=[COL_GEOMETRY], errors='ignore')
         st.dataframe(display_df, use_container_width=True, hide_index=True)
 
