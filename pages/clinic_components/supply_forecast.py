@@ -43,8 +43,7 @@ class ClinicSupplyForecastPreparer:
         if not key_drugs:
             self.notes.append("Configuration Error: KEY_DRUG_SUBSTRINGS_SUPPLY is not defined in settings.")
             return []
-
-        # Create a single regex pattern for efficient matching.
+        
         drug_pattern = '|'.join(re.escape(s) for s in key_drugs if s)
         if not drug_pattern: return []
 
@@ -56,10 +55,9 @@ class ClinicSupplyForecastPreparer:
         return sorted(items)
 
     def _calculate_stockout_dates(self, forecast_df: pd.DataFrame) -> pd.Series:
-        """Efficiently calculates the first date an item is forecasted to run out."""
+        """Calculates the first date an item is forecasted to run out."""
         if forecast_df.empty: return pd.Series(dtype='datetime64[ns]')
         
-        # A stockout occurs when days of supply is less than 1.
         stockout_rows = forecast_df[forecast_df['forecasted_days_of_supply'] < 1].copy()
         stockout_rows = stockout_rows.sort_values('forecast_date').drop_duplicates(subset=['item'], keep='first')
         
@@ -96,31 +94,30 @@ class ClinicSupplyForecastPreparer:
             detailed_forecast_df = pd.DataFrame()
 
         # --- Assemble Final UI DataFrame ---
-        # Start with a scaffold of all items we intended to forecast.
+        # Start with a scaffold to ensure all requested items are in the final output.
         final_df = pd.DataFrame({'item': items_to_forecast})
         
-        if not isinstance(detailed_forecast_df, pd.DataFrame) or detailed_forecast_df.empty:
-            self.notes.append("Forecasting model did not produce any data for the requested items.")
-        else:
-            # 1. Get current status (first day of forecast).
+        if isinstance(detailed_forecast_df, pd.DataFrame) and not detailed_forecast_df.empty:
             current_status = detailed_forecast_df.sort_values('forecast_date').drop_duplicates(subset=['item'], keep='first')
             final_df = pd.merge(final_df, current_status[['item', 'forecasted_days_of_supply']], on='item', how='left')
             
-            # 2. Calculate and merge stockout dates.
             stockout_dates = self._calculate_stockout_dates(detailed_forecast_df)
             final_df = pd.merge(final_df, stockout_dates.rename('estimated_stockout_date'), on='item', how='left')
+        else:
+             self.notes.append("Forecasting model did not produce any data for the requested items.")
 
         # --- Final Formatting and Cleanup ---
+        # DEFINITIVE FIX for KeyError: Rename column *after* merge and checks
         final_df.rename(columns={'forecasted_days_of_supply': 'days_of_supply_remaining'}, inplace=True)
         final_df = self._add_status_column(final_df)
         
         # Clean up data types and fill missing values for a pristine UI output.
-        final_df['days_of_supply_remaining'] = final_df['days_of_supply_remaining'].round(1).fillna(0.0)
-        final_df['estimated_stockout_date'] = final_df['estimated_stockout_date'].dt.strftime('%Y-%m-%d').fillna('N/A')
-        final_df['stock_status'].fillna("Unknown", inplace=True)
+        final_df['days_of_supply_remaining'] = final_df.get('days_of_supply_remaining', 0.0).round(1).fillna(0.0)
+        final_df['estimated_stockout_date'] = pd.to_datetime(final_df.get('estimated_stockout_date')).dt.strftime('%Y-%m-%d').fillna('N/A')
+        final_df['stock_status'] = final_df.get('stock_status', "Unknown").fillna("Unknown")
         
         return {
-            "forecast_items_overview_list": final_df[UI_OUTPUT_COLS].to_dict('records'),
+            "forecast_items_overview_list": final_df.reindex(columns=UI_OUTPUT_COLS).to_dict('records'),
             "forecast_model_type_used": model_name,
             "processing_notes": self.notes
         }
@@ -129,21 +126,9 @@ class ClinicSupplyForecastPreparer:
 def prepare_clinic_supply_forecast_overview_data(
     historical_health_df: Optional[pd.DataFrame],
     use_ai_supply_forecasting_model: bool = False,
-    **kwargs # Absorb unused parameters like 'reporting_period_context_str' for API stability.
+    **kwargs
 ) -> Dict[str, Any]:
-    """
-    Factory function to prepare an overview of supply forecasts for the UI.
-
-    Args:
-        historical_health_df (Optional[pd.DataFrame]): A DataFrame containing the full historical
-            record of supply consumption, not just the period in view.
-        use_ai_supply_forecasting_model (bool): A flag to switch between simple
-            and advanced (AI-simulated) forecasting models. Defaults to False.
-    
-    Returns:
-        Dict[str, Any]: A dictionary containing the list of forecasted items
-                        (as dicts), the model type used, and any processing notes.
-    """
+    """Factory function to prepare an overview of supply forecasts for the UI."""
     preparer = ClinicSupplyForecastPreparer(
         historical_health_df=historical_health_df,
         use_ai_model=use_ai_supply_forecasting_model
