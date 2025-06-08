@@ -10,9 +10,7 @@ from pathlib import Path
 
 try:
     from config import settings
-    # --- DEFINITIVE FIX FOR ImportError ---
-    # Import the singleton instance 'data_cleaner' instead of the non-existent function.
-    from .helpers import data_cleaner, convert_date_columns, robust_json_load
+    from .helpers import data_cleaner, convert_date_columns, robust_json_load, standardize_missing_values
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
     logger_init = logging.getLogger(__name__)
@@ -20,7 +18,6 @@ except ImportError as e:
     raise
 
 logger = logging.getLogger(__name__)
-
 
 class DataLoader:
     """
@@ -88,16 +85,16 @@ class DataLoader:
 
             df = data_cleaner.clean_column_names(df)
             
+            # --- DEFINITIVE FIX FOR Timezone Error ---
+            # 1. Convert to datetime first.
             df = convert_date_columns(df, config.get('date_cols', []))
+            # 2. Immediately make all specified date columns timezone-naive.
             for col in config.get('date_cols', []):
-                if col in df.columns:
+                if col in df.columns and pd.api.types.is_datetime64_any_dtype(df[col]):
                     df[col] = df[col].dt.tz_localize(None)
             
             num_defaults = getattr(settings, config.get('numeric_defaults_attr', ''), {})
             str_defaults = getattr(settings, config.get('string_defaults_attr', ''), {})
-            
-            # --- DEFINITIVE FIX FOR ImportError ---
-            # Call the method on the imported singleton instance.
             df = data_cleaner.standardize_missing_values(df, str_defaults, num_defaults)
             
             logger.info(f"({config_key}) Successfully loaded and processed {len(df)} records from '{file_path.name}'.")
@@ -137,34 +134,27 @@ class DataLoader:
 _data_loader = DataLoader()
 
 def load_health_records(file_path_str: Optional[str] = None, source_context: str = "") -> pd.DataFrame:
-    """Loads, cleans, and standardizes the primary health records data."""
     return _data_loader._load_and_process_csv('health_records', file_path_str)
 
 def load_iot_clinic_environment_data(file_path_str: Optional[str] = None, source_context: str = "") -> pd.DataFrame:
-    """Loads, cleans, and standardizes IoT clinic environment data."""
     return _data_loader._load_and_process_csv('iot_environment', file_path_str)
 
 def load_zone_data(attributes_file_path_str: Optional[str] = None, geometries_file_path_str: Optional[str] = None, source_context: str = "") -> pd.DataFrame:
-    """Loads and merges zone attribute data (CSV) and zone geometries (GeoJSON)."""
     return _data_loader.load_zone_data(attributes_file_path_str, geometries_file_path_str)
 
 def load_json_config(path_or_setting: str, default: Any) -> Any:
-    """Loads a JSON config file from a path or setting attribute."""
     file_path = _data_loader._resolve_path(None, path_or_setting) or _data_loader._resolve_path(path_or_setting, "")
     if not file_path: return default
     data = robust_json_load(file_path)
     return data if data is not None and isinstance(data, type(default)) else default
 
 def load_escalation_protocols() -> Dict[str, Any]:
-    """Wrapper to load escalation protocols JSON."""
     return load_json_config('ESCALATION_PROTOCOLS_JSON_PATH', {})
 
 def load_pictogram_map() -> Dict[str, str]:
-    """Wrapper to load pictogram map JSON."""
     return load_json_config('PICTOGRAM_MAP_JSON_PATH', {})
 
 def load_haptic_patterns() -> Dict[str, List[int]]:
-    """Wrapper to load and validate haptic patterns JSON."""
     data = load_json_config('HAPTIC_PATTERNS_JSON_PATH', {})
     if not isinstance(data, dict): return {}
     return {k: v for k, v in data.items() if isinstance(v, list) and all(isinstance(i, int) for i in v)}
