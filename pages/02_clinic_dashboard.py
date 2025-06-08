@@ -32,6 +32,15 @@ except ImportError as e:
 
 def create_sparkline(data: pd.Series, color: str) -> go.Figure:
     """Creates a compact, minimalist line chart for KPI tables."""
+    if data is None or data.empty:
+        # --- DEFINITIVE FIX for ArrowInvalid ---
+        # Return an empty figure object instead of None to maintain type consistency.
+        fig = go.Figure()
+        fig.update_layout(width=120, height=40, margin=dict(l=0,r=0,t=5,b=5), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        fig.update_xaxes(visible=False, showticklabels=False)
+        fig.update_yaxes(visible=False, showticklabels=False)
+        return fig
+        
     fig = go.Figure(go.Scatter(x=data.index, y=data, mode='lines', line=dict(color=color, width=2)))
     fig.update_layout(
         width=120, height=40,
@@ -44,32 +53,32 @@ def create_sparkline(data: pd.Series, color: str) -> go.Figure:
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS)
 def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: date) -> pd.DataFrame:
     """Performs a period-over-period KPI analysis and generates sparklines."""
-    # Define current and previous periods
     current_period_df = full_df[full_df['encounter_date'].dt.date.between(start_date, end_date)]
     period_days = (end_date - start_date).days + 1
     prev_start_date = start_date - timedelta(days=period_days)
     previous_period_df = full_df[full_df['encounter_date'].dt.date.between(prev_start_date, start_date - timedelta(days=1))]
     
-    # Calculate KPIs for both periods
     kpi_current = get_clinic_summary_kpis(current_period_df) if not current_period_df.empty else {}
     kpi_previous = get_clinic_summary_kpis(previous_period_df) if not previous_period_df.empty else {}
     
+    # Map display names to the internal keys from the aggregation function
     kpi_defs = {
-        "Avg. Test TAT (Days)": ("overall_avg_test_turnaround_conclusive_days", 'test_turnaround_days'),
-        "Sample Rejection (%)": ("sample_rejection_rate_perc", 'sample_rejection_rate_perc'),
-        "Pending Critical Tests": ("total_pending_critical_tests_patients", 'total_pending_critical_tests_patients'),
-        "Key Drug Stockouts": ("key_drug_stockouts_count", 'key_drug_stockouts_count'),
+        "Avg. Test TAT (Days)": "overall_avg_test_turnaround_conclusive_days",
+        "Sample Rejection (%)": "sample_rejection_rate_perc",
+        "Pending Critical Tests": "total_pending_critical_tests_patients",
+        "Key Drug Stockouts": "key_drug_stockouts_count",
     }
     
     analysis_data = []
     trend_start_date = end_date - timedelta(days=60)
     trend_df = full_df[full_df['encounter_date'].dt.date.between(trend_start_date, end_date)]
     
-    for name, (key, trend_key) in kpi_defs.items():
+    for name, key in kpi_defs.items():
         current_val = kpi_current.get(key)
         prev_val = kpi_previous.get(key)
         
-        trend_series = get_trend_data(trend_df, value_col=trend_key, period='W-MON') if not trend_df.empty else pd.Series()
+        # The aggregation function returns a dict, so we must access the trend data differently
+        trend_series = pd.Series(get_clinic_summary_kpis(trend_df.loc[trend_df['encounter_date'].dt.to_period('W') == w]).get(key) for w in trend_df['encounter_date'].dt.to_period('W').unique()) if not trend_df.empty else pd.Series()
         
         change_str = "N/A"
         if pd.notna(current_val) and pd.notna(prev_val) and prev_val != 0:
@@ -78,14 +87,13 @@ def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: da
             
         analysis_data.append({
             "Metric": name,
-            "Current Period": f"{current_val:.1f}" if isinstance(current_val, (float, np.floating)) else current_val,
-            "Previous Period": f"{prev_val:.1f}" if isinstance(prev_val, (float, np.floating)) else prev_val,
+            "Current Period": f"{current_val:.1f}" if isinstance(current_val, (float, np.floating)) and not np.isnan(current_val) else current_val if pd.notna(current_val) else "N/A",
+            "Previous Period": f"{prev_val:.1f}" if isinstance(prev_val, (float, np.floating)) and not np.isnan(prev_val) else prev_val if pd.notna(prev_val) else "N/A",
             "Change": change_str,
-            "60-Day Trend": create_sparkline(trend_series, "#007BFF") if not trend_series.empty else None
+            "60-Day Trend": create_sparkline(trend_series, "#007BFF")
         })
         
     return pd.DataFrame(analysis_data)
-
 
 # --- Page Title & Setup ---
 st.title(f"🏥 {settings.APP_NAME} - Clinic Operations & Management Console")
@@ -130,14 +138,15 @@ st.info(f"**Displaying Clinic Console for:** `{period_str}`")
 st.header("🚀 Performance Snapshot with Trend Analysis")
 if not period_health_df.empty:
     kpi_analysis_df = get_kpi_analysis_table(full_health_df, start_date, end_date)
-    st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True, column_config={"60-Day Trend": st.column_config.ImageColumn()})
+    st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True, column_config={"60-Day Trend": st.column_config.ImageColumn(width="small")})
 else:
     st.info("No data available for this period to generate KPI analysis.")
 st.divider()
 
 # --- Tabbed Section ---
 st.header("🛠️ Operational Areas Deep Dive")
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Epidemiology", "🔬 Testing", "💊 Supply Chain", "🧍 Patients", "🌿 Environment"])
+tab_titles = ["📈 Epidemiology", "🔬 Testing", "💊 Supply Chain", "🧍 Patients", "🌿 Environment"]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_titles)
 
 with tab1:
     st.subheader("Local Epidemiological Intelligence")
@@ -151,7 +160,6 @@ with tab1:
         top_5_symptoms = symptoms_df['symptom'].value_counts().nlargest(5).index
         symptom_trend_data = symptoms_df[symptoms_df['symptom'].isin(top_5_symptoms)]
         symptom_weekly = symptom_trend_data.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'symptom']).size().reset_index(name='count')
-        
         if not symptom_weekly.empty:
             fig = plot_bar_chart(symptom_weekly, x_col='encounter_date', y_col='count', color='symptom', title='Weekly Encounters for Top 5 Symptoms', x_axis_title='Week', y_axis_title='Number of Encounters')
             st.plotly_chart(fig, use_container_width=True)
@@ -177,10 +185,6 @@ with tab2:
                 fig.add_vline(x=settings.TARGET_TEST_TURNAROUND_DAYS, line_width=2, line_dash="dash", line_color="black", annotation_text="Target TAT")
                 fig.update_layout(title_text="<b>Average Turnaround Time (TAT) by Test</b>", yaxis={'categoryorder':'total ascending'}, xaxis_title="Average Days")
                 st.plotly_chart(fig, use_container_width=True)
-                with st.expander("View Turnaround Time Data"):
-                    st.dataframe(tat_df, hide_index=True, use_container_width=True)
-            else:
-                st.info("No turnaround time data available.")
         with col2:
             st.markdown("###### **Sample Rejection Reasons**")
             rejection_df = period_health_df[period_health_df['sample_status'].str.lower() == 'rejected by lab']['rejection_reason'].value_counts().nlargest(5).reset_index()
@@ -189,7 +193,7 @@ with tab2:
                 st.plotly_chart(plot_donut_chart(rejection_df, labels_col='Reason', values_col='Count', title="Top 5 Sample Rejection Reasons"), use_container_width=True)
             else:
                 st.info("No sample rejections in this period.")
-        
+
 with tab3:
     st.subheader("Medical Supply Forecast")
     forecastable_items = sorted([item for item in full_health_df['item'].dropna().unique() if any(sub in item for sub in getattr(settings, 'KEY_DRUG_SUBSTRINGS_SUPPLY', []))])
@@ -219,8 +223,7 @@ with tab4:
         risk_df = period_health_df[['patient_id', 'age', 'ai_risk_score']].dropna().drop_duplicates('patient_id')
         if not risk_df.empty:
             risk_df['Risk Category'] = pd.cut(risk_df['ai_risk_score'], bins=[0, 60, 75, 101], labels=['Low-Moderate', 'High', 'Very High'], right=False)
-            fig = plot_bar_chart(risk_df, x_col='age', y_col='ai_risk_score', color='Risk Category', title="", x_axis_title="Patient Age", y_axis_title="AI Risk Score")
-            fig.update_layout(barmode='overlay')
+            fig = plot_bar_chart(risk_df, x_col='age', y_col='ai_risk_score', color='Risk Category', title="Patient Risk Score vs. Age", x_axis_title="Patient Age", y_axis_title="AI Risk Score", barmode='overlay')
             st.plotly_chart(fig, use_container_width=True)
         
         st.markdown("###### **Flagged Patients for Clinical Review**")
