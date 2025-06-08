@@ -10,9 +10,8 @@ import logging
 from typing import Optional, Any, Dict
 import html
 
-# SME Note: BUG FIX. Imported the settings module directly and created a local _get_setting
-# helper function. This resolves the NameError when creating maps and keeps the
-# pattern of safe setting retrieval consistent within this file.
+# This section correctly handles importing optional theming and settings,
+# with a robust fallback to prevent crashes if they are not found.
 try:
     from config import settings
     from .themes import sentinel_theme
@@ -42,7 +41,8 @@ class ChartFactory:
         self._base_layout = {'title_x': 0.5, 'margin': dict(l=60, r=40, t=80, b=60), 'legend': dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), 'xaxis': {'zeroline': False}, 'yaxis': {'zeroline': False}}
 
     def _apply_layout(self, fig: go.Figure, **kwargs) -> go.Figure:
-        layout_updates = self._base_layout.copy(); layout_updates.update(kwargs)
+        layout_updates = self._base_layout.copy()
+        layout_updates.update(kwargs)
         fig.update_layout(**layout_updates)
         return fig
 
@@ -54,7 +54,6 @@ class ChartFactory:
     def create_bar_chart(self, df: pd.DataFrame, x: str, y: str, title: str, y_values_are_counts: bool, **px_kwargs) -> go.Figure:
         color, orientation = px_kwargs.get('color'), px_kwargs.get('orientation', 'v')
         required_cols = [x, y]
-        # SME Note: REFACTOR. Replaced the unpythonic list comprehension with a standard, readable if-statement.
         if color:
             required_cols.append(color)
 
@@ -63,34 +62,17 @@ class ChartFactory:
             y_title, x_title = px_kwargs.pop('y_axis_title', y.replace('_', ' ').title()), px_kwargs.pop('x_axis_title', x.replace('_', ' ').title())
             labels = {x: x_title, y: y_title}
             fig = px.bar(df, x=x, y=y, title=f"<b>{html.escape(title)}</b>", labels=labels, text_auto=True, **px_kwargs)
-
             value_col = x if orientation == 'h' else y
             if df[value_col].notna().any():
                 max_val = df.groupby(y if orientation == 'h' else x)[value_col].sum().max() if px_kwargs.get('barmode') == 'stack' else df[value_col].max()
                 if orientation == 'h': fig.update_xaxes(range=[0, max_val * 1.15])
                 else: fig.update_yaxes(range=[0, max_val * 1.15])
-
-            # SME Note: REFACTOR. Broke down the complex hovertemplate logic into readable parts.
-            # This is much easier to debug and maintain.
-            category_label = f'%{{y if orientation == "h" else x}}'
-            value_label_raw = f'%{{x if orientation == "h" else y}}'
+            category_label, value_label_raw = f'%{{y if orientation == "h" else x}}', f'%{{x if orientation == "h" else y}}'
             text_template = ',.0f' if y_values_are_counts else ',.2f'
-
             if color:
-                color_title = html.escape(color.replace("_", " ").title())
-                value_title = html.escape(value_col.replace("_", " ").title())
-                hovertemplate = (
-                    f'<b>{category_label}</b><br>'
-                    f'{color_title}: %{{fullData.name}}<br>'
-                    f'{value_title}: {value_label_raw}:{text_template}<extra></extra>'
-                )
+                hovertemplate = f'<b>{category_label}</b><br>{html.escape(color.replace("_", " ").title())}: %{{fullData.name}}<br>{html.escape(value_col.replace("_", " ").title())}: {value_label_raw}:{text_template}<extra></extra>'
             else:
-                value_title = html.escape(x_title if orientation == "h" else y_title)
-                hovertemplate = (
-                    f'<b>{category_label}</b><br>'
-                    f'{value_title}: {value_label_raw}:{text_template}<extra></extra>'
-                )
-
+                hovertemplate = f'<b>{category_label}</b><br>{html.escape(x_title if orientation == "h" else y_title)}: {value_label_raw}:{text_template}<extra></extra>'
             fig.update_traces(textposition='outside', cliponaxis=False, hovertemplate=hovertemplate, texttemplate=f'{value_label_raw}:{text_template}')
             if y_values_are_counts: fig.update_xaxes(tickformat='d') if orientation == 'h' else fig.update_yaxes(tickformat='d')
             return self._apply_layout(fig, legend_title_text=color.replace("_", " ").title() if color else "")
@@ -98,7 +80,6 @@ class ChartFactory:
             logger.error(f"Failed to create bar chart '{title}': {e}", exc_info=True); return self.create_empty_figure(title, "Error generating chart")
 
     def create_donut_chart(self, df: pd.DataFrame, labels: str, values: str, title: str) -> go.Figure:
-        # This function was already well-written. No changes needed.
         if not all(c in df.columns for c in [labels, values]): return self.create_empty_figure(title, "Missing data columns.")
         try:
             fig = px.pie(df, names=labels, values=values, title=f"<b>{html.escape(title)}</b>", hole=0.4, color_discrete_sequence=get_theme_color(None, category='categorical_sequence'))
@@ -108,7 +89,6 @@ class ChartFactory:
             logger.error(f"Failed to create donut chart '{title}': {e}", exc_info=True); return self.create_empty_figure(title, "Error generating chart")
 
     def create_annotated_line_chart(self, series: pd.Series, title: str, y_title: str) -> go.Figure:
-        # This function was already well-written. No changes needed.
         if not isinstance(series, pd.Series) or series.empty: return self.create_empty_figure(title, "No data available")
         try:
             fig = px.line(x=series.index, y=series.values, title=f"<b>{html.escape(title)}</b>", markers=True)
@@ -130,7 +110,6 @@ class ChartFactory:
     def create_choropleth_map(self, df: pd.DataFrame, geojson: Dict, locations: str, color: str, title: str, **px_kwargs) -> go.Figure:
         if not all(c in df.columns for c in [locations, color]): return self.create_empty_figure(title, "Missing data for map.")
         try:
-            # SME Note: BUG FIX. Calls to the local _get_setting helper now correctly retrieve map configurations.
             fig = px.choropleth_mapbox(df, geojson=geojson, locations=locations, color=color,
                                        mapbox_style=_get_setting('MAPBOX_STYLE_WEB', "carto-positron"),
                                        zoom=_get_setting('MAP_DEFAULT_ZOOM_LEVEL', 8),
@@ -142,6 +121,7 @@ class ChartFactory:
             logger.error(f"Failed to create choropleth map '{title}': {e}", exc_info=True); return self.create_empty_figure(title, "Error generating map")
 
 # --- Public API ---
+# This section makes the factory's methods available as simple functions.
 _factory = ChartFactory(theme=sentinel_theme)
 def create_empty_figure(title: str, message: str = "No data available") -> go.Figure: return _factory.create_empty_figure(title, message)
 def plot_bar_chart(df_input: pd.DataFrame, x_col: str, y_col: str, title: str, y_values_are_counts: bool = False, **kwargs: Any) -> go.Figure:
@@ -151,7 +131,10 @@ def plot_donut_chart(df_input: pd.DataFrame, labels_col: str, values_col: str, t
     if not isinstance(df_input, pd.DataFrame) or df_input.empty: return create_empty_figure(title, f"No data for '{title}'")
     return _factory.create_donut_chart(df_input, labels_col, values_col, title)
 def plot_annotated_line_chart(series_input: pd.Series, title: str, y_axis_title: str) -> go.Figure:
+    if not isinstance(series_input, pd.Series) or series_input.empty: return create_empty_figure(title, f"No data for '{title}'")
     return _factory.create_annotated_line_chart(series_input, title, y_axis_title)
-def plot_choropleth_map(df_input: pd.DataFrame, geojson: Dict, locations: str, color: str, title: str, **kwargs: Any) -> go.Gofigure:
+def plot_choropleth_map(df_input: pd.DataFrame, geojson: Dict, locations: str, color: str, title: str, **kwargs: Any) -> go.Figure:
+    """Creates a choropleth map of a given metric by location."""
     if not isinstance(df_input, pd.DataFrame) or df_input.empty: return create_empty_figure(title, f"No data for '{title}'")
+    # SME Note: CRITICAL FIX. Corrected go.Gofigure to go.Figure.
     return _factory.create_choropleth_map(df_input, geojson, locations, color, title, **kwargs)
