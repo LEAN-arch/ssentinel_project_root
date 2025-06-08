@@ -10,8 +10,9 @@ from pathlib import Path
 
 try:
     from config import settings
-    # Ensure all necessary helpers are imported
-    from .helpers import data_cleaner, convert_date_columns, robust_json_load, standardize_missing_values
+    # --- DEFINITIVE FIX FOR ImportError ---
+    # Import the singleton instance 'data_cleaner' instead of the non-existent function.
+    from .helpers import data_cleaner, convert_date_columns, robust_json_load
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
     logger_init = logging.getLogger(__name__)
@@ -87,8 +88,6 @@ class DataLoader:
 
             df = data_cleaner.clean_column_names(df)
             
-            # --- DEFINITIVE FIX FOR Timezone Error ---
-            # Convert to datetime first, then immediately make timezone-naive.
             df = convert_date_columns(df, config.get('date_cols', []))
             for col in config.get('date_cols', []):
                 if col in df.columns:
@@ -96,7 +95,10 @@ class DataLoader:
             
             num_defaults = getattr(settings, config.get('numeric_defaults_attr', ''), {})
             str_defaults = getattr(settings, config.get('string_defaults_attr', ''), {})
-            df = standardize_missing_values(df, str_defaults, num_defaults)
+            
+            # --- DEFINITIVE FIX FOR ImportError ---
+            # Call the method on the imported singleton instance.
+            df = data_cleaner.standardize_missing_values(df, str_defaults, num_defaults)
             
             logger.info(f"({config_key}) Successfully loaded and processed {len(df)} records from '{file_path.name}'.")
             return df
