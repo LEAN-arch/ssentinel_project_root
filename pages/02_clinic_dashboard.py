@@ -1,102 +1,3 @@
-# sentinel_project_root/data_processing/aggregation.py
-"""
-A collection of robust, high-performance, and encapsulated components for
-aggregating data to compute KPIs and summaries for Sentinel dashboards.
-"""
-import pandas as pd
-import numpy as np
-import logging
-from typing import Dict, Any, Optional, Union, Callable
-import streamlit as st
-import re
-
-try:
-    from config import settings
-    from .helpers import convert_to_numeric
-except ImportError as e:
-    logging.critical(f"Critical import error in aggregation.py: {e}", exc_info=True)
-    raise
-
-logger = logging.getLogger(__name__)
-
-def hash_dataframe_safe(df: pd.DataFrame) -> int:
-    return pd.util.hash_pandas_object(df, index=True).sum()
-
-def get_trend_data(df: Optional[pd.DataFrame], value_col: str, date_col: str = 'encounter_date', period: str = 'D', agg_func: Union[str, Callable] = 'mean') -> pd.Series:
-    """Calculates a time-series trend for a given column, aggregated by a specified period."""
-    if not isinstance(df, pd.DataFrame) or df.empty or date_col not in df.columns or value_col not in df.columns:
-        return pd.Series(dtype=np.float64)
-    df_trend = df[[date_col, value_col]].copy()
-    df_trend[date_col] = pd.to_datetime(df_trend[date_col], errors='coerce')
-    df_trend[value_col] = convert_to_numeric(df_trend[value_col])
-    df_trend.dropna(subset=[date_col, value_col], inplace=True)
-    if df_trend.empty: return pd.Series(dtype=np.float64)
-    try:
-        # DEFINITIVE FIX for FutureWarning: Use lowercase 'h' for hourly.
-        if period == 'H': period = 'h'
-        trend_series = df_trend.set_index(date_col)[value_col].resample(period).agg(agg_func)
-        if isinstance(agg_func, str) and agg_func in ['count', 'size', 'nunique']:
-            trend_series = trend_series.fillna(0).astype(int)
-        return trend_series
-    except Exception as e:
-        logger.error(f"Error generating trend for '{value_col}': {e}", exc_info=True)
-        return pd.Series(dtype=np.float64)
-
-class ClinicKPIPreparer:
-    """Encapsulates all logic for calculating clinic-level summary KPIs."""
-    def __init__(self, health_df: pd.DataFrame):
-        self.df = health_df.copy() if isinstance(health_df, pd.DataFrame) else pd.DataFrame()
-        self.summary: Dict[str, Any] = {"overall_avg_test_turnaround_conclusive_days": np.nan, "perc_critical_tests_tat_met": 0.0, "total_pending_critical_tests_patients": 0, "sample_rejection_rate_perc": 0.0, "key_drug_stockouts_count": 0, "test_summary_details": {}}
-    def _calculate_testing_kpis(self):
-        if not all(c in self.df.columns for c in ['test_type', 'test_result', 'test_turnaround_days', 'sample_status', 'patient_id']): return
-        conclusive = self.df[~self.df['test_result'].str.lower().isin(['pending', 'rejected', 'unknown'])]
-        if not conclusive.empty: self.summary["overall_avg_test_turnaround_conclusive_days"] = conclusive['test_turnaround_days'].mean()
-        critical_keys = [k for k, v in settings.KEY_TEST_TYPES_FOR_ANALYSIS.items() if isinstance(v, dict) and v.get("critical")]
-        critical_df = self.df[self.df['test_type'].isin(critical_keys)]
-        if not critical_df.empty:
-            conclusive_crit = critical_df[~critical_df['test_result'].str.lower().isin(['pending', 'rejected'])]
-            if not conclusive_crit.empty:
-                target_map = {k: v.get('target_tat_days', settings.TARGET_TEST_TURNAROUND_DAYS) for k, v in settings.KEY_TEST_TYPES_FOR_ANALYSIS.items()}
-                conclusive_crit['target_tat'] = conclusive_crit['test_type'].map(target_map)
-                self.summary["perc_critical_tests_tat_met"] = (conclusive_crit['test_turnaround_days'] <= conclusive_crit['target_tat']).mean() * 100
-            self.summary["total_pending_critical_tests_patients"] = critical_df[critical_df['test_result'].str.lower() == 'pending']['patient_id'].nunique()
-        valid_status = self.df[self.df['sample_status'].notna() & ~self.df['sample_status'].str.lower().isin(['unknown', ''])]
-        if not valid_status.empty and valid_status['patient_id'].nunique() > 0:
-            rejected = valid_status[valid_status['sample_status'].str.lower() == 'rejected by lab']['patient_id'].nunique()
-            self.summary["sample_rejection_rate_perc"] = (rejected / valid_status['patient_id'].nunique()) * 100
-    def _calculate_supply_kpis(self):
-        if not all(c in self.df.columns for c in ['item', 'item_stock_agg_zone', 'consumption_rate_per_day', 'encounter_date', 'zone_id']): return
-        latest = self.df.sort_values('encounter_date').drop_duplicates(subset=['item', 'zone_id'], keep='last')
-        latest['consumption_rate_per_day'] = latest['consumption_rate_per_day'].replace(0, 0.001)
-        latest['days_of_supply'] = latest['item_stock_agg_zone'] / latest['consumption_rate_per_day']
-        key_drugs_pattern = '|'.join(settings.KEY_DRUG_SUBSTRINGS_SUPPLY)
-        key_drugs_stock_df = latest[latest['item'].str.contains(key_drugs_pattern, case=False, na=False)]
-        if not key_drugs_stock_df.empty:
-            self.summary["key_drug_stockouts_count"] = key_drugs_stock_df[key_drugs_stock_df['days_of_supply'] < settings.CRITICAL_SUPPLY_DAYS_REMAINING]['item'].nunique()
-    def _calculate_test_breakdown(self):
-        if not all(c in self.df.columns for c in ['test_type', 'test_result', 'patient_id', 'sample_status', 'test_turnaround_days']): return
-        tests_df = self.df[self.df['test_type'].isin(settings.KEY_TEST_TYPES_FOR_ANALYSIS.keys())].copy()
-        if tests_df.empty: return
-        tests_df['is_positive'] = (tests_df['test_result'].str.lower() == 'positive')
-        conclusive_df = tests_df[~tests_df['test_result'].str.lower().isin(['pending', 'rejected', 'unknown'])]
-        if not conclusive_df.empty:
-            agg_spec = {'positive_rate_perc': pd.NamedAgg(column='is_positive', aggfunc=lambda x: x.mean() * 100 if len(x) > 0 else 0.0)}
-            breakdown = conclusive_df.groupby('test_type').agg(**agg_spec)
-            self.summary['test_summary_details'] = breakdown.to_dict('index')
-        else: self.summary['test_summary_details'] = {}
-    def prepare(self) -> Dict[str, Any]:
-        if self.df.empty: return self.summary
-        self._calculate_testing_kpis(); self._calculate_supply_kpis(); self._calculate_test_breakdown()
-        return self.summary
-
-@st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, hash_funcs={pd.DataFrame: hash_dataframe_safe})
-def get_clinic_summary_kpis(health_df_period: Optional[pd.DataFrame], source_context: str = "") -> Dict[str, Any]:
-    return ClinicKPIPreparer(health_df_period).prepare()
-# (rest of file remains the same)
-Use code with caution.
-Python
-Fix #2: sentinel_project_root/pages/02_clinic_dashboard.py
-This version reverts the KPI display to use the safe st.dataframe with the now-working ImageColumn for sparklines. This fixes the JavaScript InvalidCharacterError.
 # sentinel_project_root/pages/02_clinic_dashboard.py
 # Clinic Operations & Management Console for Sentinel Health Co-Pilot.
 # Definitive, functional, and self-contained version with advanced visualizations.
@@ -109,8 +10,8 @@ from datetime import date, timedelta
 from typing import Dict, Any, Tuple, List, Optional
 import os
 import plotly.graph_objects as go
-import io
 
+# --- Page Specific Logger ---
 logger = logging.getLogger(__name__)
 
 # --- Sentinel System Imports ---
@@ -128,12 +29,21 @@ except ImportError as e:
 
 
 # --- Self-Contained Data Science & Visualization Logic ---
+
 def create_sparkline_bytes(data: pd.Series, color: str) -> Optional[bytes]:
     """Creates a sparkline and returns it as PNG bytes to embed in a DataFrame."""
     if data is None or data.empty or data.isna().all():
         return None
+    
     fig = go.Figure(go.Scatter(x=data.index, y=data, mode='lines', line=dict(color=color, width=2.5)))
-    fig.update_layout(width=150, height=50, margin=dict(l=0, r=0, t=5, b=5), xaxis=dict(visible=False), yaxis=dict(visible=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_layout(
+        width=150, height=50,
+        margin=dict(l=0, r=0, t=5, b=5),
+        xaxis=dict(visible=False, showticklabels=False),
+        yaxis=dict(visible=False, showticklabels=False),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
     try:
         return fig.to_image(format="png", engine="kaleido")
     except Exception as e:
@@ -152,20 +62,42 @@ def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: da
     kpi_current = get_clinic_summary_kpis(current_period_df) if not current_period_df.empty else {}
     kpi_previous = get_clinic_summary_kpis(previous_period_df) if not previous_period_df.empty else {}
     
-    kpi_defs = {"Avg. Test TAT (Days)": "overall_avg_test_turnaround_conclusive_days", "Sample Rejection (%)": "sample_rejection_rate_perc", "Pending Critical Tests": "total_pending_critical_tests_patients", "Key Drug Stockouts": "key_drug_stockouts_count"}
+    kpi_defs = {
+        "Avg. Test TAT (Days)": ("overall_avg_test_turnaround_conclusive_days", 'test_turnaround_days', 'lower_is_better'),
+        "Sample Rejection (%)": ("sample_rejection_rate_perc", 'sample_rejection_rate_perc', 'lower_is_better'),
+        "Pending Critical Tests": ("total_pending_critical_tests_patients", 'total_pending_critical_tests_patients', 'lower_is_better'),
+        "Key Drug Stockouts": ("key_drug_stockouts_count", 'key_drug_stockouts_count', 'lower_is_better'),
+    }
     
     analysis_data = []
     trend_start_date = end_date - timedelta(days=90)
     trend_df = full_df[full_df['encounter_date'].dt.date.between(trend_start_date, end_date)]
     
-    for name, key in kpi_defs.items():
-        current_val, prev_val = kpi_current.get(key), kpi_previous.get(key)
-        trend_series = get_trend_data(trend_df, value_col=key, period='W-MON') if not trend_df.empty and key in trend_df.columns else pd.Series()
-        change_str = "N/A"
-        if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0: change_str = f"{((current_val - prev_val) / prev_val) * 100:+.1f}%"
+    for name, (key, trend_key, trend_logic) in kpi_defs.items():
+        current_val = kpi_current.get(key)
+        prev_val = kpi_previous.get(key)
         
-        analysis_data.append({"Metric": name, "Current Period": current_val, "Previous Period": prev_val, "Change": change_str, "90-Day Trend": create_sparkline_bytes(trend_series, "#007BFF")})
+        # --- DEFINITIVE FIX for SyntaxError ---
+        # Use the correct, robust get_trend_data utility.
+        trend_series = get_trend_data(trend_df, value_col=trend_key, period='W-MON') if not trend_df.empty and trend_key in trend_df.columns else pd.Series()
+        
+        change_str, delta_color = "N/A", "gray"
+        if pd.notna(current_val) and pd.notna(prev_val) and prev_val > 0:
+            change = ((current_val - prev_val) / prev_val) * 100
+            change_str = f"{change:+.1f}%"
+            if trend_logic == 'lower_is_better': delta_color = "red" if change > 0 else "green"
+            else: delta_color = "green" if change > 0 else "red"
+        
+        analysis_data.append({
+            "Metric": str(name),
+            "Current Period": f"{current_val:.1f}" if isinstance(current_val, (float, np.floating)) and pd.notna(current_val) else str(current_val if pd.notna(current_val) else 'N/A'),
+            "Previous Period": f"{prev_val:.1f}" if isinstance(prev_val, (float, np.floating)) and pd.notna(prev_val) else str(prev_val if pd.notna(prev_val) else 'N/A'),
+            "Change": f'<p style="color:{delta_color}; margin:0; font-weight:bold;">{change_str}</p>',
+            "90-Day Trend": create_sparkline_bytes(trend_series, "#007BFF")
+        })
+        
     return pd.DataFrame(analysis_data)
+
 
 # --- Page Title & Setup ---
 st.title(f"🏥 {settings.APP_NAME} - Clinic Operations & Management Console")
@@ -210,12 +142,12 @@ st.info(f"**Displaying Clinic Console for:** `{period_str}`")
 st.header("🚀 Performance Snapshot with Trend Analysis")
 if not period_health_df.empty:
     kpi_analysis_df = get_kpi_analysis_table(full_health_df, start_date, end_date)
-    st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True, column_config={"90-Day Trend": st.column_config.ImageColumn(width="medium"), "Change": st.column_config.TextColumn(help="Change vs. previous period")})
+    st.write(kpi_analysis_df.to_html(escape=False, index=False), unsafe_allow_html=True)
 else:
     st.info("No data available for this period to generate KPI analysis.")
 st.divider()
 
-# --- Tabbed Section (full implementation) ---
+# --- Tabbed Section ---
 st.header("🛠️ Operational Areas Deep Dive")
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Epidemiology", "🔬 Testing", "💊 Supply Chain", "🧍 Patients", "🌿 Environment"])
 
@@ -247,8 +179,7 @@ with tab2:
             tat_df.columns = ['Test Type', 'Avg. TAT (Days)']
             if not tat_df.empty:
                 tat_df['On Target'] = tat_df['Avg. TAT (Days)'] <= settings.TARGET_TEST_TURNAROUND_DAYS
-                fig = go.Figure()
-                fig.add_trace(go.Bar(x=tat_df['Avg. TAT (Days)'], y=tat_df['Test Type'], orientation='h', marker_color=np.where(tat_df['On Target'], '#27AE60', '#D32F2F')))
+                fig = go.Figure(go.Bar(x=tat_df['Avg. TAT (Days)'], y=tat_df['Test Type'], orientation='h', marker_color=np.where(tat_df['On Target'], '#27AE60', '#D32F2F')))
                 fig.add_vline(x=settings.TARGET_TEST_TURNAROUND_DAYS, line_width=2, line_dash="dash", line_color="black", annotation_text="Target TAT")
                 fig.update_layout(title_text="<b>Average Turnaround Time (TAT) by Test</b>", yaxis={'categoryorder':'total ascending'}, xaxis_title="Average Days")
                 st.plotly_chart(fig, use_container_width=True)
@@ -265,25 +196,18 @@ with tab3:
     forecastable_items = sorted([item for item in full_health_df['item'].dropna().unique() if any(sub in item for sub in getattr(settings, 'KEY_DRUG_SUBSTRINGS_SUPPLY', []))])
     if not forecastable_items: st.info("No forecastable supply items found in the data.")
     else:
-        with st.spinner("Checking current stock levels..."):
-            latest_stock = full_health_df.sort_values('encounter_date').drop_duplicates('item', keep='last')
-            latest_stock['days_of_supply'] = latest_stock['item_stock_agg_zone'] / latest_stock['consumption_rate_per_day'].clip(lower=0.001)
-            short_supply_items = latest_stock[latest_stock['days_of_supply'] < settings.LOW_SUPPLY_DAYS_REMAINING]['item'].tolist()
-
-        selected_items = st.multiselect("Select items to forecast (items in short supply are pre-selected):", options=forecastable_items, default=short_supply_items)
-        if selected_items:
-            with st.spinner(f"Generating forecasts for selected items..."):
-                forecast_df = generate_simple_supply_forecast(full_health_df, item_filter=selected_items)
-            if not forecast_df.empty:
-                fig = go.Figure()
-                for item in selected_items:
-                    item_data = forecast_df[forecast_df['item'] == item]
-                    fig.add_trace(go.Scatter(x=item_data['forecast_date'], y=item_data['forecasted_days_of_supply'], mode='lines+markers', name=item))
-                fig.add_hrect(y0=0, y1=settings.CRITICAL_SUPPLY_DAYS_REMAINING, fillcolor="red", opacity=0.1, line_width=0, annotation_text="Critical")
-                fig.add_hrect(y0=settings.CRITICAL_SUPPLY_DAYS_REMAINING, y1=settings.LOW_SUPPLY_DAYS_REMAINING, fillcolor="orange", opacity=0.1, line_width=0, annotation_text="Warning")
-                fig.update_layout(title_text="<b>Forecasted Days of Supply for Critical Items</b>", xaxis_title="Date", yaxis_title="Days of Supply Remaining", legend_title="Item", yaxis_tickformat='d')
-                st.plotly_chart(fig, use_container_width=True)
-            else: st.warning("Could not generate supply forecast.")
+        with st.spinner("Generating forecasts for all critical items..."):
+            forecast_df = generate_simple_supply_forecast(full_health_df, item_filter=forecastable_items)
+        if not forecast_df.empty:
+            fig = go.Figure()
+            for item in forecastable_items:
+                item_data = forecast_df[forecast_df['item'] == item]
+                fig.add_trace(go.Scatter(x=item_data['forecast_date'], y=item_data['forecasted_days_of_supply'], mode='lines+markers', name=item))
+            fig.add_hrect(y0=0, y1=settings.CRITICAL_SUPPLY_DAYS_REMAINING, fillcolor="red", opacity=0.1, line_width=0, annotation_text="Critical")
+            fig.add_hrect(y0=settings.CRITICAL_SUPPLY_DAYS_REMAINING, y1=settings.LOW_SUPPLY_DAYS_REMAINING, fillcolor="orange", opacity=0.1, line_width=0, annotation_text="Warning")
+            fig.update_layout(title_text="<b>Forecasted Days of Supply for Critical Items</b>", xaxis_title="Date", yaxis_title="Days of Supply Remaining", legend_title="Item", yaxis_tickformat='d')
+            st.plotly_chart(fig, use_container_width=True)
+        else: st.warning("Could not generate supply forecast.")
 
 with tab4:
     st.subheader("Patient Risk & Demographics")
@@ -296,7 +220,6 @@ with tab4:
             fig = plot_bar_chart(risk_df, x_col='age', y_col='ai_risk_score', color='Risk Category', title="Patient Risk Score vs. Age", x_axis_title="Patient Age", y_axis_title="AI Risk Score", barmode='overlay')
             fig.update_yaxes(tickformat='d')
             st.plotly_chart(fig, use_container_width=True)
-        
         st.markdown("###### **Flagged Patients for Clinical Review**")
         flagged_patients = get_patient_alerts_for_clinic(health_df_period=period_health_df)
         if not flagged_patients.empty:
@@ -307,37 +230,15 @@ with tab5:
     st.subheader("Facility Environment Monitoring")
     if period_iot_df.empty: st.info("No environmental data for this period.")
     else:
-        cols = st.columns(2)
-        with cols[0]:
-            st.markdown("###### **Hourly Average CO2 Levels**")
-            co2_trend = get_trend_data(period_iot_df, 'avg_co2_ppm', date_col='timestamp', period='H')
-            if not co2_trend.empty:
-                fig = plot_annotated_line_chart(co2_trend, "", y_axis_title="CO2 (ppm)")
-                fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_HIGH_PPM, y1=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, fillcolor="orange", opacity=0.2, line_width=0, annotation_text="High")
-                fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, y1=co2_trend.max()*1.1 if not co2_trend.empty else 3000, fillcolor="red", opacity=0.2, line_width=0, annotation_text="Very High")
-                fig.update_yaxes(tickformat='d')
-                st.plotly_chart(fig, use_container_width=True)
-        with cols[1]:
-            st.markdown("###### **Hourly Average Temperature**")
-            temp_trend = get_trend_data(period_iot_df, 'avg_temp_celsius', date_col='timestamp', period='H')
-            if not temp_trend.empty:
-                fig = go.Figure(go.Scatter(x=temp_trend.index, y=temp_trend.values, mode='lines', fill='tozeroy', line_color='#ff7f0e'))
-                fig.update_layout(title_text="<b>Hourly Temperature</b>", yaxis_title="Temperature (°C)")
-                st.plotly_chart(fig, use_container_width=True)
-
-        cols = st.columns(2)
-        with cols[0]:
-            st.markdown("###### **Hourly Average PM2.5 (Air Quality)**")
-            pm25_trend = get_trend_data(period_iot_df, 'avg_pm25', date_col='timestamp', period='H')
-            if not pm25_trend.empty:
-                fig = go.Figure(go.Scatter(x=pm25_trend.index, y=pm25_trend.values, mode='lines', fill='tozeroy', line_color='#2ca02c'))
-                fig.update_layout(title_text="<b>Hourly PM2.5 Levels</b>", yaxis_title="PM2.5 (µg/m³)")
-                st.plotly_chart(fig, use_container_width=True)
-        with cols[1]:
-            st.markdown("###### **Hourly Average Noise Levels**")
-            noise_trend = get_trend_data(period_iot_df, 'avg_noise_db', date_col='timestamp', period='H')
-            if not noise_trend.empty:
-                fig = go.Figure(go.Scatter(x=noise_trend.index, y=noise_trend.values, mode='lines', fill='tozeroy', line_color='#9467bd'))
-                fig.add_hline(y=settings.ALERT_AMBIENT_NOISE_HIGH_DBA, line_dash="dash", line_color="red", annotation_text="High Noise Level")
-                fig.update_layout(title_text="<b>Hourly Noise Levels</b>", yaxis_title="Noise (dBA)")
-                st.plotly_chart(fig, use_container_width=True)
+        st.markdown("###### **Hourly Average CO2 Levels**")
+        co2_trend = get_trend_data(period_iot_df, 'avg_co2_ppm', date_col='timestamp', period='h')
+        if not co2_trend.empty:
+            fig = plot_annotated_line_chart(co2_trend, "", y_axis_title="CO2 (ppm)")
+            fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_HIGH_PPM, y1=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, fillcolor="orange", opacity=0.2, line_width=0, annotation_text="High")
+            fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, y1=co2_trend.max()*1.1 if not co2_trend.empty else 3000, fillcolor="red", opacity=0.2, line_width=0, annotation_text="Very High")
+            fig.update_yaxes(tickformat='d')
+            st.plotly_chart(fig, use_container_width=True)
+        else: st.info("No CO2 trend data to display.")
+        st.markdown("###### **Latest Environmental Readings by Room**")
+        latest_readings = period_iot_df.sort_values('timestamp', ascending=False).drop_duplicates('room_name', keep='first')
+        st.dataframe(latest_readings[['room_name', 'timestamp', 'avg_co2_ppm', 'avg_pm25', 'avg_temp_celsius', 'avg_noise_db']], use_container_width=True, hide_index=True)
