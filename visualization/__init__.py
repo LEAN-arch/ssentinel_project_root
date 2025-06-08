@@ -1,34 +1,53 @@
 # sentinel_project_root/visualization/__init__.py
-# This file makes the 'visualization' directory a Python package.
+"""
+Initializes the visualization package, making key functions and classes
+available at the top level for easier, cleaner imports in other modules.
 
+This file defines the public API of the visualization package.
+"""
+
+# --- Import functions from submodules to expose them publicly ---
+
+# From plots.py
 from .plots import (
-    set_sentinel_plotly_theme,
     create_empty_figure,
-    plot_annotated_line_chart,
     plot_bar_chart,
     plot_donut_chart,
-    plot_heatmap,
-    plot_choropleth_map,
-    MAPBOX_TOKEN_SET_IN_PLOTLY_FLAG # Export flag for testing or conditional logic
-)
-from .ui_elements import (
-    render_kpi_card,
-    render_traffic_light_indicator,
-    get_theme_color,
-    display_custom_styled_kpi_box # Added from original ui_elements
+    plot_annotated_line_chart
 )
 
+# From ui_elements.py
+from .ui_elements import (
+    get_theme_color,
+    render_kpi_card,
+    render_traffic_light_indicator,
+    display_custom_styled_kpi_box
+)
+
+# From themes.py (assuming it exists to define the plotly theme template)
+try:
+    from .themes import sentinel_theme
+except ImportError:
+    # Fallback if themes.py doesn't exist or has an issue
+    sentinel_theme = "plotly_white"
+
+
+# --- Define __all__ for explicit public API definition ---
+# This tells tools and developers which names are part of the public API
+# and controls 'from visualization import *' behavior.
 __all__ = [
-    "set_sentinel_plotly_theme",
+    # plots
     "create_empty_figure",
-    "plot_annotated_line_chart",
     "plot_bar_chart",
     "plot_donut_chart",
-    "plot_heatmap",
-    "plot_choropleth_map",
-    "MAPBOX_TOKEN_SET_IN_PLOTLY_FLAG",
+    "plot_annotated_line_chart",
+    
+    # ui_elements
+    "get_theme_color",
     "render_kpi_card",
     "render_traffic_light_indicator",
-    "get_theme_color",
-    "display_custom_styled_kpi_box"
+    "display_custom_styled_kpi_box",
+    
+    # themes
+    "sentinel_theme"
 ]
