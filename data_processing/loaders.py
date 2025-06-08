@@ -10,7 +10,8 @@ from pathlib import Path
 
 try:
     from config import settings
-    from .helpers import data_cleaner, convert_date_columns, robust_json_load
+    # Ensure all necessary helpers are imported
+    from .helpers import data_cleaner, convert_date_columns, robust_json_load, standardize_missing_values
 except ImportError as e:
     logging.basicConfig(level=logging.ERROR)
     logger_init = logging.getLogger(__name__)
@@ -85,11 +86,17 @@ class DataLoader:
                 return pd.DataFrame()
 
             df = data_cleaner.clean_column_names(df)
+            
+            # --- DEFINITIVE FIX FOR Timezone Error ---
+            # Convert to datetime first, then immediately make timezone-naive.
             df = convert_date_columns(df, config.get('date_cols', []))
+            for col in config.get('date_cols', []):
+                if col in df.columns:
+                    df[col] = df[col].dt.tz_localize(None)
             
             num_defaults = getattr(settings, config.get('numeric_defaults_attr', ''), {})
             str_defaults = getattr(settings, config.get('string_defaults_attr', ''), {})
-            df = data_cleaner.standardize_missing_values(df, str_defaults, num_defaults)
+            df = standardize_missing_values(df, str_defaults, num_defaults)
             
             logger.info(f"({config_key}) Successfully loaded and processed {len(df)} records from '{file_path.name}'.")
             return df
@@ -103,24 +110,20 @@ class DataLoader:
         
         geometries_list = []
         geom_path = self._resolve_path(geometries_path, 'ZONE_GEOMETRIES_GEOJSON_FILE_PATH')
-        if geom_path:
+        if geom_path and geom_path.is_file():
             geo_data = robust_json_load(geom_path)
             if isinstance(geo_data, dict) and 'features' in geo_data:
                 for feature in geo_data.get('features', []):
                     props = feature.get("properties", {})
                     zid = props.get("zone_id", props.get("ZONE_ID"))
                     if zid is not None and feature.get("geometry"):
-                        geometries_list.append({
-                            "zone_id": str(zid).strip(),
-                            "geometry_obj": feature["geometry"],
-                        })
+                        geometries_list.append({"zone_id": str(zid).strip(), "geometry_obj": feature["geometry"]})
         geometries_df = pd.DataFrame(geometries_list)
 
         if attributes_df.empty and geometries_df.empty: return pd.DataFrame()
         if attributes_df.empty: return geometries_df
         if geometries_df.empty: return attributes_df
         
-        # Ensure join keys are consistent string types for a robust merge
         attributes_df['zone_id'] = attributes_df['zone_id'].astype(str)
         geometries_df['zone_id'] = geometries_df['zone_id'].astype(str)
         
@@ -139,7 +142,7 @@ def load_iot_clinic_environment_data(file_path_str: Optional[str] = None, source
     """Loads, cleans, and standardizes IoT clinic environment data."""
     return _data_loader._load_and_process_csv('iot_environment', file_path_str)
 
-def load_zone_data(attributes_file_path_str: Optional[str] = None, geometries_file_path_str: Optional[str] = None) -> pd.DataFrame:
+def load_zone_data(attributes_file_path_str: Optional[str] = None, geometries_file_path_str: Optional[str] = None, source_context: str = "") -> pd.DataFrame:
     """Loads and merges zone attribute data (CSV) and zone geometries (GeoJSON)."""
     return _data_loader.load_zone_data(attributes_file_path_str, geometries_file_path_str)
 
@@ -148,7 +151,7 @@ def load_json_config(path_or_setting: str, default: Any) -> Any:
     file_path = _data_loader._resolve_path(None, path_or_setting) or _data_loader._resolve_path(path_or_setting, "")
     if not file_path: return default
     data = robust_json_load(file_path)
-    return data if isinstance(data, type(default)) else default
+    return data if data is not None and isinstance(data, type(default)) else default
 
 def load_escalation_protocols() -> Dict[str, Any]:
     """Wrapper to load escalation protocols JSON."""
@@ -162,5 +165,4 @@ def load_haptic_patterns() -> Dict[str, List[int]]:
     """Wrapper to load and validate haptic patterns JSON."""
     data = load_json_config('HAPTIC_PATTERNS_JSON_PATH', {})
     if not isinstance(data, dict): return {}
-    # Validate structure before returning
     return {k: v for k, v in data.items() if isinstance(v, list) and all(isinstance(i, int) for i in v)}
