@@ -124,6 +124,7 @@ class ClinicSupplyForecastPreparer:
         
         # Reindex to ensure final output has a consistent schema and order
         final_df = final_df.reindex(columns=UI_OUTPUT_COLS).fillna({
+            'item': 'Unknown Item',
             'days_of_supply_remaining': 0.0, 
             'estimated_stockout_date': 'N/A', 
             'stock_status': 'Unknown'
