@@ -58,8 +58,9 @@ class ChartFactory:
         )
         return self._apply_layout(fig, title_text=f"<b>{html.escape(title)}</b>", showlegend=False)
 
-    def create_bar_chart(self, df: pd.DataFrame, x: str, y: str, title: str, color: Optional[str], barmode: str, orientation: str, x_axis_title: Optional[str], y_axis_title: Optional[str]) -> go.Figure:
+    def create_bar_chart(self, df: pd.DataFrame, x: str, y: str, title: str, y_values_are_counts: bool, **px_kwargs) -> go.Figure:
         """Creates a standardized bar chart from a DataFrame."""
+        color = px_kwargs.get('color')
         required_cols = [x, y]
         if color: required_cols.append(color)
 
@@ -69,60 +70,56 @@ class ChartFactory:
             return self.create_empty_figure(title, "Missing required data columns.")
         
         try:
-            y_title = y_axis_title or y.replace('_', ' ').title()
-            labels = {x: x_axis_title or x.replace('_', ' ').title(), y: y_title}
+            y_title = px_kwargs.pop('y_axis_title', y.replace('_', ' ').title())
+            labels = {x: px_kwargs.pop('x_axis_title', x.replace('_', ' ').title()), y: y_title}
             
-            fig = px.bar(df, x=x, y=y, color=color, barmode=barmode, orientation=orientation,
-                         title=f"<b>{html.escape(title)}</b>", labels=labels, text_auto=True,
-                         color_discrete_sequence=get_theme_color(None, category='categorical_sequence'))
+            fig = px.bar(df, x=x, y=y, title=f"<b>{html.escape(title)}</b>", labels=labels, text_auto=True, **px_kwargs)
             
-            # Add padding to y-axis to prevent text labels from being clipped
             if df[y].notna().any():
-                if barmode == 'stack': max_y = df.groupby(x)[y].sum().max()
+                if px_kwargs.get('barmode') == 'stack': max_y = df.groupby(x)[y].sum().max()
                 else: max_y = df[y].max()
                 fig.update_yaxes(range=[0, max_y * 1.15])
             
-            hover_template = f'<b>%{{x}}</b><br>{html.escape(y_title)}: %{{y:,.2f}}<extra></extra>'
+            text_template = ',.0f' if y_values_are_counts else ',.2f'
+            hover_template = f'<b>%{{x}}</b><br>{html.escape(y_title)}: %{{y:{text_template}}}<extra></extra>'
             if color:
-                hover_template = f'<b>%{{x}}</b><br>{html.escape(color.replace("_", " ").title())}: %{{fullData.name}}<br>{html.escape(y_title)}: %{{y:,.2f}}<extra></extra>'
+                hover_template = f'<b>%{{x}}</b><br>{html.escape(color.replace("_", " ").title())}: %{{fullData.name}}<br>{html.escape(y_title)}: %{{y:{text_template}}}<extra></extra>'
+            
+            fig.update_traces(textposition='outside', cliponaxis=False, hovertemplate=hover_template, texttemplate=f'%{{y:{text_template}}}')
+            
+            if y_values_are_counts:
+                fig.update_yaxes(tickformat='d')
 
-            fig.update_traces(textposition='outside', cliponaxis=False, hovertemplate=hover_template)
             return self._apply_layout(fig, legend_title_text=color.replace("_", " ").title() if color else "")
         except Exception as e:
             logger.error(f"Failed to create bar chart '{title}': {e}", exc_info=True)
             return self.create_empty_figure(title, "Error generating chart")
 
     def create_donut_chart(self, df: pd.DataFrame, labels: str, values: str, title: str) -> go.Figure:
-        """Creates a standardized donut chart."""
         if not all(c in df.columns for c in [labels, values]):
             return self.create_empty_figure(title, "Missing required data columns.")
         try:
-            fig = px.pie(df, names=labels, values=values, title=f"<b>{html.escape(title)}</b>", hole=0.4,
-                         color_discrete_sequence=get_theme_color(None, category='categorical_sequence'))
-            fig.update_traces(textinfo='percent', hoverinfo='label+percent+value') # Labels in legend, details on hover
+            fig = px.pie(df, names=labels, values=values, title=f"<b>{html.escape(title)}</b>", hole=0.4, color_discrete_sequence=get_theme_color(None, category='categorical_sequence'))
+            fig.update_traces(textinfo='percent', hoverinfo='label+percent+value')
             return self._apply_layout(fig, showlegend=True, legend_title_text=labels.replace("_", " ").title())
         except Exception as e:
             logger.error(f"Failed to create donut chart '{title}': {e}", exc_info=True)
             return self.create_empty_figure(title, "Error generating chart")
 
     def create_annotated_line_chart(self, series: pd.Series, title: str, y_title: str) -> go.Figure:
-        """Creates a line chart with annotations for min/max values."""
         try:
             fig = px.line(x=series.index, y=series.values, title=f"<b>{html.escape(title)}</b>", markers=True)
             fig.update_traces(line=dict(color=get_theme_color('primary')), hovertemplate=f'<b>%{{x}}</b><br>{html.escape(y_title)}: %{{y:,.2f}}<extra></extra>')
-
             valid_series = series.dropna()
             if len(valid_series) > 1:
                 max_val, min_val = valid_series.max(), valid_series.min()
                 max_idx, min_idx = valid_series.idxmax(), valid_series.idxmin()
-                
                 annotation_font = dict(color="white", size=10)
                 if max_idx == min_idx:
                     fig.add_annotation(x=max_idx, y=max_val, text=f"Value: {max_val:,.1f}", showarrow=True, arrowhead=2, yshift=10)
                 else:
                     fig.add_annotation(x=max_idx, y=max_val, text=f"Max: {max_val:,.1f}", showarrow=True, arrowhead=1, bgcolor="rgba(239, 85, 59, 0.8)", bordercolor=get_theme_color("risk_high"), font=annotation_font, borderpad=4)
                     fig.add_annotation(x=min_idx, y=min_val, text=f"Min: {min_val:,.1f}", showarrow=True, arrowhead=1, bgcolor="rgba(0, 204, 150, 0.8)", bordercolor=get_theme_color("risk_low"), font=annotation_font, borderpad=4, yshift=-10)
-
             return self._apply_layout(fig, yaxis_title=y_title, xaxis_title="Date/Time", showlegend=False)
         except Exception as e:
             logger.error(f"Failed to create annotated line chart '{title}': {e}", exc_info=True)
@@ -135,48 +132,20 @@ def create_empty_figure(title: str, message: str = "No data available") -> go.Fi
     """Public factory function to create a themed empty figure with a title."""
     return _factory.create_empty_figure(title, message)
 
-def plot_bar_chart(df_input: pd.DataFrame, x_col: str, y_col: str, title: str, color: Optional[str] = None, barmode: str = 'relative', orientation: str = 'v', x_axis_title: Optional[str] = None, y_axis_title: Optional[str] = None) -> go.Figure:
-    """
-    Creates a standardized, theme-aware bar chart.
-
-    Args:
-        df_input (pd.DataFrame): The DataFrame to plot.
-        x_col (str): The column for the x-axis.
-        y_col (str): The column for the y-axis.
-        title (str): The chart title.
-        color (Optional[str]): The column to use for coloring the bars. Defaults to None.
-        barmode (str): One of 'group', 'stack', or 'relative'. Defaults to 'relative'.
-        orientation (str): 'v' for vertical, 'h' for horizontal. Defaults to 'v'.
-        x_axis_title (Optional[str]): A custom title for the x-axis. Defaults to a formatted column name.
-        y_axis_title (Optional[str]): A custom title for the y-axis. Defaults to a formatted column name.
-    """
+def plot_bar_chart(df_input: pd.DataFrame, x_col: str, y_col: str, title: str, y_values_are_counts: bool = False, **kwargs: Any) -> go.Figure:
+    """Creates a standardized, theme-aware bar chart."""
     if not isinstance(df_input, pd.DataFrame) or df_input.empty:
         return create_empty_figure(title, f"No data for '{title}'")
-    return _factory.create_bar_chart(df_input, x_col, y_col, title, color=color, barmode=barmode, orientation=orientation, x_axis_title=x_axis_title, y_axis_title=y_axis_title)
+    return _factory.create_bar_chart(df_input, x_col, y_col, title, y_values_are_counts=y_values_are_counts, **kwargs)
 
 def plot_donut_chart(df_input: pd.DataFrame, labels_col: str, values_col: str, title: str) -> go.Figure:
-    """
-    Creates a standardized, theme-aware donut chart.
-
-    Args:
-        df_input (pd.DataFrame): The DataFrame to plot.
-        labels_col (str): The column containing the chart labels.
-        values_col (str): The column containing the chart values.
-        title (str): The chart title.
-    """
+    """Creates a standardized, theme-aware donut chart."""
     if not isinstance(df_input, pd.DataFrame) or df_input.empty:
         return create_empty_figure(title, f"No data for '{title}'")
     return _factory.create_donut_chart(df_input, labels_col, values_col, title)
 
 def plot_annotated_line_chart(series_input: pd.Series, title: str, y_axis_title: str) -> go.Figure:
-    """
-    Creates a standardized, theme-aware line chart with annotations for min/max values.
-
-    Args:
-        series_input (pd.Series): A pandas Series with a DatetimeIndex and numeric values.
-        title (str): The chart title.
-        y_axis_title (str): The label for the Y-axis.
-    """
+    """Creates a standardized, theme-aware line chart with annotations for min/max values."""
     if not isinstance(series_input, pd.Series) or series_input.empty:
         return create_empty_figure(title, f"No data for '{title}'")
     return _factory.create_annotated_line_chart(series_input, title, y_axis_title)
