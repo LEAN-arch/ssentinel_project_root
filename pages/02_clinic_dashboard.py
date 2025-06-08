@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from typing import Dict, Any, Tuple, List, Optional
 import os
 import plotly.graph_objects as go
+import io
 
 # --- Page Specific Logger ---
 logger = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: da
             "Metric": str(name),
             "Current Period": f"{current_val:.1f}" if isinstance(current_val, (float, np.floating)) and pd.notna(current_val) else str(current_val if pd.notna(current_val) else 'N/A'),
             "Previous Period": f"{prev_val:.1f}" if isinstance(prev_val, (float, np.floating)) and pd.notna(prev_val) else str(prev_val if pd.notna(prev_val) else 'N/A'),
-            "Change": f'<p style="color:{delta_color}; margin-bottom:0;">{change_str}</p>',
+            "Change": f'<p style="color:{delta_color}; margin-bottom:0; font-weight:bold;">{change_str}</p>',
             "90-Day Trend": create_sparkline_bytes(trend_series, "#007BFF")
         })
         
@@ -197,7 +198,6 @@ with tab3:
     forecastable_items = sorted([item for item in full_health_df['item'].dropna().unique() if any(sub in item for sub in getattr(settings, 'KEY_DRUG_SUBSTRINGS_SUPPLY', []))])
     if not forecastable_items: st.info("No forecastable supply items found in the data.")
     else:
-        short_supply_items = []
         with st.spinner("Checking current stock levels..."):
             latest_stock = full_health_df.sort_values('encounter_date').drop_duplicates('item', keep='last')
             latest_stock['days_of_supply'] = latest_stock['item_stock_agg_zone'] / latest_stock['consumption_rate_per_day'].clip(lower=0.001)
@@ -214,7 +214,7 @@ with tab3:
                     fig.add_trace(go.Scatter(x=item_data['forecast_date'], y=item_data['forecasted_days_of_supply'], mode='lines+markers', name=item))
                 fig.add_hrect(y0=0, y1=settings.CRITICAL_SUPPLY_DAYS_REMAINING, fillcolor="red", opacity=0.1, line_width=0, annotation_text="Critical")
                 fig.add_hrect(y0=settings.CRITICAL_SUPPLY_DAYS_REMAINING, y1=settings.LOW_SUPPLY_DAYS_REMAINING, fillcolor="orange", opacity=0.1, line_width=0, annotation_text="Warning")
-                fig.update_layout(title_text="<b>Forecasted Days of Supply</b>", xaxis_title="Date", yaxis_title="Days of Supply Remaining", legend_title="Item")
+                fig.update_layout(title_text="<b>Forecasted Days of Supply for Critical Items</b>", xaxis_title="Date", yaxis_title="Days of Supply Remaining", legend_title="Item", yaxis_tickformat='d')
                 st.plotly_chart(fig, use_container_width=True)
             else: st.warning("Could not generate supply forecast.")
 
@@ -225,10 +225,9 @@ with tab4:
         st.markdown("###### **Patient Risk Quadrant (Age vs. AI Risk)**")
         risk_df = period_health_df[['patient_id', 'age', 'ai_risk_score']].dropna().drop_duplicates('patient_id')
         if not risk_df.empty:
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=risk_df['age'], y=risk_df['ai_risk_score'], mode='markers', marker=dict(size=10, opacity=0.7, color=risk_df['ai_risk_score'], colorscale='reds', showscale=True, colorbar=dict(title='Risk Score'))))
-            fig.add_hline(y=settings.RISK_SCORE_HIGH_THRESHOLD, line_dash="dash", line_color="red", annotation_text="High Risk Threshold")
-            fig.update_layout(title_text="<b>Patient Risk Score vs. Age</b>", xaxis_title="Patient Age", yaxis_title="AI Risk Score")
+            risk_df['Risk Category'] = pd.cut(risk_df['ai_risk_score'], bins=[0, 60, 75, 101], labels=['Low-Moderate', 'High', 'Very High'], right=False)
+            fig = plot_bar_chart(risk_df, x_col='age', y_col='ai_risk_score', color='Risk Category', title="Patient Risk Score vs. Age", x_axis_title="Patient Age", y_axis_title="AI Risk Score", barmode='overlay')
+            fig.update_yaxes(tickformat='d')
             st.plotly_chart(fig, use_container_width=True)
         
         st.markdown("###### **Flagged Patients for Clinical Review**")
@@ -246,10 +245,10 @@ with tab5:
             st.markdown("###### **Hourly Average CO2 Levels**")
             co2_trend = get_trend_data(period_iot_df, 'avg_co2_ppm', date_col='timestamp', period='H')
             if not co2_trend.empty:
-                fig = go.Figure(go.Scatter(x=co2_trend.index, y=co2_trend.values, mode='lines', fill='tozeroy', line_color='#1f77b4'))
+                fig = plot_annotated_line_chart(co2_trend, "", y_axis_title="CO2 (ppm)")
                 fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_HIGH_PPM, y1=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, fillcolor="orange", opacity=0.2, line_width=0, annotation_text="High")
                 fig.add_hrect(y0=settings.ALERT_AMBIENT_CO2_VERY_HIGH_PPM, y1=co2_trend.max()*1.1 if not co2_trend.empty else 3000, fillcolor="red", opacity=0.2, line_width=0, annotation_text="Very High")
-                fig.update_layout(title_text="<b>Hourly CO2 Levels</b>", yaxis_title="CO2 (ppm)")
+                fig.update_yaxes(tickformat='d')
                 st.plotly_chart(fig, use_container_width=True)
         with cols[1]:
             st.markdown("###### **Hourly Average Temperature**")
