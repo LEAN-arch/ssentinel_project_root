@@ -1,170 +1,96 @@
 # sentinel_project_root/analytics/supply_forecasting.py
-"""
-Contains the sole definition of efficient, vectorized supply forecasting models.
-This is the core analytics engine and has no knowledge of UI components.
-It does NOT import from itself.
-"""
+# Contains models for forecasting medical supply levels.
+
 import pandas as pd
 import numpy as np
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 
 try:
     from config import settings
-    from data_processing.helpers import convert_to_numeric
-except ImportError as e:
-    # This should not happen in a correctly configured project.
-    logging.basicConfig(level=logging.ERROR)
-    logger_init = logging.getLogger(__name__)
-    logger_init.error(f"Critical import error in supply_forecasting.py: {e}", exc_info=True)
-    raise
+except ImportError:
+    logging.warning("Could not import settings. Using fallback values for supply forecasting.")
+    class FallbackSettings:
+        DEFAULT_FORECAST_DAYS_OUT = 30
+    settings = FallbackSettings()
 
 logger = logging.getLogger(__name__)
 
-# --- Base Class with Vectorized Forecasting Logic ---
-
-class BaseForecastingModel:
-    """Base class for forecasting models, handling data prep and vectorization."""
-    
-    def __init__(self):
-        self.model_name = "Base"
-
-    def _prepare_latest_status(self, df: pd.DataFrame, item_filter: Optional[List[str]]) -> pd.DataFrame:
-        """Validates, cleans, and gets the latest status for each item."""
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            return pd.DataFrame()
-
-        required_cols = ['item', 'encounter_date', 'item_stock_agg_zone', 'consumption_rate_per_day']
-        if not all(col in df.columns for col in required_cols):
-            logger.error(f"({self.model_name}) Missing required columns for forecast.")
-            return pd.DataFrame()
-
-        clean_df = df.copy()
+class SimpleForecastingModel:
+    """A simple linear consumption model for supply forecasting."""
+    def _prepare_latest_status(self, source_df: pd.DataFrame, item_filter: Optional[List[str]] = None) -> pd.DataFrame:
+        """Gets the most recent status for each item."""
+        df = source_df.copy()
         if item_filter:
-            clean_df = clean_df[clean_df['item'].isin(item_filter)]
-
-        clean_df['encounter_date'] = pd.to_datetime(clean_df['encounter_date'], errors='coerce')
-        clean_df.dropna(subset=['item', 'encounter_date'], inplace=True)
-        clean_df['item_stock_agg_zone'] = convert_to_numeric(clean_df['item_stock_agg_zone'], 0.0)
-        clean_df['consumption_rate_per_day'] = convert_to_numeric(clean_df['consumption_rate_per_day'], 1e-7)
-        clean_df.loc[clean_df['consumption_rate_per_day'] <= 0, 'consumption_rate_per_day'] = 1e-7
-
-        latest = clean_df.sort_values('encounter_date').drop_duplicates(subset=['item'], keep='last')
+            df = df[df['item'].isin(item_filter)]
         
-        today = pd.Timestamp('today').normalize()
+        # Ensure encounter_date is a datetime type before proceeding
+        df['encounter_date'] = pd.to_datetime(df['encounter_date'], errors='coerce')
+        df.dropna(subset=['encounter_date'], inplace=True)
+        if df.empty:
+            return pd.DataFrame()
+
+        latest = df.sort_values('encounter_date', ascending=False).drop_duplicates('item')
+        if latest.empty:
+            return pd.DataFrame()
+        
+        # --- DEFINITIVE FIX FOR TypeError ---
+        # 1. Get the current time and immediately make it timezone-naive.
+        today = pd.Timestamp.now().tz_localize(None).normalize()
+        
+        # 2. Ensure the DataFrame's date column is also timezone-naive.
+        #    This is redundant if the loader already does it, but provides absolute safety.
+        latest['encounter_date'] = latest['encounter_date'].dt.tz_localize(None)
+        
+        # Now both objects are timezone-naive, and subtraction is safe.
         latest['days_since_update'] = (today - latest['encounter_date']).dt.days.clip(lower=0)
-        latest['initial_stock'] = (latest['item_stock_agg_zone'] - latest['days_since_update'] * latest['consumption_rate_per_day']).clip(lower=0)
         
-        return latest[['item', 'initial_stock', 'consumption_rate_per_day']]
+        # Ensure consumption rate is a small positive number to avoid division by zero
+        latest['consumption_rate_per_day'] = latest['consumption_rate_per_day'].clip(lower=0.001)
+        return latest
 
-    def _predict_consumption(self, forecast_df: pd.DataFrame) -> pd.DataFrame:
-        """Placeholder for consumption prediction. Subclasses must implement this."""
-        raise NotImplementedError("Subclasses must implement _predict_consumption.")
-
-    def forecast(self, source_df: pd.DataFrame, forecast_days: int = 30, item_filter: Optional[List[str]] = None) -> pd.DataFrame:
-        """Generates a vectorized supply forecast."""
+    def forecast(self, source_df: pd.DataFrame, forecast_days: int, item_filter: Optional[List[str]]) -> pd.DataFrame:
+        """Generates a day-by-day forecast for specified items."""
         latest_status = self._prepare_latest_status(source_df, item_filter)
         if latest_status.empty:
             return pd.DataFrame()
 
-        today = pd.Timestamp('today').normalize()
-        date_range = pd.to_datetime([today + pd.Timedelta(days=i) for i in range(forecast_days)])
-        
-        forecast_grid = pd.MultiIndex.from_product([latest_status['item'].unique(), date_range], names=['item', 'forecast_date']).to_frame(index=False)
-        forecast_df = pd.merge(forecast_grid, latest_status, on='item', how='left')
+        all_forecasts = []
+        today_naive = pd.Timestamp.now().tz_localize(None).normalize()
 
-        forecast_df = self._predict_consumption(forecast_df)
+        for _, row in latest_status.iterrows():
+            # Vectorized calculation for a single item's forecast
+            dates = pd.date_range(start=today_naive, periods=forecast_days, freq='D')
+            days_elapsed = np.arange(row['days_since_update'], row['days_since_update'] + forecast_days)
+            
+            forecasted_stock = row['item_stock_agg_zone'] - (row['consumption_rate_per_day'] * days_elapsed)
+            days_of_supply = forecasted_stock / row['consumption_rate_per_day'] if row['consumption_rate_per_day'] > 0 else 0
+            
+            item_df = pd.DataFrame({
+                'item': row['item'],
+                'forecast_date': dates,
+                'forecasted_stock_level': np.maximum(0, forecasted_stock),
+                'forecasted_days_of_supply': np.maximum(0, days_of_supply)
+            })
+            all_forecasts.append(item_df)
+            
+        return pd.concat(all_forecasts, ignore_index=True) if all_forecasts else pd.DataFrame()
 
-        forecast_df['cumulative_consumption'] = forecast_df.groupby('item')['predicted_daily_consumption'].cumsum()
-        forecast_df['forecasted_stock_level'] = (forecast_df['initial_stock'] - forecast_df['cumulative_consumption']).clip(lower=0)
-        
-        forecast_df['forecasted_days_of_supply'] = (forecast_df['forecasted_stock_level'] / forecast_df['predicted_daily_consumption']).replace([np.inf, -np.inf], np.nan)
-        
-        stockout_dates = forecast_df[forecast_df['forecasted_stock_level'] <= 0].groupby('item')['forecast_date'].min()
-        forecast_df = pd.merge(forecast_df, stockout_dates.rename('estimated_stockout_date'), on='item', how='left')
-
-        logger.info(f"({self.model_name}) Forecast complete: {len(forecast_df)} records generated.")
-        return forecast_df
-
-# --- Concrete Model Implementations ---
-
-class SimpleLinearForecaster(BaseForecastingModel):
-    """Generates a simple, linear forecast using the last known consumption rate."""
-    
-    def __init__(self):
-        super().__init__()
-        self.model_name = "Simple Linear"
-
-    def _predict_consumption(self, forecast_df: pd.DataFrame) -> pd.DataFrame:
-        """For the simple model, predicted consumption is the constant base rate."""
-        forecast_df['predicted_daily_consumption'] = forecast_df['consumption_rate_per_day']
-        return forecast_df
-
-class AIAssistedForecaster(BaseForecastingModel):
-    """Simulates an AI-driven forecast with seasonality, trend, and noise."""
-    
-    def __init__(self):
-        super().__init__()
-        self.model_name = "AI-Assisted (Simulated)"
-        self._rng = np.random.default_rng(settings.RANDOM_SEED)
-        self.item_params = self._initialize_item_params()
-        logger.info(f"({self.model_name}) Initialized with params for {len(self.item_params)} item types.")
-
-    def _initialize_item_params(self) -> Dict[str, Dict]:
-        params = {}
-        for item_key in settings.KEY_DRUG_SUBSTRINGS_SUPPLY:
-            params[item_key.lower()] = {
-                "seasonality": self._rng.uniform(0.8, 1.2, 12),
-                "trend": self._rng.uniform(0.0005, 0.005),
-                "noise_std_dev": self._rng.uniform(0.03, 0.10)
-            }
-        if "act" in params:
-            params["act"]["seasonality"] = np.array([0.7, 0.7, 0.8, 1.0, 1.4, 1.7, 1.8, 1.6, 1.2, 0.9, 0.8, 0.7])
-        return params
-
-    def _get_params_for_item(self, item_name: str) -> Dict:
-        item_lower = item_name.lower()
-        for key, params in self.item_params.items():
-            if key in item_lower:
-                return params
-        return {"seasonality": np.ones(12), "trend": 0.0001, "noise_std_dev": 0.05}
-
-    def _predict_consumption(self, forecast_df: pd.DataFrame) -> pd.DataFrame:
-        """Predicts daily consumption using 'AI' factors in a vectorized way."""
-        params_df = forecast_df['item'].apply(self._get_params_for_item).apply(pd.Series)
-        forecast_df = pd.concat([forecast_df, params_df], axis=1)
-
-        today = pd.Timestamp('today').normalize()
-        forecast_df['day_of_forecast'] = (forecast_df['forecast_date'] - today).dt.days
-        
-        seasonality_factors = forecast_df.apply(lambda row: row['seasonality'][row['forecast_date'].month - 1], axis=1)
-        trend_factors = (1 + forecast_df['trend']) ** forecast_df['day_of_forecast']
-        
-        noise_factors = self._rng.normal(loc=1.0, scale=forecast_df['noise_std_dev'], size=len(forecast_df))
-        
-        forecast_df['predicted_daily_consumption'] = (
-            forecast_df['consumption_rate_per_day'] * seasonality_factors * trend_factors * noise_factors.clip(0.5, 1.5)
-        ).clip(lower=1e-7)
-
-        return forecast_df
-
-# --- Public Interface of this Module ---
-# Other modules should import these instances and functions.
-
-# Instantiate models once to be used as singletons.
-# This allows other modules like the orchestrator to import a ready-to-use model instance.
-AI_FORECASTER = AIAssistedForecaster()
-SIMPLE_FORECASTER = SimpleLinearForecaster()
-
-# These factory functions provide a simple, consistent interface.
-def forecast_supply_levels_advanced(
-    source_df: pd.DataFrame, forecast_days_out: int = 30, item_filter: Optional[List[str]] = None
-) -> pd.DataFrame:
-    """Public function to run the AI-assisted forecast."""
-    return AI_FORECASTER.forecast(source_df, forecast_days_out, item_filter)
+# --- Singleton instance and public factory function ---
+SIMPLE_FORECASTER = SimpleForecastingModel()
 
 def generate_simple_supply_forecast(
-    source_df: pd.DataFrame, forecast_days_out: int = 30, item_filter: Optional[List[str]] = None
+    source_df: pd.DataFrame, 
+    forecast_days_out: int = getattr(settings, 'DEFAULT_FORECAST_DAYS_OUT', 30), 
+    item_filter: Optional[List[str]] = None
 ) -> pd.DataFrame:
-    """Public function to run the simple linear forecast."""
+    """Public factory function for the simple supply forecasting model."""
+    if not isinstance(source_df, pd.DataFrame) or source_df.empty:
+        return pd.DataFrame()
     return SIMPLE_FORECASTER.forecast(source_df, forecast_days_out, item_filter)
+
+def forecast_supply_levels_advanced(source_df: pd.DataFrame, item_filter: Optional[List[str]] = None, **kwargs) -> pd.DataFrame:
+    """Simulates a call to a more advanced AI/ML forecasting model."""
+    logger.info("Executing AI-Assisted (Simulated) supply forecast.")
+    # For the simulation, we'll just call the simple model.
+    return generate_simple_supply_forecast(source_df, item_filter=item_filter)
