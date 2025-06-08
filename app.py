@@ -73,15 +73,9 @@ st.set_page_config(
     }
 )
 
-# --- Apply Plotly Theme & CSS ---
-try:
-    from visualization.plots import set_sentinel_plotly_theme
-    set_sentinel_plotly_theme()
-    logger.debug("Sentinel Plotly theme applied.")
-except Exception as e: 
-    logger.error(f"Error applying Plotly theme: {e}", exc_info=True)
-    st.error("Error applying visualization theme.")
-
+# --- Apply Global CSS ---
+# The Plotly theme is now applied automatically by the ChartFactory in visualization/plots.py
+# No theme-setting function needs to be called here.
 @st.cache_resource
 def load_global_css_styles(css_path_str: str):
     css_path = Path(css_path_str)
