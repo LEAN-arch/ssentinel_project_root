@@ -9,7 +9,8 @@ from .plots import (
     create_empty_figure,
     plot_bar_chart,
     plot_donut_chart,
-    plot_annotated_line_chart
+    plot_annotated_line_chart,
+    plot_choropleth_map  # DEFINITIVE FIX: Add the missing import
 )
 
 # From ui_elements.py
@@ -37,6 +38,7 @@ __all__ = [
     "plot_bar_chart",
     "plot_donut_chart",
     "plot_annotated_line_chart",
+    "plot_choropleth_map", # DEFINITIVE FIX: Add to the public API list
     
     # ui_elements
     "get_theme_color",
