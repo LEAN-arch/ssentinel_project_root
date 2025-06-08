@@ -32,7 +32,6 @@ class RiskPredictionModel:
     def _get_rules_config(self) -> List[Dict[str, Any]]:
         """
         Defines the declarative rule set for calculating the risk score.
-        Each rule has a condition and the points to add if met.
         """
         return [
             {"condition": lambda df: df['min_spo2_pct'] < 92, "points": self.weights.get('spo2_low_points', 25)},
@@ -52,10 +51,6 @@ class RiskPredictionModel:
         by using the centralized data_cleaner and configurations from settings.
         """
         prepared_df = df.copy()
-        
-        # --- DEFINITIVE FIX FOR TypeError ---
-        # Use the declarative defaults from settings to ensure all required
-        # columns for the model are present and correctly typed.
         numeric_defaults = getattr(settings, 'RISK_MODEL_NUMERIC_DEFAULTS', {})
         string_defaults = getattr(settings, 'RISK_MODEL_STRING_DEFAULTS', {})
         
@@ -74,7 +69,9 @@ class RiskPredictionModel:
                 health_df['ai_risk_score'] = np.nan
             return health_df
 
-        # Call the prepare_data method to clean the data before rule evaluation
+        # --- DEFINITIVE FIX FOR TypeError ---
+        # The prepare_data method must be called here to clean the data
+        # before any rules are evaluated against it.
         df = self._prepare_data(health_df)
         
         risk_scores = pd.Series(0.0, index=df.index)
@@ -92,8 +89,6 @@ class RiskPredictionModel:
         return df
 
 def calculate_risk_score(health_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Public factory function to calculate AI risk scores.
-    """
+    """Public factory function to calculate AI risk scores."""
     model = RiskPredictionModel()
     return model.predict_risk_scores(health_df)
