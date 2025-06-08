@@ -100,9 +100,11 @@ class ClinicKPIPreparer:
             conclusive_agg = conclusive_df.groupby('test_type').agg(positive_rate_perc=('is_positive', lambda x: x.mean() * 100), avg_tat_days=('test_turnaround_days', 'mean'), perc_met_tat_target=('tat_met', lambda x: x.mean() * 100))
             breakdown = breakdown.join(conclusive_agg, how='left')
         
-        # Use display names from settings as keys in the final dictionary
-        display_name_map = {k: v.get("display_name", k) for k, v in settings.KEY_TEST_TYPES_FOR_ANALYSIS.items()}
-        breakdown.rename(index=display_name_map, inplace=True)
+        # --- DEFINITIVE FIX FOR KEY MISMATCH ---
+        # The breakdown dictionary must be keyed by the internal test names (e.g., 'RDT-Malaria'),
+        # not the display names. This line, which caused the error, is removed.
+        # breakdown.rename(index=display_name_map, inplace=True) 
+        
         self.summary['test_summary_details'] = breakdown.fillna(0).to_dict('index')
 
     def prepare(self) -> Dict[str, Any]:
@@ -111,7 +113,6 @@ class ClinicKPIPreparer:
         return self.summary
 
 class ClinicEnvKPIPreparer:
-    """Encapsulates logic for calculating environmental summary KPIs."""
     def __init__(self, iot_df: pd.DataFrame):
         self.df = iot_df.copy() if isinstance(iot_df, pd.DataFrame) else pd.DataFrame()
         self.summary: Dict[str, Any] = {"avg_co2_overall_ppm": np.nan, "avg_pm25_overall_ugm3": np.nan, "avg_waiting_room_occupancy_overall_persons": np.nan, "rooms_noise_high_alert_latest_count": 0}
@@ -131,7 +132,6 @@ class ClinicEnvKPIPreparer:
         return self.summary
 
 class CHWDailySummaryPreparer:
-    """Encapsulates logic for calculating CHW daily summary metrics."""
     def __init__(self, health_df: pd.DataFrame):
         self.df = health_df.copy() if isinstance(health_df, pd.DataFrame) else pd.DataFrame()
         self.summary = {"visits_count": 0, "high_ai_prio_followups_count": 0, "fever_cases_identified_count": 0, "pending_critical_referrals_generated_today_count": 0, "avg_risk_of_visited_patients": np.nan}
@@ -140,23 +140,18 @@ class CHWDailySummaryPreparer:
         if self.df.empty: return self.summary
         patients = self.df[~self.df.get('encounter_type', pd.Series(dtype=str)).str.contains("WORKER_SELF", na=False)]
         if patients.empty: return self.summary
-
         self.summary["visits_count"] = patients['patient_id'].nunique()
         self.summary["avg_risk_of_visited_patients"] = patients.drop_duplicates('patient_id')['ai_risk_score'].mean()
-        
         temp_col = next((c for c in ['vital_signs_temperature_celsius', 'max_skin_temp_celsius'] if c in patients), None)
         if temp_col: self.summary["fever_cases_identified_count"] = (patients[temp_col] >= settings.ALERT_BODY_TEMP_FEVER_C).sum()
-        
         prio_scores = convert_to_numeric(patients['ai_followup_priority_score'])
         self.summary["high_ai_prio_followups_count"] = (prio_scores >= settings.FATIGUE_INDEX_HIGH_THRESHOLD).sum()
-
         is_pending = patients['referral_status'].str.lower() == 'pending'
         is_critical = patients['condition'].str.contains('|'.join(settings.KEY_CONDITIONS_FOR_ACTION), na=False)
         self.summary["pending_critical_referrals_generated_today_count"] = patients[is_pending & is_critical]['patient_id'].nunique()
         return self.summary
 
 class DistrictKPIPreparer:
-    """Encapsulates logic for calculating district-wide summary KPIs from enriched zone data."""
     def __init__(self, enriched_zone_df: pd.DataFrame):
         self.df = enriched_zone_df.copy() if isinstance(enriched_zone_df, pd.DataFrame) else pd.DataFrame()
         self.summary = {"total_zones_in_df": 0, "total_population_district": 0, "population_weighted_avg_ai_risk_score": np.nan, "zones_meeting_high_risk_criteria_count": 0}
@@ -165,18 +160,12 @@ class DistrictKPIPreparer:
         if self.df.empty: return self.summary
         self.df['population'] = convert_to_numeric(self.df.get('population'), default_value=0.0)
         self.df['avg_risk_score'] = convert_to_numeric(self.df.get('avg_risk_score'))
-        
         self.summary["total_zones_in_df"] = self.df['zone_id'].nunique()
         total_pop = self.df['population'].sum()
         self.summary["total_population_district"] = total_pop
-        
-        if total_pop > 0:
-            self.summary["population_weighted_avg_ai_risk_score"] = (self.df['avg_risk_score'].fillna(0) * self.df['population']).sum() / total_pop
-        else:
-            self.summary["population_weighted_avg_ai_risk_score"] = self.df['avg_risk_score'].mean()
-        
+        if total_pop > 0: self.summary["population_weighted_avg_ai_risk_score"] = (self.df['avg_risk_score'].fillna(0) * self.df['population']).sum() / total_pop
+        else: self.summary["population_weighted_avg_ai_risk_score"] = self.df['avg_risk_score'].mean()
         self.summary["zones_meeting_high_risk_criteria_count"] = (self.df['avg_risk_score'] >= settings.DISTRICT_ZONE_HIGH_RISK_AVG_SCORE).sum()
-        
         for cond in settings.KEY_CONDITIONS_FOR_ACTION:
             col = f"active_{re.sub(r'[^a-z0-9_]+', '_', cond.lower())}_cases"
             self.summary[f"district_total_{col}"] = convert_to_numeric(self.df.get(col)).sum()
@@ -185,17 +174,14 @@ class DistrictKPIPreparer:
 # --- Public Factory Functions ---
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, hash_funcs={pd.DataFrame: hash_dataframe_safe})
 def get_clinic_summary_kpis(health_df_period: Optional[pd.DataFrame], source_context: str = "") -> Dict[str, Any]:
-    """Factory to calculate all summary KPIs for a clinic over a period."""
     return ClinicKPIPreparer(health_df_period).prepare()
 
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, hash_funcs={pd.DataFrame: hash_dataframe_safe})
 def get_clinic_environmental_summary_kpis(iot_df_period: Optional[pd.DataFrame], source_context: str = "") -> Dict[str, Any]:
-    """Factory to calculate environmental summary KPIs for a clinic."""
     return ClinicEnvKPIPreparer(iot_df_period).prepare()
 
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, hash_funcs={pd.DataFrame: hash_dataframe_safe})
 def get_chw_summary_kpis(health_df_daily: Optional[pd.DataFrame], for_date: Any, source_context: str = "") -> Dict[str, Any]:
-    """Factory to calculate CHW daily summary metrics for a specific date."""
     if not isinstance(health_df_daily, pd.DataFrame) or health_df_daily.empty: return CHWDailySummaryPreparer(pd.DataFrame()).summary
     target_date = pd.to_datetime(for_date).date()
     daily_df = health_df_daily[pd.to_datetime(health_df_daily['encounter_date']).dt.date == target_date]
@@ -203,5 +189,4 @@ def get_chw_summary_kpis(health_df_daily: Optional[pd.DataFrame], for_date: Any,
 
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, hash_funcs={pd.DataFrame: hash_dataframe_safe})
 def get_district_summary_kpis(enriched_zone_df: Optional[pd.DataFrame], source_context: str = "") -> Dict[str, Any]:
-    """Factory to calculate district-wide summary KPIs from enriched zone data."""
     return DistrictKPIPreparer(enriched_zone_df).prepare()
