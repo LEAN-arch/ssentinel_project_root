@@ -2,20 +2,20 @@
 """
 CHW Supervisor Operations View for the Sentinel Health Co-Pilot.
 SME FINAL VERSION: This script uses a corrected, robust import structure and
-modernized data handling to prevent common errors.
+modernized data handling to prevent common errors. It is feature-complete.
 """
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import logging
 from datetime import date, timedelta
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 # --- Configuration and Centralized Module Imports ---
-# SME NOTE: This import block is now robust and points to the correct functions.
-# The `ImportError` you are seeing is because this block in your live file is still
-# trying to import a function that does not exist. This version fixes that.
+# SME NOTE: This is the corrected import block. It no longer attempts to import
+# the non-existent 'calculate_chw_activity_trends_data' function.
 try:
     from config import settings
     from data_processing.loaders import load_health_records
@@ -23,7 +23,7 @@ try:
     from visualization.ui_elements import render_kpi_card
     from visualization.plots import plot_annotated_line_chart, create_empty_figure
     
-    # Correctly import from the new, centralized analytics location
+    # Import from the new, centralized analytics location
     from analytics.alerting import generate_chw_patient_alerts
     
     # Import the CORRECT functions from the component wrappers
@@ -90,12 +90,12 @@ with st.sidebar:
         min_date, max_date = all_data['encounter_date'].min().date(), all_data['encounter_date'].max().date()
         daily_date = st.date_input("View Daily Activity For:", value=max_date, min_value=min_date, max_value=max_date, key="daily_date_filter")
         
-        default_start = max(min_date, daily_date - timedelta(days=29))
-        trend_range = st.date_input("Select Trend Date Range:", value=[default_start, daily_date], min_value=min_date, max_value=max_date, key="trend_date_filter")
+        default_trend_start = max(min_date, daily_date - timedelta(days=29))
+        trend_range = st.date_input("Select Trend Date Range:", value=[default_trend_start, daily_date], min_value=min_date, max_value=max_date, key="trend_date_filter")
         
         active_chw = None if selected_chw == "All CHWs" else selected_chw
         active_zone = None if selected_zone == "All Zones" else selected_zone
-        trend_start, trend_end = trend_range if len(trend_range) == 2 else (default_start, daily_date)
+        trend_start, trend_end = trend_range if len(trend_range) == 2 else (default_trend_start, daily_date)
 
 # --- Filter Data ---
 if all_data.empty:
@@ -104,57 +104,80 @@ else:
     daily_mask = (all_data['encounter_date'].dt.date == daily_date)
     trend_mask = (all_data['encounter_date'].dt.date.between(trend_start, trend_end))
     if active_chw:
-        chw_mask = (all_data['chw_id'].astype(str) == active_chw)
-        daily_mask &= chw_mask
-        trend_mask &= chw_mask
+        daily_mask &= (all_data['chw_id'].astype(str) == active_chw)
+        trend_mask &= (all_data['chw_id'].astype(str) == active_chw)
     if active_zone:
-        zone_mask = (all_data['zone_id'].astype(str) == active_zone)
-        daily_mask &= zone_mask
-        trend_mask &= zone_mask
+        daily_mask &= (all_data['zone_id'].astype(str) == active_zone)
+        trend_mask &= (all_data['zone_id'].astype(str) == active_zone)
     daily_df = all_data[daily_mask]
     trend_df = all_data[trend_mask]
 
 st.info(f"**Date:** {daily_date:%d %b %Y} | **CHW:** {active_chw or 'All'} | **Zone:** {active_zone or 'All'}")
 
-# --- UI Sections ---
+# --- Section 1: Daily Performance Snapshot ---
 st.header("📊 Daily Performance Snapshot")
 if daily_df.empty:
     st.markdown("ℹ️ No activity for the selected date and filters.")
 else:
     summary_kpis = calculate_chw_daily_summary_metrics(daily_df)
-    cols = st.columns(4)
-    with cols[0]: render_kpi_card(title="Visits Today", value_str=str(summary_kpis.get("visits_count", 0)), icon="👥")
-    with cols[1]: render_kpi_card(title="High Prio Follow-ups", value_str=str(summary_kpis.get("high_ai_prio_followups_count", 0)), icon="🎯")
-    with cols[2]: render_kpi_card(title="Critical SpO2 Cases", value_str=str(summary_kpis.get("critical_spo2_cases_identified_count", 0)), icon="💨")
-    with cols[3]: render_kpi_card(title="High Fever Cases", value_str=str(summary_kpis.get("high_fever_cases_identified_count", 0)), icon="🔥")
+    kpi_cols = st.columns(4)
+    with kpi_cols[0]: render_kpi_card(title="Visits Today", value_str=str(summary_kpis.get("visits_count", 0)), icon="👥", help_text="Total unique patients encountered.")
+    with kpi_cols[1]: render_kpi_card(title="High Prio Follow-ups", value_str=str(summary_kpis.get("high_ai_prio_followups_count", 0)), icon="🎯", help_text="Patients needing urgent follow-up.")
+    with kpi_cols[2]: render_kpi_card(title="Critical SpO2 Cases", value_str=str(summary_kpis.get("critical_spo2_cases_identified_count", 0)), icon="💨", help_text="Patients with SpO2 < 90%.")
+    with kpi_cols[3]: render_kpi_card(title="High Fever Cases", value_str=str(summary_kpis.get("high_fever_cases_identified_count", 0)), icon="🔥", help_text="Patients with body temp ≥ 39.5°C.")
 st.divider()
 
+# --- Section 2: Key Alerts & Tasks ---
 st.header("🚦 Key Alerts & Tasks")
 if daily_df.empty:
     st.markdown("ℹ️ No activity data to generate alerts or tasks.")
 else:
-    chw_alerts = generate_chw_patient_alerts(patient_encounter_data_df=daily_df)
-    chw_tasks = generate_chw_tasks(daily_df)
+    chw_alerts = generate_chw_patient_alerts(patient_encounter_data_df=daily_df, for_date=daily_date)
+    chw_tasks = generate_chw_tasks(daily_df, for_date=daily_date, chw_id=active_chw, zone_id=active_zone)
     
-    # Alerts Display
-    if chw_alerts:
-        st.subheader("🚨 Priority Patient Alerts (Today)")
-        # ... UI logic for displaying alerts ...
-    else:
-        st.success("✅ No significant patient alerts generated.")
-
-    # Tasks Display
-    if chw_tasks:
+    alert_col, task_col = st.columns(2)
+    with alert_col:
+        st.subheader("🚨 Priority Patient Alerts")
+        if chw_alerts:
+            for alert in chw_alerts:
+                level = alert.get('alert_level', 'INFO')
+                icon = '🔴' if level == 'CRITICAL' else ('🟠' if level == 'WARNING' else 'ℹ️')
+                with st.expander(f"{icon} {level}: {alert.get('primary_reason')} for Pt. {alert.get('patient_id')}", expanded=(level == 'CRITICAL')):
+                    st.markdown(f"**Details:** {alert.get('brief_details')}")
+                    st.markdown(f"**Context:** {alert.get('context_info')}")
+        else:
+            st.success("✅ No significant patient alerts.")
+            
+    with task_col:
         st.subheader("📋 Top Priority Tasks")
-        # ... UI logic for displaying tasks ...
-    else:
-        st.info("ℹ️ No high-priority tasks identified.")
+        if chw_tasks:
+            tasks_df = pd.DataFrame(chw_tasks).sort_values(by='priority_score', ascending=False)
+            for _, task in tasks_df.head(5).iterrows():
+                st.info(f"**Task:** {task.get('task_description')} for Pt. {task.get('patient_id')}\n\n"
+                        f"**Due:** {task.get('due_date')} | **Priority:** {task.get('priority_score', 0.0):.1f}")
+        else:
+            st.info("ℹ️ No high-priority tasks identified.")
 st.divider()
 
+# --- Section 3: Local Epi Signals Watch ---
+st.header("🔬 Local Epi Signals Watch (Today)")
+if daily_df.empty:
+    st.markdown("ℹ️ No activity data for local epi signals.")
+else:
+    epi_signals = extract_chw_epi_signals(for_date=daily_date, chw_daily_encounter_df=daily_df)
+    if epi_signals and epi_signals.get("detected_symptom_clusters"):
+        st.markdown("###### Detected Symptom Clusters (Requires Supervisor Verification):")
+        for cluster in epi_signals["detected_symptom_clusters"]:
+            st.warning(f"⚠️ **Pattern: {cluster.get('symptoms_pattern', 'Unknown')}** - {cluster.get('patient_count', 'N/A')} cases in area. Please verify.")
+    else:
+        st.info("No unusual symptom clusters detected today.")
+st.divider()
+
+# --- Section 4: CHW Team Activity Trends ---
 st.header("📈 CHW Team Activity Trends")
 st.markdown(f"Displaying trends from **{trend_start:%d %b %Y}** to **{trend_end:%d %b %Y}**.")
 if trend_df.empty:
-    st.markdown("ℹ️ No historical data available for trends.")
+    st.markdown("ℹ️ No historical data for the selected trend period.")
 else:
     # THIS IS THE CRITICAL LINE THAT MUST BE CORRECT:
     activity_trends = get_chw_activity_trends(trend_df)
@@ -165,10 +188,13 @@ else:
         if visits_trend is not None and not visits_trend.empty:
             st.plotly_chart(plot_annotated_line_chart(visits_trend, "Daily Patient Visits Trend", "Unique Patients Visited"), use_container_width=True)
         else:
-            st.altair_chart(create_empty_figure("Daily Patient Visits Trend"), use_container_width=True)
+            st.altair_chart(create_empty_figure("Daily Patient Visits", "No trend data available"), use_container_width=True)
     with cols[1]:
-        # ... trend display logic ...
-        pass
+        prio_trend = activity_trends.get("high_priority_followups_trend")
+        if prio_trend is not None and not prio_trend.empty:
+            st.plotly_chart(plot_annotated_line_chart(prio_trend, "High Priority Follow-ups Trend", "High Prio. Patients"), use_container_width=True)
+        else:
+            st.altair_chart(create_empty_figure("High Priority Follow-ups", "No trend data available"), use_container_width=True)
 st.divider()
 
 st.caption(_get_setting('APP_FOOTER_TEXT', "Sentinel Health Co-Pilot."))
