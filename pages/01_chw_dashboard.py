@@ -1,7 +1,7 @@
 # ssentinel_project_root/pages/01_chw_dashboard.py
-# SME-EVALUATED AND REVISED VERSION (V2 - TypeError FIX & Refactor)
-# This version fixes the critical TypeError, removes redundant data cleaning,
-# and optimizes the filtering logic for better performance and maintainability.
+# SME-EVALUATED AND REVISED VERSION (V3 - TypeError FIX 2)
+# This version corrects the second TypeError by updating the call to
+# `generate_chw_tasks` to match its correct function signature.
 
 import streamlit as st
 import pandas as pd
@@ -43,7 +43,6 @@ st.set_page_config(
 )
 
 # --- Data Loading ---
-# <<< SME REVISION >>> This function has been significantly simplified.
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 300), hash_funcs={pd.DataFrame: hash_dataframe_safe})
 def get_dashboard_data() -> pd.DataFrame:
     """
@@ -51,14 +50,11 @@ def get_dashboard_data() -> pd.DataFrame:
     fully handled by the robust `load_health_records` function.
     """
     logger.info("CHW Dashboard: Loading base health records.")
-    # <<< SME REVISION >>> Removed invalid `source_context` argument to fix the TypeError.
     df = load_health_records()
     if not isinstance(df, pd.DataFrame) or df.empty:
         logger.warning("CHW Dashboard: load_health_records returned an empty DataFrame.")
         return pd.DataFrame()
     
-    # <<< SME REVISION >>> Removed redundant data cleaning. The loaders.py module
-    # is now responsible for all type conversions and NA handling, simplifying this page.
     return df
 
 # --- Main UI ---
@@ -75,7 +71,6 @@ with st.sidebar:
         st.warning("No data loaded. Filters are disabled.")
         active_chw, active_zone, daily_date, trend_start, trend_end = None, None, date.today(), date.today() - timedelta(days=29), date.today()
     else:
-        # <<< SME REVISION >>> Removed redundant .astype(str) as the loader now enforces dtypes.
         chw_options = ["All CHWs"] + sorted(all_data['chw_id'].dropna().unique())
         zone_options = ["All Zones"] + sorted(all_data['zone_id'].dropna().unique())
         
@@ -99,11 +94,9 @@ else:
     daily_mask = (all_data['encounter_date'].dt.date == daily_date)
     trend_mask = (all_data['encounter_date'].dt.date.between(trend_start, trend_end))
     if active_chw:
-        # <<< SME REVISION >>> Removed redundant .astype(str).
         daily_mask &= (all_data['chw_id'] == active_chw)
         trend_mask &= (all_data['chw_id'] == active_chw)
     if active_zone:
-        # <<< SME REVISION >>> Removed redundant .astype(str).
         daily_mask &= (all_data['zone_id'] == active_zone)
         trend_mask &= (all_data['zone_id'] == active_zone)
     daily_df = all_data[daily_mask]
@@ -130,7 +123,9 @@ if daily_df.empty:
     st.markdown("ℹ️ No activity data to generate alerts or tasks.")
 else:
     chw_alerts = generate_chw_patient_alerts(patient_encounter_data_df=daily_df, for_date=daily_date)
-    chw_tasks = generate_chw_tasks(daily_df, for_date=daily_date, chw_id=active_chw, zone_id=active_zone)
+    # <<< SME REVISION >>> Removed the invalid `chw_id` and `zone_id` keyword arguments
+    # to match the function's correct signature and fix the TypeError.
+    chw_tasks = generate_chw_tasks(daily_df, for_date=daily_date)
     
     alert_col, task_col = st.columns(2)
     with alert_col:
