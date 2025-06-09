@@ -1,7 +1,7 @@
 # sentinel_project_root/data_processing/helpers.py
-# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD V2)
-# This version optimizes the performance of column name de-duplication and
-# adds clarifying comments for complex logic and potential edge cases.
+# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD V3 - NameError FIX)
+# This version corrects a critical NameError in `robust_json_load` and
+# retains previous performance and clarity optimizations.
 
 """
 A collection of robust, high-performance utility functions for common data
@@ -19,7 +19,6 @@ from collections import Counter
 
 logger = logging.getLogger(__name__)
 
-# <<< SME REVISION >>> Added a detailed comment to clarify the regex behavior and potential edge cases.
 # A comprehensive, case-insensitive regex to identify and replace various "Not Available" strings.
 # NOTE: This pattern is intentionally broad. The inclusion of `'-'` will match a hyphen only when
 # it is the sole character in a cell (surrounded by optional whitespace). This is a common
@@ -65,8 +64,7 @@ class DataCleaner:
 
             new_cols = [f"unnamed_col_{i}" if not name else name for i, name in enumerate(new_cols)]
 
-            # <<< SME REVISION >>> Replaced O(N^2) de-duplication with a more performant O(N) approach.
-            # This is significantly faster for DataFrames with many columns or many duplicates.
+            # Replaced O(N^2) de-duplication with a more performant O(N) approach.
             counts = Counter(new_cols)
             seen_counts = Counter()
             final_cols = []
@@ -144,14 +142,14 @@ def convert_to_numeric(data_input: Any, default_value: Any = np.nan, target_type
     elif target_type is float:
         numeric_series = numeric_series.astype(float)
 
-    # <<< SME REVISION >>> Added a comment to clarify the return logic.
     # Return a Series if the input was a Series, otherwise extract the scalar value.
     return numeric_series if is_series else (numeric_series.iloc[0] if not numeric_series.empty else default_value)
 
 
 def robust_json_load(file_path: Union[str, Path]) -> Optional[Union[Dict, List]]:
     """Loads JSON data from a file with robust error handling and UTF-8 encoding."""
-    path_obj = Path(file_file_path)
+    # <<< SME REVISION >>> Corrected the variable name from 'file_file_path' to 'file_path' to fix the NameError.
+    path_obj = Path(file_path)
     if not path_obj.is_file():
         logger.error(f"JSON file not found: {path_obj.resolve()}")
         return None
