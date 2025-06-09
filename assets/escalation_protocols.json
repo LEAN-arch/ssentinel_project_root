@@ -2,60 +2,40 @@
   "protocols": [
     {
       "trigger_event_code": "PATIENT_CRITICAL_SPO2_LOW",
-      "trigger_description": "Patient SpO2 critically low (<90%) confirmed by CHW",
-      "severity_level": "CRITICAL",
+      "description": "Patient SpO2 confirmed critically low",
+      "severity": "CRITICAL",
       "steps": [
-        {"sequence": 1, "action_code": "ACTION_ENSURE_AIRWAY_POSITION", "description": "Ensure patient airway is clear and position for optimal breathing.", "guidance_pictogram_code": "GUIDE_AIRWAY_POSITION"},
-        {"sequence": 2, "action_code": "ACTION_ADMINISTER_OXYGEN_IF_AVAIL", "description": "If oxygen available to CHW, administer as per training.", "guidance_pictogram_code": "GUIDE_OXYGEN_ADMIN"},
-        {"sequence": 3, "action_code": "ACTION_NOTIFY_SUPERVISOR_IMMEDIATE", "contact_method": "SMS_PED_APP", "message_template_code": "MSG_CRIT_SPO2_SUP", "escalation_target_role": "CHW_SUPERVISOR"},
-        {"sequence": 4, "action_code": "ACTION_PREPARE_FOR_TRANSPORT", "description": "Prepare patient for urgent transport to nearest equipped facility.", "guidance_pictogram_code": "GUIDE_PREPARE_TRANSPORT"},
-        {"sequence": 5, "action_code": "ACTION_NOTIFY_RECEIVING_FACILITY", "contact_method": "CALL_VIA_SUPERVISOR_OR_HUB", "facility_type_target": "NEAREST_OXYGEN_EQUIPPED", "message_template_code": "MSG_CRIT_SPO2_INBOUND_FACILITY"}
-      ]
-    },
-    {
-      "trigger_event_code": "CHW_OWN_CRITICAL_HEAT_STRESS",
-      "trigger_description": "CHW experiencing signs of critical heat stress (e.g., confusion, very high temp)",
-      "severity_level": "CRITICAL",
-      "steps": [
-        {"sequence": 1, "action_code": "ACTION_SELF_IMMEDIATE_REST_SHADE_COOL", "description": "STOP ALL ACTIVITY. Seek shade immediately. Apply cooling measures (wet cloth). Drink water if able.", "guidance_pictogram_code": "GUIDE_SELF_HEAT_EMERGENCY"},
-        {"sequence": 2, "action_code": "ACTION_ACTIVATE_SOS_PED", "description": "Activate SOS function on PED.", "guidance_pictogram_code": "SOS_BUTTON"},
-        {"sequence": 3, "action_code": "ACTION_NOTIFY_PEERS_NEARBY_AUTO", "description": "PED attempts to notify nearby peers via Bluetooth if SOS activated.", "contact_method": "BLUETOOTH_PEER_SOS"}
-      ]
-    },
-    {
-      "trigger_event_code": "SUSPECTED_COMMUNITY_OUTBREAK_SYMPTOM_CLUSTER",
-      "trigger_description": "CHW reports unusual cluster of similar severe symptoms (e.g., 3+ cases of fever+rash in small area).",
-      "severity_level": "WARNING",
-      "steps": [
-        {"sequence": 1, "action_code": "ACTION_LOG_CLUSTER_DETAILS_PED", "description": "Document symptoms, number of affected, location details, onset times via PED.", "guidance_pictogram_code": "GUIDE_OUTBREAK_FIELD_REPORT"},
-        {"sequence": 2, "action_code": "ACTION_NOTIFY_SUPERVISOR_URGENT_REVIEW", "contact_method": "SMS_PED_APP", "message_template_code": "MSG_SYMPTOM_CLUSTER_SUP", "escalation_target_role": "CHW_SUPERVISOR"},
-        {"sequence": 3, "action_code": "ACTION_ADVISE_PRECAUTIONS_COMMUNITY", "description": "Advise general hygiene and separation precautions in affected households if safe.", "guidance_pictogram_code": "GUIDE_COMMUNITY_PRECAUTIONS"}
+        {"sequence": 1, "action_code": "GUIDE_AIRWAY_POSITION", "description": "Ensure patient airway is clear and position for optimal breathing."},
+        {"sequence": 2, "action_code": "GUIDE_OXYGEN_ADMIN", "description": "If oxygen available, administer as per training."},
+        {"sequence": 3, "action_code": "NOTIFY_SUPERVISOR_IMMEDIATE", "contact_method": "SMS_PED_APP", "message_template_code": "MSG_CRITICAL_SPO2", "escalation_target_role": "CHW_SUPERVISOR"},
+        {"sequence": 4, "action_code": "NOTIFY_TRANSPORT", "description": "Initiate urgent transport to nearest equipped facility.", "message_template_code": "MSG_TRANSPORT_REQUEST"}
       ]
     },
     {
       "trigger_event_code": "PATIENT_FALL_DETECTED",
-      "trigger_description": "Patient fall detected by PED sensor or reported.",
-      "severity_level": "WARNING",
+      "description": "Patient fall detected by sensor or reported",
+      "severity": "WARNING",
       "steps": [
-        {"sequence": 1, "action_code": "ACTION_ASSESS_PATIENT_CONSCIOUSNESS_INJURY", "description": "Assess patient for consciousness, breathing, and any obvious signs of serious injury (head, neck, back, fractures).", "guidance_pictogram_code": "GUIDE_FALL_ASSESSMENT"},
-        {"sequence": 2, "action_code": "ACTION_DO_NOT_MOVE_IF_SERIOUS_INJURY_SUSPECTED", "description": "If serious injury suspected (especially head/neck/back), do NOT move patient unless in immediate danger. Keep patient still.", "guidance_pictogram_code": "GUIDE_DO_NOT_MOVE"},
-        {"sequence": 3, "action_code": "ACTION_NOTIFY_SUPERVISOR_FALL", "contact_method": "SMS_PED_APP", "message_template_code": "MSG_PATIENT_FALL_SUP", "escalation_target_role": "CHW_SUPERVISOR"},
-        {"sequence": 4, "action_code": "ACTION_PROVIDE_BASIC_FIRST_AID_IF_MINOR", "description": "If injuries appear minor (e.g., small cuts, bruises) and patient is conscious and alert, provide basic first aid.", "guidance_pictogram_code": "GUIDE_FIRST_AID_KIT"},
-        {"sequence": 5, "action_code": "ACTION_ARRANGE_ASSESSMENT_IF_NEEDED", "description": "Based on assessment and supervisor guidance, arrange for further medical assessment if there's any doubt or concern.", "guidance_pictogram_code": "GUIDE_SEEK_MEDICAL_HELP"}
+        {"sequence": 1, "action_code": "GUIDE_FALL_ASSESSMENT", "description": "Assess patient for consciousness, breathing, and signs of serious injury."},
+        {"sequence": 2, "action_code": "GUIDE_DO_NOT_MOVE", "description": "If serious injury suspected (head/neck/back), do NOT move patient unless in immediate danger."},
+        {"sequence": 3, "action_code": "NOTIFY_SUPERVISOR_FALL", "contact_method": "SMS_PED_APP", "message_template_code": "MSG_PATIENT_FALL", "escalation_target_role": "CHW_SUPERVISOR"}
+      ]
+    },
+    {
+      "trigger_event_code": "SUSPECTED_COMMUNITY_OUTBREAK",
+      "description": "Unusual cluster of similar severe symptoms reported",
+      "severity": "WARNING",
+      "steps": [
+        {"sequence": 1, "action_code": "GUIDE_OUTBREAK_FIELD_REPORT", "description": "Document symptoms, number affected, location, and onset times via PED."},
+        {"sequence": 2, "action_code": "NOTIFY_SUPERVISOR_URGENT_REVIEW", "contact_method": "SMS_PED_APP", "message_template_code": "MSG_SYMPTOM_CLUSTER", "escalation_target_role": "CHW_SUPERVISOR"},
+        {"sequence": 3, "action_code": "GUIDE_COMMUNITY_PRECAUTIONS", "description": "Advise general hygiene and separation precautions in affected households."}
       ]
     }
   ],
-  "contacts": {
-      "CHW_SUPERVISOR_TEAM_ALPHA_PHONE": "+12345600001", 
-      "CHW_SUPERVISOR_TEAM_BRAVO_PHONE": "+12345600002",
-      "CLINIC_MAIN_ER_PHONE": "+12345600010",
-      "DISTRICT_HEALTH_OFFICE_ALERT_EMAIL": "dho.alerts@example.lmic-health.org",
-      "NEAREST_OXYGEN_EQUIPPED_CONTACT_PROTOCOL": "CALL_SUPERVISOR_FOR_COORDINATION"
-  },
   "message_templates":{
-      "MSG_CRIT_SPO2_SUP": "URGENT: Patient [PATIENT_ID] in [ZONE_ID] near [GPS_COORDS_OR_LANDMARK] has SpO2 [SPO2_VALUE]%. CHW [CHW_ID] ([CHW_PHONE_NUMBER]) requires immediate support for critical respiratory distress. Action: [CHW_OBSERVED_ACTION_TAKEN].",
-      "MSG_SYMPTOM_CLUSTER_SUP": "Warning: CHW [CHW_ID] reports potential symptom cluster: [SYMPTOMS_REPORTED] ([CASE_COUNT_ESTIMATE] cases) in [ZONE_ID] near [LOCATION_DETAILS]. Requesting supervisor review/guidance.",
-      "MSG_CRIT_SPO2_INBOUND_FACILITY": "ALERT: Inbound patient [PATIENT_ID_SHORT] (Age [PATIENT_AGE] [PATIENT_SEX]) with critical SpO2 [SPO2_VALUE]%. ETA [ETA_MINUTES] min. From CHW [CHW_ID].",
-      "MSG_PATIENT_FALL_SUP": "ALERT: Patient [PATIENT_ID] in [ZONE_ID] reported/detected fall. CHW [CHW_ID] assessing. Current status: [PATIENT_STATUS_SUMMARY_FALL]. Requesting guidance if needed."
+      "MSG_CRITICAL_SPO2": "URGENT: Patient [PATIENT_ID] in Zone [ZONE_ID] has critical SpO2 [MIN_SPO2_PCT]%. CHW [CHW_ID] requires immediate support.",
+      "MSG_TRANSPORT_REQUEST": "TRANSPORT: Urgent medical transport required for patient [PATIENT_ID] in Zone [ZONE_ID]. Condition: [DIAGNOSIS].",
+      "MSG_PATIENT_FALL": "ALERT: Patient [PATIENT_ID] in Zone [ZONE_ID] reported/detected fall. CHW [CHW_ID] is assessing.",
+      "MSG_SYMPTOM_CLUSTER": "WARNING: CHW [CHW_ID] reports potential symptom cluster: [SYMPTOMS_REPORTED] ([CASE_COUNT_ESTIMATE] cases) in Zone [ZONE_ID]. Requesting supervisor review."
   }
 }
