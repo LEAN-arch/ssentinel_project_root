@@ -1,57 +1,40 @@
 # sentinel_project_root/requirements.txt
-# Python package dependencies for Sentinel Health Co-Pilot
+# SME PLATINUM STANDARD (V2 - FINAL INTEGRATED VERSION)
+# This definitive version includes all necessary dependencies for the refactored
+# application, including the critical Pydantic libraries for configuration.
 
-# Core Streamlit and Data Handling
+# --- Core Application Framework ---
 streamlit==1.35.0
+
+# --- Data Processing & Numerics ---
+# Pinned to specific versions known to be stable.
 pandas==2.2.2
 numpy==1.26.4
-pydantic
-pydantic_settings==2.0
-# Plotting and Visualization
-plotly==5.22.0
-kaleido==0.2.1
 pyarrow==16.1.0
-packaging==24.0
 
-# Geospatial - Lightweight (Only if specific non-GeoPandas geo operations are needed)
-# If using GeoJSON features directly with Plotly Express, these might not be strictly necessary
-# unless you perform transformations or complex geometry manipulations.
-# shapely>=2.0.0,<2.1.0
-# pyproj>=3.4.0,<3.7.0
-# geojson>=3.0.0,<3.1.0
+# --- Configuration & Data Validation (CRITICAL) ---
+# These were added during the refactoring and are required for the app to start.
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
 
-# NOTE: GeoPandas and its direct heavy dependencies like Fiona and RTree
-# have been explicitly REMOVED as per refactoring requirements.
+# --- Plotting & Visualization ---
+# Pinned to specific versions for consistent output.
+plotly==5.22.0
+kaleido==0.2.1   # Required for exporting Plotly charts as static images (e.g., sparklines).
 
-# Other potential utilities (uncomment and specify versions if used):
-python-dotenv>=1.0.0    # For loading .env files if used for configuration
-# requests>=2.28.0        # For making HTTP requests (e.g., to FHIR server or other APIs)
-# openpyxl>=3.1.0         # If reading/writing Excel files is a feature
+# --- Optional Utilities ---
+# Uncomment if you use .env files for local development.
+# python-dotenv>=1.0.0
 
-# --- Notes for this refactored requirements.txt ---
-# 1. VERSIONS: Specific versions or compatible ranges are used. For production,
-#    pinning exact versions (e.g., pandas==2.1.4) generated from a stable
-#    `pip freeze` is strongly recommended for reproducibility.
-#    The ranges provided here (e.g., >=1.30.0,<2.0.0) offer some flexibility
-#    while trying to avoid major breaking changes.
-
-# 2. GEOSPATIAL LIBRARIES:
-#    - `geopandas` and `fiona` are REMOVED.
-#    - `shapely`, `pyproj`, `geojson` are commented out. Only include them if your
-#      refactored code directly uses their functionalities beyond what Plotly Express
-#      handles with raw GeoJSON data. Plotly Express can directly consume GeoJSON
-#      features for choropleth maps without needing these libraries explicitly in
-#      many common use cases. If you are doing server-side geometry processing
-#      (e.g., area calculations, projections), you might need `shapely` and `pyproj`.
-
-# 3. SYSTEM DEPENDENCIES:
-#    - Some Python packages might still require system-level C libraries.
-#    - If `shapely` or `pyproj` are uncommented, ensure their system dependencies
-#      (e.g., GEOS for Shapely, PROJ for Pyproj) are listed in `packages.txt`
-#      or handled by your deployment environment.
-#    - Consult individual package documentation if `pip install` fails.
-
-# 4. REVIEW AND PRUNE:
-#    - After refactoring, review this `requirements.txt` carefully.
-#    - Remove any packages that are no longer used by the application to keep the environment lean.
-#    - Add any new packages that were introduced during the refactoring.
+# --- Notes for this requirements.txt ---
+# 1. REPRODUCIBILITY: This file is essential for deploying the application, especially
+#    on platforms like Streamlit Community Cloud. It ensures the environment has
+#    all necessary packages.
+#
+# 2. GEOSPATIAL LIBRARIES: Heavy libraries like 'geopandas' and 'fiona' have been
+#    intentionally removed. The application now uses Plotly Express's native
+#    support for GeoJSON, which does not require these dependencies for the
+-    #    current feature set.
+#
+# 3. MAINTENANCE: If you add a new library to the project (e.g., `requests` for
+#    API calls), you MUST add it to this file for the deployment to succeed.
