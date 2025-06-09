@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
-from pydantic import BaseModel, Field, FilePath, HttpUrl
+from pydantic import BaseModel, Field
 
 from config import settings
 from .enrichment import enrich_health_records_with_kpis
@@ -15,9 +15,7 @@ from .helpers import DataPipeline, robust_json_load
 logger = logging.getLogger(__name__)
 
 # --- Pydantic Models for Type-Safe Configuration ---
-
 class CsvConfig(BaseModel):
-    """Defines the schema for loading and processing a CSV data source."""
     path_setting: str
     date_cols: List[str] = Field(default_factory=list)
     dtype_map: Dict[str, str] = Field(default_factory=dict)
@@ -26,11 +24,9 @@ class CsvConfig(BaseModel):
     read_options: Dict[str, Any] = Field(default_factory=lambda: {'low_memory': False})
 
 class JsonConfig(BaseModel):
-    """Defines the schema for a JSON or GeoJSON data source."""
     path_setting: str
 
 # --- Centralized Data Source Configuration ---
-
 DATA_CONFIG: Dict[str, Union[CsvConfig, JsonConfig]] = {
     'health_records': CsvConfig(
         path_setting='HEALTH_RECORDS_PATH',
@@ -46,6 +42,7 @@ DATA_CONFIG: Dict[str, Union[CsvConfig, JsonConfig]] = {
     ),
     'zone_attributes': CsvConfig(
         path_setting='ZONE_ATTRIBUTES_PATH',
+        rename_map={'name': 'zone_name', 'id': 'zone_id'},
         dtype_map={'zone_id': 'str'},
         required_cols=['zone_id', 'population']
     ),
@@ -56,44 +53,22 @@ DATA_CONFIG: Dict[str, Union[CsvConfig, JsonConfig]] = {
 }
 
 # --- Main Loading Functions ---
-
-def _resolve_path(path_or_setting: Union[str, Path]) -> Optional[Path]:
-    """Resolves a string to a Path object, checking settings if it's not a file."""
-    if isinstance(path_or_setting, Path) and path_or_setting.is_file():
-        return path_or_setting
-    
-    path_str = str(path_or_setting)
-    # Check if it's a direct file path
-    p = Path(path_str)
-    if p.is_file():
-        return p.resolve()
-        
-    # Assume it's a setting attribute
-    config_path = getattr(settings, path_str, None) or getattr(settings, path_str.upper(), None)
-    if config_path:
-        return Path(config_path).resolve()
-        
-    logger.error(f"Could not resolve path for '{path_str}'. Not a file or valid setting.")
-    return None
-
 def _load_and_process_csv(config_key: str, filepath_override: Optional[str] = None) -> pd.DataFrame:
-    """Generic CSV loader using the centralized configuration."""
     config = DATA_CONFIG.get(config_key)
     if not isinstance(config, CsvConfig):
         logger.error(f"Invalid CSV config key: '{config_key}'")
         return pd.DataFrame()
 
-    path_to_load = _resolve_path(filepath_override) if filepath_override else getattr(settings, config.path_setting)
+    path_to_load = Path(filepath_override or getattr(settings, config.path_setting))
     
-    if not path_to_load or not Path(path_to_load).is_file():
+    if not path_to_load.is_file():
         logger.error(f"({config_key}) CSV file not found at: {path_to_load}")
         return pd.DataFrame()
 
     try:
         df = pd.read_csv(path_to_load, **config.read_options)
         
-        pipeline = DataPipeline(df)
-        processed_df = (pipeline
+        processed_df = (DataPipeline(df)
             .clean_column_names()
             .rename_columns(config.rename_map)
             .cast_column_types(config.dtype_map)
@@ -112,34 +87,23 @@ def _load_and_process_csv(config_key: str, filepath_override: Optional[str] = No
         logger.critical(f"({config_key}) Critical error loading CSV from {path_to_load}: {e}", exc_info=True)
         return pd.DataFrame()
 
-
 def load_health_records(filepath_override: Optional[str] = None) -> pd.DataFrame:
-    """
-    Loads, cleans, and enriches the primary health records data.
-
-    This function is the definitive source for health data. It returns a
-    fully analytics-ready DataFrame, fulfilling the system's data contract.
-    """
     df = _load_and_process_csv('health_records', filepath_override)
     if not df.empty:
         logger.info(f"Applying KPI enrichment to {len(df)} health records...")
         return enrich_health_records_with_kpis(df)
     return df
 
-
 def load_iot_records(filepath_override: Optional[str] = None) -> pd.DataFrame:
-    """Loads, cleans, and standardizes IoT clinic environment data."""
     return _load_and_process_csv('iot_records', filepath_override)
-
 
 def load_zone_data(
     attributes_path: Optional[str] = None,
     geometries_path: Optional[str] = None
 ) -> pd.DataFrame:
-    """Loads and merges zone attributes (CSV) with geometries (GeoJSON)."""
     attributes_df = _load_and_process_csv('zone_attributes', attributes_path)
-    
     geo_data = load_json_asset('zone_geometries', geometries_path)
+    
     if not geo_data or 'features' not in geo_data:
         return attributes_df
 
@@ -153,21 +117,20 @@ def load_zone_data(
     ]
     geometries_df = pd.DataFrame(geo_list)
 
-    if attributes_df.empty: return geometries_df
+    if attributes_df.empty: return geometries_df.reindex(columns=['zone_id', 'geometry'])
     if geometries_df.empty: return attributes_df
     
     return pd.merge(attributes_df, geometries_df, on="zone_id", how="outer")
 
 def load_json_asset(config_key: str, filepath_override: Optional[str] = None) -> Optional[Union[Dict, List]]:
-    """Loads a JSON config/asset file from a path or settings attribute."""
     config = DATA_CONFIG.get(config_key)
     if not isinstance(config, JsonConfig):
         logger.error(f"Invalid JSON config key: '{config_key}'")
         return None
         
-    path_to_load = _resolve_path(filepath_override) if filepath_override else getattr(settings, config.path_setting)
+    path_to_load = Path(filepath_override or getattr(settings, config.path_setting))
     
-    if not path_to_load or not Path(path_to_load).is_file():
+    if not path_to_load.is_file():
         logger.error(f"({config_key}) JSON file not found at: {path_to_load}")
         return None
 
