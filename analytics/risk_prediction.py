@@ -1,94 +1,90 @@
 # sentinel_project_root/analytics/risk_prediction.py
-"""
-Contains the Sentinel AI Risk Prediction model.
-Calculates a patient's risk score using a declarative, data-driven rules
-engine with efficient, vectorized operations.
-"""
-import pandas as pd
-import numpy as np
-import logging
-from typing import Dict, Any, List
+# SME PLATINUM STANDARD - VECTORIZED RISK PREDICTION MODEL
 
-try:
-    from config import settings
-    from data_processing.helpers import data_cleaner
-except ImportError as e:
-    logging.basicConfig(level=logging.ERROR)
-    logger_init = logging.getLogger(__name__)
-    logger_init.critical(f"Critical import error in risk_prediction.py: {e}", exc_info=True)
-    raise
+import logging
+from typing import Dict
+
+import numpy as np
+import pandas as pd
+
+from config import settings
+from data_processing.helpers import convert_to_numeric
 
 logger = logging.getLogger(__name__)
 
 class RiskPredictionModel:
     """
-    A rule-based model to simulate a patient risk score based on clinical and
-    contextual data. Higher scores indicate a higher risk of adverse outcomes.
+    A rule-based model to simulate a patient risk score using fully vectorized
+    operations for high performance. Higher scores indicate higher risk.
     """
     def __init__(self):
-        """Initializes the model with weights from the settings file."""
-        self.weights = getattr(settings, 'RISK_MODEL_WEIGHTS', {})
-
-    def _get_rules_config(self) -> List[Dict[str, Any]]:
-        """
-        Defines the declarative rule set for calculating the risk score.
-        """
-        return [
-            {"condition": lambda df: df['min_spo2_pct'] < 92, "points": self.weights.get('spo2_low_points', 25)},
-            {"condition": lambda df: df['vital_signs_temperature_celsius'] >= 38.0, "points": self.weights.get('fever_points', 15)},
-            {"condition": lambda df: df['vital_signs_temperature_celsius'] < 35.5, "points": self.weights.get('hypothermia_points', 20)},
-            {"condition": lambda df: df['chronic_condition_flag'] > 0, "points": self.weights.get('chronic_condition_points', 15)},
-            {"condition": lambda df: df['age'] > 65, "points": self.weights.get('age_over_65_points', 10)},
-            {"condition": lambda df: df['age'] < 5, "points": self.weights.get('age_under_5_points', 10)},
-            {"condition": lambda df: df['tb_contact_traced'] > 0, "points": self.weights.get('tb_contact_points', 20)},
-            {"condition": lambda df: df['fall_detected_today'] > 0, "points": self.weights.get('fall_detected_points', 25)},
-            {"condition": lambda df: df['ppe_compliant_flag'] == 0, "points": self.weights.get('no_ppe_points', 5)},
-        ]
+        self.weights = settings.MODEL_WEIGHTS
 
     def _prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Ensures all required columns exist and are of the correct numeric type
-        by using the centralized data_cleaner and configurations from settings.
-        """
-        prepared_df = df.copy()
-        numeric_defaults = getattr(settings, 'RISK_MODEL_NUMERIC_DEFAULTS', {})
-        string_defaults = getattr(settings, 'RISK_MODEL_STRING_DEFAULTS', {})
-        
-        return data_cleaner.standardize_missing_values(
-            prepared_df,
-            string_cols_defaults=string_defaults,
-            numeric_cols_defaults=numeric_defaults
-        )
+        """Ensures all required columns exist and are of the correct type."""
+        clean_df = df.copy()
+        # Define columns required by the model and their neutral default values
+        required_cols = {
+            'age': 50.0,
+            'min_spo2_pct': 100.0,
+            'temperature': 37.0,
+            'chronic_condition_flag': 0,
+            'tb_contact_traced': 0,
+            'fall_detected_today': 0
+        }
+        # Add symptom cluster flags as required columns
+        for cluster in settings.SYMPTOM_CLUSTERS.keys():
+            required_cols[f'has_symptom_cluster_{cluster}'] = 0
+            
+        for col, default in required_cols.items():
+            if col not in clean_df.columns:
+                clean_df[col] = default
+            # Ensure columns are numeric for calculations
+            clean_df[col] = convert_to_numeric(clean_df[col], float, default)
 
-    def predict_risk_scores(self, health_df: pd.DataFrame) -> pd.DataFrame:
+        return clean_df
+
+    def predict_scores(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Calculates risk scores for the DataFrame using a vectorized rules engine.
         """
-        if not isinstance(health_df, pd.DataFrame) or health_df.empty:
-            if 'ai_risk_score' not in health_df.columns:
-                health_df['ai_risk_score'] = np.nan
-            return health_df
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return df.assign(ai_risk_score=np.nan)
 
-        # --- DEFINITIVE FIX FOR TypeError ---
-        # The prepare_data method must be called here to clean the data
-        # before any rules are evaluated against it.
-        df = self._prepare_data(health_df)
-        
-        risk_scores = pd.Series(0.0, index=df.index)
-        
-        for rule in self._get_rules_config():
-            try:
-                triggered_mask = rule["condition"](df)
-                risk_scores.loc[triggered_mask] += rule["points"]
-            except Exception as e:
-                condition_str = str(rule.get('condition'))
-                logger.error(f"Error evaluating risk rule ({condition_str}): {e}")
+        prepared_df = self._prepare_data(df)
+        scores = pd.Series(0.0, index=prepared_df.index)
 
-        df['ai_risk_score'] = risk_scores.clip(0, 100).round(1)
-        logger.info(f"Generated {len(df)} AI risk scores.")
-        return df
+        # --- Vectorized Rule Application ---
+        
+        # Age-based risk
+        scores.loc[prepared_df['age'] > 65] += self.weights.base_age_gt_65
+        scores.loc[prepared_df['age'] < 5] += self.weights.base_age_lt_5
+        
+        # Vital signs-based risk
+        scores.loc[prepared_df['min_spo2_pct'] < settings.ANALYTICS.spo2_critical_threshold_pct] += self.weights.vital_spo2_critical
+        scores.loc[prepared_df['temperature'] >= settings.ANALYTICS.temp_high_fever_threshold_c] += self.weights.vital_temp_critical
+        
+        # Symptom-based risk (using pre-enriched flags)
+        if 'has_symptom_cluster_respiratory_distress' in prepared_df.columns:
+            scores.loc[prepared_df['has_symptom_cluster_respiratory_distress'] > 0] += self.weights.symptom_cluster_severity_high
+        if 'has_symptom_cluster_severe_febrile' in prepared_df.columns:
+            scores.loc[prepared_df['has_symptom_cluster_severe_febrile'] > 0] += self.weights.symptom_cluster_severity_high
+        if 'has_symptom_cluster_dehydration_shock' in prepared_df.columns:
+            scores.loc[prepared_df['has_symptom_cluster_dehydration_shock'] > 0] += self.weights.symptom_cluster_severity_med
+
+        # Contextual and comorbidity risk
+        scores.loc[prepared_df['chronic_condition_flag'] > 0] += self.weights.comorbidity
+        scores.loc[prepared_df['tb_contact_traced'] > 0] += self.weights.symptom_cluster_severity_high # High weight
+        scores.loc[prepared_df['fall_detected_today'] > 0] += self.weights.vital_spo2_critical # High weight
+        
+        # Finalize scores
+        output_df = df.copy()
+        output_df['ai_risk_score'] = scores.clip(0, 100).round(1)
+        
+        logger.info(f"Generated {len(output_df)} AI risk scores.")
+        return output_df
 
 def calculate_risk_score(health_df: pd.DataFrame) -> pd.DataFrame:
     """Public factory function to calculate AI risk scores."""
     model = RiskPredictionModel()
-    return model.predict_risk_scores(health_df)
+    return model.predict_scores(health_df)
