@@ -1,140 +1,208 @@
 # sentinel_project_root/visualization/plots.py
-"""
-Contains a centralized, theme-aware factory for creating standardized plots
-for the Sentinel application, ensuring a consistent look and feel.
-"""
+# SME PLATINUM STANDARD - CENTRALIZED PLOTTING FACTORY
+
+import logging
+from typing import Any, Dict, List, Optional
+
+import html
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import logging
-from typing import Optional, Any, Dict
-import html
+import plotly.io as pio
 
-# This section correctly handles importing optional theming and settings,
-# with a robust fallback to prevent crashes if they are not found.
-try:
-    from config import settings
-    from .themes import sentinel_theme
-    from .ui_elements import get_theme_color
-except ImportError:
-    logging.warning("Could not import Sentinel theme or settings. Using fallback plotting styles and configs.")
-    # Mock settings object if it fails to import
-    class MockSettings:
-        def __getattr__(self, name): return None
-    settings = MockSettings()
-    sentinel_theme = "plotly_white"
-    def get_theme_color(key: str, category="general", fallback_color_hex="#636EFA"):
-        if category == "categorical_sequence": return px.colors.qualitative.Plotly
-        return {"risk_high": "#EF553B", "risk_moderate": "#FFA15A", "risk_low": "#00CC96", "primary": "#007BFF"}.get(key, fallback_color_hex)
+from config import settings
 
 logger = logging.getLogger(__name__)
 
-def _get_setting(key: str, default: Any) -> Any:
-    """Safely retrieves a value from the settings object with a fallback."""
-    return getattr(settings, key, default)
+# --- Theme and Layout Configuration ---
+_BASE_LAYOUT = {
+    'font': {'family': "sans-serif", 'size': 12, 'color': settings.COLOR_TEXT_PRIMARY},
+    'title': {'x': 0.5, 'xanchor': 'center', 'font': {'size': 18, 'color': settings.COLOR_TEXT_HEADINGS}},
+    'paper_bgcolor': settings.COLOR_BACKGROUND_CONTENT,
+    'plot_bgcolor': settings.COLOR_BACKGROUND_CONTENT,
+    'margin': dict(l=60, r=40, t=60, b=60),
+    'legend': dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font={'size': 10}),
+    'xaxis': {'showgrid': False, 'zeroline': False, 'tickformat': 'd'},
+    'yaxis': {'gridcolor': '#e9ecef', 'zeroline': False, 'tickformat': 'd'},
+}
 
-class ChartFactory:
-    """A factory class for creating standardized, theme-consistent Plotly charts."""
-    def __init__(self, theme: Optional[str] = None):
-        self.theme = theme or "plotly_white"
-        px.defaults.template = self.theme
-        self._base_layout = {'title_x': 0.5, 'margin': dict(l=60, r=40, t=80, b=60), 'legend': dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), 'xaxis': {'zeroline': False}, 'yaxis': {'zeroline': False}}
+def set_plotly_theme():
+    """Sets the custom Sentinel theme as the default for all Plotly charts."""
+    sentinel_template = go.layout.Template()
+    sentinel_template.layout = _BASE_LAYOUT
+    sentinel_template.layout.colorway = settings.PLOTLY_COLORWAY
+    pio.templates['sentinel'] = sentinel_template
+    pio.templates.default = 'sentinel'
+    logger.debug("Custom 'sentinel' Plotly theme applied.")
 
-    def _apply_layout(self, fig: go.Figure, **kwargs) -> go.Figure:
-        layout_updates = self._base_layout.copy()
-        layout_updates.update(kwargs)
-        fig.update_layout(**layout_updates)
+
+# --- Factory Functions for Standardized Charts ---
+
+def create_empty_figure(title: str, message: str = "No data available for this selection.") -> go.Figure:
+    """Creates a standardized empty plot with a message."""
+    fig = go.Figure()
+    fig.update_layout(
+        title_text=f"<b>{html.escape(title)}</b>",
+        xaxis={"visible": False},
+        yaxis={"visible": False},
+        annotations=[{
+            "text": html.escape(message),
+            "xref": "paper", "yref": "paper",
+            "showarrow": False, "font": {"size": 14, "color": settings.COLOR_TEXT_MUTED}
+        }]
+    )
+    return fig
+
+def plot_bar_chart(
+    df: pd.DataFrame, x_col: str, y_col: str, title: str,
+    x_title: Optional[str] = None, y_title: Optional[str] = None, **px_kwargs: Any
+) -> go.Figure:
+    """Creates a standardized bar chart."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return create_empty_figure(title)
+    try:
+        y_is_int = pd.api.types.is_integer_dtype(df[y_col])
+        fig = px.bar(
+            df, x=x_col, y=y_col,
+            title=f"<b>{html.escape(title)}</b>",
+            labels={x_col: x_title or x_col.replace('_', ' ').title(), y_col: y_title or y_col.replace('_', ' ').title()},
+            text_auto=True,
+            **px_kwargs
+        )
+        fig.update_traces(
+            texttemplate='%{y:,.0f}' if y_is_int else '%{y:,.2f}',
+            textposition='outside',
+            marker_line_width=1.5,
+            marker_line_color='white',
+            hovertemplate=f"<b>%{{x}}</b><br>{y_col.replace('_', ' ').title()}: %{{y:,.2f}}<extra></extra>"
+        )
+        # Ensure y-axis shows whole numbers for counts
+        if y_is_int:
+            fig.update_yaxes(tickformat='d')
         return fig
+    except Exception as e:
+        logger.error(f"Failed to create bar chart '{title}': {e}", exc_info=True)
+        return create_empty_figure(title, "Error generating chart.")
 
-    def create_empty_figure(self, title: str, message: str) -> go.Figure:
-        fig = go.Figure()
-        fig.update_layout(xaxis={"visible": False}, yaxis={"visible": False}, annotations=[{"text": html.escape(message), "xref": "paper", "yref": "paper", "showarrow": False, "font": {"size": 16}}])
-        return self._apply_layout(fig, title_text=f"<b>{html.escape(title)}</b>", showlegend=False)
+def plot_donut_chart(df: pd.DataFrame, label_col: str, value_col: str, title: str) -> go.Figure:
+    """Creates a standardized donut chart."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return create_empty_figure(title)
+    try:
+        fig = px.pie(
+            df, names=label_col, values=value_col,
+            title=f"<b>{html.escape(title)}</b>",
+            hole=0.5
+        )
+        fig.update_traces(
+            textinfo='percent+label',
+            textposition='inside',
+            insidetextorientation='radial',
+            hoverinfo='label+percent+value',
+            marker_line_width=2,
+            marker_line_color='white'
+        )
+        fig.update_layout(legend_title_text=label_col.replace("_", " ").title())
+        return fig
+    except Exception as e:
+        logger.error(f"Failed to create donut chart '{title}': {e}", exc_info=True)
+        return create_empty_figure(title, "Error generating chart.")
 
-    def create_bar_chart(self, df: pd.DataFrame, x: str, y: str, title: str, y_values_are_counts: bool, **px_kwargs) -> go.Figure:
-        color, orientation = px_kwargs.get('color'), px_kwargs.get('orientation', 'v')
-        required_cols = [x, y]
-        if color:
-            required_cols.append(color)
+def plot_line_chart(series: pd.Series, title: str, y_title: str, add_annotations: bool = True) -> go.Figure:
+    """Creates a standardized line chart with optional min/max annotations."""
+    if not isinstance(series, pd.Series) or series.empty:
+        return create_empty_figure(title)
+    try:
+        fig = go.Figure(go.Scatter(
+            x=series.index, y=series.values, mode='lines+markers',
+            line=dict(color=settings.COLOR_PRIMARY, width=3),
+            marker=dict(size=6),
+            hovertemplate=f'<b>%{{x|%Y-%m-%d}}</b><br>{html.escape(y_title)}: %{{y:,.2f}}<extra></extra>'
+        ))
+        fig.update_layout(title_text=f"<b>{html.escape(title)}</b>", yaxis_title=y_title, xaxis_title="Date")
+        
+        if add_annotations and len(series.dropna()) > 1:
+            max_val, min_val = series.max(), series.min()
+            max_idx, min_idx = series.idxmax(), series.idxmin()
+            anno_font = dict(color="white", size=10)
+            fig.add_annotation(x=max_idx, y=max_val, text=f"Max<br>{max_val:,.1f}", showarrow=True, bgcolor=settings.COLOR_RISK_HIGH, font=anno_font, borderpad=2, yshift=15)
+            fig.add_annotation(x=min_idx, y=min_val, text=f"Min<br>{min_val:,.1f}", showarrow=True, bgcolor=settings.COLOR_RISK_LOW, font=anno_font, borderpad=2, yshift=-15)
+        
+        return fig
+    except Exception as e:
+        logger.error(f"Failed to create line chart '{title}': {e}", exc_info=True)
+        return create_empty_figure(title, "Error generating chart.")
 
-        if not all(col in df.columns for col in required_cols): return self.create_empty_figure(title, "Missing data columns.")
-        try:
-            y_title, x_title = px_kwargs.pop('y_axis_title', y.replace('_', ' ').title()), px_kwargs.pop('x_axis_title', x.replace('_', ' ').title())
-            labels = {x: x_title, y: y_title}
-            fig = px.bar(df, x=x, y=y, title=f"<b>{html.escape(title)}</b>", labels=labels, text_auto=True, **px_kwargs)
-            value_col = x if orientation == 'h' else y
-            if df[value_col].notna().any():
-                max_val = df.groupby(y if orientation == 'h' else x)[value_col].sum().max() if px_kwargs.get('barmode') == 'stack' else df[value_col].max()
-                if orientation == 'h': fig.update_xaxes(range=[0, max_val * 1.15])
-                else: fig.update_yaxes(range=[0, max_val * 1.15])
-            category_label, value_label_raw = f'%{{y if orientation == "h" else x}}', f'%{{x if orientation == "h" else y}}'
-            text_template = ',.0f' if y_values_are_counts else ',.2f'
-            if color:
-                hovertemplate = f'<b>{category_label}</b><br>{html.escape(color.replace("_", " ").title())}: %{{fullData.name}}<br>{html.escape(value_col.replace("_", " ").title())}: {value_label_raw}:{text_template}<extra></extra>'
-            else:
-                hovertemplate = f'<b>{category_label}</b><br>{html.escape(x_title if orientation == "h" else y_title)}: {value_label_raw}:{text_template}<extra></extra>'
-            fig.update_traces(textposition='outside', cliponaxis=False, hovertemplate=hovertemplate, texttemplate=f'{value_label_raw}:{text_template}')
-            if y_values_are_counts: fig.update_xaxes(tickformat='d') if orientation == 'h' else fig.update_yaxes(tickformat='d')
-            return self._apply_layout(fig, legend_title_text=color.replace("_", " ").title() if color else "")
-        except Exception as e:
-            logger.error(f"Failed to create bar chart '{title}': {e}", exc_info=True); return self.create_empty_figure(title, "Error generating chart")
+def plot_choropleth_map(
+    df: pd.DataFrame, geojson: Dict, value_col: str, title: str,
+    zone_id_col: str = 'zone_id', **px_kwargs: Any
+) -> go.Figure:
+    """Creates a standardized choropleth map."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return create_empty_figure(title, "No geographic data.")
+    try:
+        fig = px.choropleth_mapbox(
+            df, geojson=geojson, locations=zone_id_col,
+            featureidkey="properties.zone_id", color=value_col,
+            mapbox_style=settings.MAPBOX_STYLE,
+            zoom=settings.MAP_DEFAULT_ZOOM,
+            center={"lat": settings.MAP_DEFAULT_CENTER[0], "lon": settings.MAP_DEFAULT_CENTER[1]},
+            opacity=0.75,
+            title=f"<b>{html.escape(title)}</b>",
+            **px_kwargs
+        )
+        fig.update_layout(margin={"r":0, "t":40, "l":0, "b":0}, mapbox_accesstoken=settings.MAPBOX_TOKEN)
+        return fig
+    except Exception as e:
+        logger.error(f"Failed to create choropleth map '{title}': {e}", exc_info=True)
+        return create_empty_figure(title, "Error generating map.")
 
-    def create_donut_chart(self, df: pd.DataFrame, labels: str, values: str, title: str) -> go.Figure:
-        if not all(c in df.columns for c in [labels, values]): return self.create_empty_figure(title, "Missing data columns.")
-        try:
-            fig = px.pie(df, names=labels, values=values, title=f"<b>{html.escape(title)}</b>", hole=0.4, color_discrete_sequence=get_theme_color(None, category='categorical_sequence'))
-            fig.update_traces(textinfo='percent', hoverinfo='label+percent+value')
-            return self._apply_layout(fig, showlegend=True, legend_title_text=labels.replace("_", " ").title())
-        except Exception as e:
-            logger.error(f"Failed to create donut chart '{title}': {e}", exc_info=True); return self.create_empty_figure(title, "Error generating chart")
+def plot_heatmap(df: pd.DataFrame, title: str, **px_kwargs: Any) -> go.Figure:
+    """Creates a standardized heatmap."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return create_empty_figure(title)
+    try:
+        fig = px.imshow(
+            df,
+            text_auto=True,
+            aspect="auto",
+            title=f"<b>{html.escape(title)}</b>",
+            **px_kwargs
+        )
+        return fig
+    except Exception as e:
+        logger.error(f"Failed to create heatmap '{title}': {e}", exc_info=True)
+        return create_empty_figure(title, "Error generating chart.")
 
-    def create_annotated_line_chart(self, series: pd.Series, title: str, y_title: str) -> go.Figure:
-        if not isinstance(series, pd.Series) or series.empty: return self.create_empty_figure(title, "No data available")
-        try:
-            fig = px.line(x=series.index, y=series.values, title=f"<b>{html.escape(title)}</b>", markers=True)
-            fig.update_traces(line=dict(color=get_theme_color('primary')), hovertemplate=f'<b>%{{x}}</b><br>{html.escape(y_title)}: %{{y:,.2f}}<extra></extra>')
-            valid_series = series.dropna()
-            if len(valid_series) > 1:
-                max_val, min_val = valid_series.max(), valid_series.min()
-                max_idx, min_idx = valid_series.idxmax(), valid_series.idxmin()
-                annotation_font = dict(color="white", size=10)
-                if max_idx == min_idx:
-                    fig.add_annotation(x=max_idx, y=max_val, text=f"Value: {max_val:,.1f}", showarrow=True, arrowhead=2, yshift=10)
-                else:
-                    fig.add_annotation(x=max_idx, y=max_val, text=f"Max: {max_val:,.1f}", showarrow=True, arrowhead=1, bgcolor="rgba(239, 85, 59, 0.8)", bordercolor=get_theme_color("risk_high"), font=annotation_font, borderpad=4)
-                    fig.add_annotation(x=min_idx, y=min_val, text=f"Min: {min_val:,.1f}", showarrow=True, arrowhead=1, bgcolor="rgba(0, 204, 150, 0.8)", bordercolor=get_theme_color("risk_low"), font=annotation_font, borderpad=4, yshift=-10)
-            return self._apply_layout(fig, yaxis_title=y_title, xaxis_title="Date/Time", showlegend=False)
-        except Exception as e:
-            logger.error(f"Failed to create annotated line chart '{title}': {e}", exc_info=True); return self.create_empty_figure(title, "Error generating chart")
-
-    def create_choropleth_map(self, df: pd.DataFrame, geojson: Dict, locations: str, color: str, title: str, **px_kwargs) -> go.Figure:
-        if not all(c in df.columns for c in [locations, color]): return self.create_empty_figure(title, "Missing data for map.")
-        try:
-            fig = px.choropleth_mapbox(df, geojson=geojson, locations=locations, color=color,
-                                       mapbox_style=_get_setting('MAPBOX_STYLE_WEB', "carto-positron"),
-                                       zoom=_get_setting('MAP_DEFAULT_ZOOM_LEVEL', 8),
-                                       center={"lat": _get_setting('MAP_DEFAULT_CENTER_LAT', -1.2921), "lon": _get_setting('MAP_DEFAULT_CENTER_LON', 36.8219)},
-                                       opacity=0.7, title=f"<b>{html.escape(title)}</b>", **px_kwargs)
-            fig.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
-            return fig
-        except Exception as e:
-            logger.error(f"Failed to create choropleth map '{title}': {e}", exc_info=True); return self.create_empty_figure(title, "Error generating map")
-
-# --- Public API ---
-# This section makes the factory's methods available as simple functions.
-_factory = ChartFactory(theme=sentinel_theme)
-def create_empty_figure(title: str, message: str = "No data available") -> go.Figure: return _factory.create_empty_figure(title, message)
-def plot_bar_chart(df_input: pd.DataFrame, x_col: str, y_col: str, title: str, y_values_are_counts: bool = False, **kwargs: Any) -> go.Figure:
-    if not isinstance(df_input, pd.DataFrame) or df_input.empty: return create_empty_figure(title, f"No data for '{title}'")
-    return _factory.create_bar_chart(df_input, x_col, y_col, title, y_values_are_counts=y_values_are_counts, **kwargs)
-def plot_donut_chart(df_input: pd.DataFrame, labels_col: str, values_col: str, title: str) -> go.Figure:
-    if not isinstance(df_input, pd.DataFrame) or df_input.empty: return create_empty_figure(title, f"No data for '{title}'")
-    return _factory.create_donut_chart(df_input, labels_col, values_col, title)
-def plot_annotated_line_chart(series_input: pd.Series, title: str, y_axis_title: str) -> go.Figure:
-    if not isinstance(series_input, pd.Series) or series_input.empty: return create_empty_figure(title, f"No data for '{title}'")
-    return _factory.create_annotated_line_chart(series_input, title, y_axis_title)
-def plot_choropleth_map(df_input: pd.DataFrame, geojson: Dict, locations: str, color: str, title: str, **kwargs: Any) -> go.Figure:
-    """Creates a choropleth map of a given metric by location."""
-    if not isinstance(df_input, pd.DataFrame) or df_input.empty: return create_empty_figure(title, f"No data for '{title}'")
-    # SME Note: CRITICAL FIX. Corrected go.Gofigure to go.Figure.
-    return _factory.create_choropleth_map(df_input, geojson, locations, color, title, **kwargs)
+def plot_forecast_chart(forecast_df: pd.DataFrame, title: str, y_title: str) -> go.Figure:
+    """Plots a Prophet forecast with uncertainty intervals."""
+    if not isinstance(forecast_df, pd.DataFrame) or forecast_df.empty:
+        return create_empty_figure(title, "No forecast data available.")
+        
+    fig = go.Figure()
+    # Add uncertainty interval (the shaded area)
+    fig.add_trace(go.Scatter(
+        x=forecast_df['forecast_date'].tolist() + forecast_df['forecast_date'].tolist()[::-1],
+        y=forecast_df['consumption_upper_bound'].tolist() + forecast_df['consumption_lower_bound'].tolist()[::-1],
+        fill='toself',
+        fillcolor=settings.COLOR_ACCENT + '33', # Primary color with alpha
+        line=dict(color='rgba(255,255,255,0)'),
+        hoverinfo="skip",
+        name='Uncertainty Interval'
+    ))
+    # Add the main forecast line
+    fig.add_trace(go.Scatter(
+        x=forecast_df['forecast_date'],
+        y=forecast_df['predicted_daily_consumption'],
+        mode='lines',
+        line=dict(color=settings.COLOR_PRIMARY, width=3),
+        name='Forecast'
+    ))
+    fig.update_layout(
+        title_text=f"<b>{html.escape(title)}</b>",
+        yaxis_title=y_title,
+        xaxis_title="Date",
+        showlegend=True
+    )
+    return fig
