@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_clinic_dashboard.py
-# SME-EVALUATED AND OPTIMIZED VERSION (V4)
+# SME-EVALUATED AND OPTIMIZED VERSION (V5 - Data Source Update)
 
 """
 Streamlit dashboard page for Clinic Operations and Management.
@@ -12,11 +12,10 @@ Provides a comprehensive console for monitoring:
 - Patient risk stratification using AI-driven scores.
 - Real-time environmental monitoring of clinic facilities.
 
-SME Revisions (V4):
-- Performance: Added caching to the supply forecasting to prevent re-computation on every UI interaction.
-- Maintainability: Refactored UI rendering logic for each tab into separate functions for clarity.
-- Robustness: Added commentary on centralizing business logic (e.g., 'is_rejected' column) into data_processing layers.
-- Minor robustness improvements in utility functions.
+SME Revisions (V5):
+- Documentation: Updated comments to reflect that the data source is now 'health_records_expanded.csv',
+  loaded via the `load_health_records` function.
+- No functional code change was required in this file due to good abstraction.
 """
 
 import streamlit as st
@@ -83,7 +82,6 @@ def get_trend_data(
 
 def create_sparkline_bytes(data: pd.Series, color: str) -> Optional[bytes]:
     """Creates a compact sparkline chart and returns it as PNG bytes."""
-    # <<< SME REVISION >>> Added isna().all() check for robustness.
     if data is None or data.empty or data.isna().all():
         return None
     fig = go.Figure(go.Scatter(
@@ -126,11 +124,8 @@ def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: da
     }
     
     trend_source_df = full_df.copy()
-    # <<< SME REVISION >>> This on-the-fly column creation is fragile.
-    # RECOMMENDATION: This logic should be moved to an upstream data processing module
-    # (e.g., in `data_processing.loaders` or a new transformation script). The dashboard
-    # should consume data that already has these boolean flags pre-calculated.
-    # This prevents silent failures if source data values change (e.g., "rejected by lab" -> "Rejected").
+    # RECOMMENDATION: This on-the-fly column creation is fragile. This logic should be moved
+    # to an upstream data processing module (e.g., in `data_processing.loaders`).
     if 'sample_status' in trend_source_df.columns:
         trend_source_df['is_rejected'] = (trend_source_df['sample_status'].str.lower() == 'rejected by lab').astype(int)
     else:
@@ -179,10 +174,9 @@ def get_kpi_analysis_table(full_df: pd.DataFrame, start_date: date, end_date: da
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, show_spinner="Loading and processing all operational data...")
 def get_dashboard_data() -> Tuple[pd.DataFrame, pd.DataFrame, bool, date, date]:
     """Loads, processes, and enriches all data required for the dashboard."""
-    # <<< SME REVISION (Observation) >>> The apply_ai_models call is inside this cached function.
-    # For very large datasets or slow models, consider running AI enrichment as an offline
-    # batch process. The dashboard would then load pre-enriched data, improving load times.
     try:
+        # <<< SME REVISION >>> This function now loads data from "health_records_expanded.csv"
+        # as per the updated system configuration. No code change is needed here due to abstraction.
         health_df = load_health_records()
         iot_df = load_iot_clinic_environment_data()
     except Exception as e:
@@ -201,20 +195,16 @@ def get_dashboard_data() -> Tuple[pd.DataFrame, pd.DataFrame, bool, date, date]:
     ai_enriched_health_df, _ = apply_ai_models(health_df)
     return ai_enriched_health_df, iot_df, iot_available, min_date, max_date
 
-# <<< SME REVISION (Performance) >>> Cache the expensive forecast generation.
 @st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS)
 def get_cached_supply_forecast(data: pd.DataFrame, items: List[str]) -> pd.DataFrame:
     """Cached wrapper for the supply forecasting function."""
     if not items:
         return pd.DataFrame()
     logger.info(f"Cache miss: Generating supply forecast for {len(items)} items.")
-    # The list `items` must be converted to a hashable type (tuple) for caching.
     return generate_simple_supply_forecast(data, item_filter=tuple(items))
 
 
 # --- UI Rendering Functions for Each Tab ---
-# <<< SME REVISION (Maintainability) >>> Encapsulate tab logic into functions.
-
 def render_epidemiology_tab(data: pd.DataFrame):
     st.subheader("Local Epidemiological Intelligence")
     if data.empty:
@@ -295,7 +285,6 @@ def render_supply_chain_tab(data: pd.DataFrame):
     )
     if selected_items:
         with st.spinner(f"Generating forecasts for {len(selected_items)} selected item(s)..."):
-            # <<< SME REVISION >>> Use the new cached function for performance.
             forecast_df = get_cached_supply_forecast(data, selected_items)
         
         if not forecast_df.empty:
@@ -428,7 +417,6 @@ def main():
     with tab2:
         render_testing_tab(period_health_df)
     with tab3:
-        # Pass the full dataset for forecasting, not just the period data
         render_supply_chain_tab(full_health_df)
     with tab4:
         render_patients_tab(period_health_df)
