@@ -1,79 +1,63 @@
 # sentinel_project_root/data_processing/__init__.py
-# SME PLATINUM STANDARD (V4 - MODERN API ALIGNMENT)
-# This version updates the package's public API to reflect the architectural
-# improvements in its submodules, primarily replacing the old `data_cleaner`
-# with the new fluent `DataPipeline` class.
-
 """
-Initializes the data_processing package, making key functions and classes
-available at the top level for easier, cleaner imports in other modules.
+Initializes the data_processing package, defining its public API.
 
-This __init__.py defines the public API for the package.
+This package provides a suite of robust, high-performance tools for loading,
+cleaning, enriching, and aggregating health data for the Sentinel application.
+The primary entry points are the loader functions and the `DataPipeline` class.
 """
 
-# From aggregation.py
-from .aggregation import (
-    get_trend_data,
-    get_clinic_summary_kpis,
-    get_clinic_environmental_summary_kpis,
-    get_chw_summary_kpis,
-    get_district_summary_kpis
-)
-
-# From enrichment.py
-from .enrichment import (
-    enrich_zone_geodata_with_health_aggregates
-)
-
-# <<< SME REVISION >>> Updated imports to reflect the new helpers.py (V4) architecture.
-# From helpers.py - Expose the fluent pipeline class and key standalone utilities.
+# --- Core Data Pipeline & Utilities from helpers.py ---
 from .helpers import (
-    DataPipeline,         # The primary tool for sequential data cleaning.
+    DataPipeline,
     convert_to_numeric,
     robust_json_load,
-    hash_dataframe_safe
-    # REMOVED: data_cleaner (replaced by DataPipeline).
-    # REMOVED: convert_date_columns (now a method of DataPipeline).
+    hash_dataframe
 )
 
-# From loaders.py
+# --- Data Loading from loaders.py ---
 from .loaders import (
     load_health_records,
-    load_iot_clinic_environment_data,
+    load_iot_records,
     load_zone_data,
-    load_json_config,
-    load_escalation_protocols,
-    load_pictogram_map,
-    load_haptic_patterns
+    load_json_asset
 )
 
-# --- Define the public API for the data_processing package ---
-# This list controls what is imported when a user does `from data_processing import *`
-# and is considered the canonical list of public-facing components.
+# --- Data Enrichment from enrichment.py ---
+from .enrichment import (
+    enrich_health_records_with_kpis,
+    enrich_zone_data_with_aggregates
+)
+
+# --- Data Aggregation from aggregation.py ---
+from .aggregation import (
+    calculate_clinic_kpis,
+    calculate_environmental_kpis,
+    calculate_district_kpis,
+    calculate_trend
+)
+
+# --- Define the canonical public API for the package ---
 __all__ = [
-    # aggregation
-    "get_trend_data",
-    "get_clinic_summary_kpis",
-    "get_clinic_environmental_summary_kpis",
-    "get_chw_summary_kpis",
-    "get_district_summary_kpis",
-
-    # enrichment
-    "enrich_zone_geodata_with_health_aggregates",
-
-    # <<< SME REVISION >>> Updated the helpers API.
-    # helpers
-    "DataPipeline",         # Expose the class for users to instantiate.
+    # helpers.py
+    "DataPipeline",
     "convert_to_numeric",
     "robust_json_load",
-    "hash_dataframe_safe",
+    "hash_dataframe",
 
-    # loaders
+    # loaders.py
     "load_health_records",
-    "load_iot_clinic_environment_data",
+    "load_iot_records",
     "load_zone_data",
-    "load_json_config",
-    "load_escalation_protocols",
-    "load_pictogram_map",
-    "load_haptic_patterns"
+    "load_json_asset",
+
+    # enrichment.py
+    "enrich_health_records_with_kpis",
+    "enrich_zone_data_with_aggregates",
+
+    # aggregation.py
+    "calculate_clinic_kpis",
+    "calculate_environmental_kpis",
+    "calculate_district_kpis",
+    "calculate_trend",
 ]
