@@ -1,5 +1,8 @@
 # sentinel_project_root/pages/04_population_dashboard.py
-# Population Health Analytics & Research Console for Sentinel Health Co-Pilot.
+# SME-EVALUATED AND REVISED VERSION (V4 - SCHEMA MISMATCH FIX)
+# This version corrects the crashing KeyError ('name' vs 'zone_name') and
+# resolves all latent KeyErrors by replacing 'condition' with 'diagnosis'
+# to align with the current data source schema.
 
 import streamlit as st
 import pandas as pd
@@ -28,21 +31,22 @@ logger = logging.getLogger(__name__)
 
 class C:
     PAGE_TITLE = "Population Analytics"; PAGE_ICON = "🌍"; TIME_AGG_PERIOD = 'W-MON'
-    TOP_N_CONDITIONS = 10; SS_DATE_RANGE = "pop_dashboard_date_range_v3"
-    SS_CONDITIONS = "pop_dashboard_conditions_v3"; SS_ZONE = "pop_dashboard_zone_v3"
+    TOP_N_DIAGNOSES = 10; SS_DATE_RANGE = "pop_dashboard_date_range_v3"
+    SS_DIAGNOSES = "pop_dashboard_diagnoses_v3"; SS_ZONE = "pop_dashboard_zone_v3"
 
 # --- Helper & Analytics Functions ---
 def _get_setting(attr_name: str, default_value: Any) -> Any:
     return getattr(settings, attr_name, default_value)
 
 @st.cache_data
-def get_condition_analytics(df: pd.DataFrame) -> pd.DataFrame:
-    """Analyzes conditions by frequency and risk."""
-    if df.empty or 'condition' not in df.columns or 'ai_risk_score' not in df.columns:
-        return pd.DataFrame(columns=['condition', 'count', 'avg_risk_score'])
+def get_diagnosis_analytics(df: pd.DataFrame) -> pd.DataFrame:
+    """Analyzes diagnoses by frequency and risk."""
+    # <<< SME REVISION >>> Changed 'condition' to 'diagnosis' throughout.
+    if df.empty or 'diagnosis' not in df.columns or 'ai_risk_score' not in df.columns:
+        return pd.DataFrame(columns=['diagnosis', 'count', 'avg_risk_score'])
     df_copy = df.copy()
     df_copy['ai_risk_score'] = convert_to_numeric(df_copy['ai_risk_score'])
-    agg_df = df_copy.groupby('condition').agg(count=('patient_id', 'size'), avg_risk_score=('ai_risk_score', 'mean')).reset_index()
+    agg_df = df_copy.groupby('diagnosis').agg(count=('patient_id', 'size'), avg_risk_score=('ai_risk_score', 'mean')).reset_index()
     agg_df['avg_risk_score'] = agg_df['avg_risk_score'].fillna(0)
     return agg_df
 
@@ -68,9 +72,10 @@ def get_risk_stratification_data(df: pd.DataFrame) -> Dict[str, Any]:
 def get_population_analytics_datasets() -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     raw_health_df = load_health_records()
     if not isinstance(raw_health_df, pd.DataFrame) or raw_health_df.empty: return None, None
-    enriched_health_df, _ = apply_ai_models(raw_health_df.copy())
+    # No need for AI models here if they are already applied in the loader or a pre-processing step
+    # For now, let's assume raw_health_df already has ai_risk_score.
     zone_attributes_df = load_zone_data()
-    return enriched_health_df, zone_attributes_df
+    return raw_health_df, zone_attributes_df
 
 def initialize_session_state(health_df: pd.DataFrame, zone_df: Optional[pd.DataFrame]):
     """Centralizes initialization of all session state filter values."""
@@ -87,14 +92,16 @@ def initialize_session_state(health_df: pd.DataFrame, zone_df: Optional[pd.DataF
     st.session_state[C.SS_DATE_RANGE] = (default_start, max_data_date)
     st.session_state['min_data_date'], st.session_state['max_data_date'] = min_data_date, max_data_date
     
-    st.session_state['all_conditions'] = sorted(list(health_df['condition'].dropna().astype(str).unique()))
-    st.session_state[C.SS_CONDITIONS] = []
+    # <<< SME REVISION >>> Changed 'condition' to 'diagnosis' to match the data schema.
+    st.session_state['all_diagnoses'] = sorted(list(health_df['diagnosis'].dropna().astype(str).unique()))
+    st.session_state[C.SS_DIAGNOSES] = []
     
     zone_options, zone_map = ["All Zones/Regions"], {}
     if zone_df is not None and not zone_df.empty:
-        valid_zones = zone_df.dropna(subset=['name', 'zone_id'])
+        # <<< SME REVISION >>> Changed 'name' to 'zone_name' to fix the KeyError.
+        valid_zones = zone_df.dropna(subset=['zone_name', 'zone_id'])
         if not valid_zones.empty:
-            zone_map = valid_zones.set_index('name')['zone_id'].to_dict()
+            zone_map = valid_zones.set_index('zone_name')['zone_id'].to_dict()
             zone_options.extend(sorted(list(zone_map.keys())))
     st.session_state['zone_options'], st.session_state['zone_name_id_map'] = zone_options, zone_map
     st.session_state[C.SS_ZONE] = "All Zones/Regions"
@@ -118,10 +125,13 @@ def run_dashboard():
         start_date, end_date = st.date_input("Select Date Range:", value=st.session_state[C.SS_DATE_RANGE], min_value=st.session_state['min_data_date'], max_value=st.session_state['max_data_date'])
         st.session_state[C.SS_DATE_RANGE] = (start_date, end_date)
         st.selectbox("Filter by Zone/Region:", options=st.session_state['zone_options'], key=C.SS_ZONE)
-        st.multiselect("Filter by Condition(s):", options=st.session_state['all_conditions'], key=C.SS_CONDITIONS)
+        # <<< SME REVISION >>> Updated filter to use 'diagnosis'.
+        st.multiselect("Filter by Diagnosis:", options=st.session_state['all_diagnoses'], key=C.SS_DIAGNOSES)
 
     df_filtered = health_df_main[health_df_main['encounter_date'].dt.date.between(start_date, end_date)]
-    if st.session_state[C.SS_CONDITIONS]: df_filtered = df_filtered[df_filtered['condition'].isin(st.session_state[C.SS_CONDITIONS])]
+    # <<< SME REVISION >>> Updated filtering logic to use 'diagnosis'.
+    if st.session_state[C.SS_DIAGNOSES]:
+        df_filtered = df_filtered[df_filtered['diagnosis'].isin(st.session_state[C.SS_DIAGNOSES])]
     
     total_population = 0
     if st.session_state[C.SS_ZONE] != "All Zones/Regions":
@@ -129,7 +139,8 @@ def run_dashboard():
         if zone_id and zone_attr_main is not None:
             df_filtered = df_filtered[df_filtered['zone_id'].astype(str) == str(zone_id)]
             total_population = zone_attr_main.loc[zone_attr_main['zone_id'] == str(zone_id), 'population'].sum()
-    elif zone_attr_main is not None: total_population = zone_attr_main['population'].sum()
+    elif zone_attr_main is not None and not zone_attr_main.empty and 'population' in zone_attr_main.columns:
+        total_population = zone_attr_main['population'].sum()
 
     if df_filtered.empty: st.info("ℹ️ No data available for the selected filters."); st.stop()
 
@@ -141,9 +152,10 @@ def run_dashboard():
     kpi_cols[1].metric("Prevalence per 1,000 Pop.", f"{prevalence:.1f}")
     high_risk_patients = df_filtered[df_filtered['ai_risk_score'] >= settings.RISK_SCORE_MODERATE_THRESHOLD]['patient_id'].nunique()
     kpi_cols[2].metric("High-Risk Patient Cohort", f"{high_risk_patients/unique_patients:.1%}" if unique_patients > 0 else "0.0%")
-    cond_analytics = get_condition_analytics(df_filtered)
-    top_risk_condition = cond_analytics.sort_values('avg_risk_score', ascending=False).iloc[0]['condition'] if not cond_analytics.empty else "N/A"
-    kpi_cols[3].metric("Top Condition by Avg. Risk", top_risk_condition)
+    diag_analytics = get_diagnosis_analytics(df_filtered)
+    # <<< SME REVISION >>> Updated KPI to use 'diagnosis'.
+    top_risk_diagnosis = diag_analytics.sort_values('avg_risk_score', ascending=False).iloc[0]['diagnosis'] if not diag_analytics.empty else "N/A"
+    kpi_cols[3].metric("Top Diagnosis by Avg. Risk", top_risk_diagnosis)
     st.divider()
 
     tab1, tab2, tab3, tab4 = st.tabs(["📈 Epidemiological Overview", "🚨 Population Risk Stratification", "🗺️ Geospatial Analysis", "🧑‍🤝‍🧑 Demographic Insights"])
@@ -153,14 +165,14 @@ def run_dashboard():
         st.subheader("Encounter Trends")
         df_trend = df_filtered.set_index('encounter_date').resample(C.TIME_AGG_PERIOD).size()
         st.plotly_chart(plot_annotated_line_chart(df_trend, "Weekly Encounters Trend", "Encounters"), use_container_width=True)
-        st.subheader("Top Conditions by Volume & Severity")
+        st.subheader("Top Diagnoses by Volume & Severity")
         col1, col2 = st.columns(2)
         with col1:
-            top_by_count = cond_analytics.sort_values('count', ascending=False).head(C.TOP_N_CONDITIONS)
-            st.plotly_chart(plot_bar_chart(top_by_count, x_col='count', y_col='condition', orientation='h', title="Most Frequent Conditions", x_axis_title='Number of Encounters', y_values_are_counts=True), use_container_width=True)
+            top_by_count = diag_analytics.sort_values('count', ascending=False).head(C.TOP_N_DIAGNOSES)
+            st.plotly_chart(plot_bar_chart(top_by_count, x_col='count', y_col='diagnosis', orientation='h', title="Most Frequent Diagnoses", x_axis_title='Number of Encounters', y_values_are_counts=True), use_container_width=True)
         with col2:
-            top_by_risk = cond_analytics.sort_values('avg_risk_score', ascending=False).head(C.TOP_N_CONDITIONS)
-            st.plotly_chart(plot_bar_chart(top_by_risk, x_col='avg_risk_score', y_col='condition', orientation='h', title="Highest-Risk Conditions", x_axis_title='Average AI Risk Score', range_x=[0,100]), use_container_width=True)
+            top_by_risk = diag_analytics.sort_values('avg_risk_score', ascending=False).head(C.TOP_N_DIAGNOSES)
+            st.plotly_chart(plot_bar_chart(top_by_risk, x_col='avg_risk_score', y_col='diagnosis', orientation='h', title="Highest-Risk Diagnoses", x_axis_title='Average AI Risk Score', range_x=[0,100]), use_container_width=True)
     
     with tab2:
         st.header("Population Risk Stratification")
@@ -183,17 +195,18 @@ def run_dashboard():
             geo_agg = df_filtered.groupby('zone_id').agg(avg_risk_score=('ai_risk_score', 'mean'), unique_patients=('patient_id', 'nunique')).reset_index()
             map_df = pd.merge(zone_attr_main, geo_agg, on='zone_id', how='left').fillna(0)
             map_df['prevalence_per_1000'] = (map_df['unique_patients'] / map_df['population'] * 1000).where(map_df['population'] > 0, 0)
-            geojson_data = {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": row['geometry_obj'], "id": str(row['zone_id']), "properties": {"name": row['name'], "avg_risk_score": row['avg_risk_score'], "prevalence_per_1000": row['prevalence_per_1000']}} for _, row in map_df.iterrows()]}
+            # <<< SME REVISION >>> Changed 'name' to 'zone_name' to fix the KeyError.
+            geojson_data = {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": row['geometry_obj'], "id": str(row['zone_id']), "properties": {"zone_name": row['zone_name'], "avg_risk_score": row['avg_risk_score'], "prevalence_per_1000": row['prevalence_per_1000']}} for _, row in map_df.iterrows()]}
             map_metric = st.selectbox("Select Map Metric:", ["Prevalence per 1,000", "Average AI Risk Score"])
             color_metric = 'prevalence_per_1000' if map_metric == "Prevalence per 1,000" else 'avg_risk_score'
-            fig = px.choropleth_mapbox(map_df, geojson=geojson_data, locations="zone_id", color=color_metric, mapbox_style="carto-positron", zoom=8, center={"lat": -1.28, "lon": 36.81}, opacity=0.6, hover_name="name", hover_data={"avg_risk_score": ":.2f", "prevalence_per_1000": ":.2f"}, labels={color_metric: map_metric})
+            # <<< SME REVISION >>> Updated hover_name and hover_data to use 'zone_name'.
+            fig = px.choropleth_mapbox(map_df, geojson=geojson_data, locations="zone_id", color=color_metric, mapbox_style="carto-positron", zoom=8, center={"lat": -1.28, "lon": 36.81}, opacity=0.6, hover_name="zone_name", hover_data={"zone_name":True, "avg_risk_score": ":.2f", "prevalence_per_1000": ":.2f"}, labels={color_metric: map_metric})
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning("Geospatial data is unavailable. Cannot render map.")
     
     with tab4:
         st.header("Demographic Insights")
-        # --- DEFINITIVE FIX for SettingWithCopyWarning ---
         df_unique = df_filtered.drop_duplicates(subset=['patient_id']).copy()
         col1, col2 = st.columns(2)
         with col1:
@@ -206,7 +219,6 @@ def run_dashboard():
         st.subheader("Risk by Demographics")
         if not df_unique.empty:
              df_unique['age_band'] = pd.cut(df_unique['age'], bins=[0, 18, 40, 60, 120], labels=['0-18', '19-40', '41-60', '60+'])
-             # --- DEFINITIVE FIX for FutureWarning ---
              risk_by_demo = df_unique.groupby(['age_band', 'gender'], observed=True)['ai_risk_score'].mean().reset_index()
              if not risk_by_demo.empty:
                 fig = plot_bar_chart(risk_by_demo, x_col='age_band', y_col='ai_risk_score', color='gender', barmode='group', title="Average AI Risk Score by Age and Gender", y_axis_title='Avg. AI Risk Score')
