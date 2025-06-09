@@ -29,7 +29,8 @@ from .supply_forecasting import generate_simple_supply_forecast, forecast_supply
 # From protocol_executor.py
 from .protocol_executor import execute_escalation_protocols_batch
 
-# <<< SME INTEGRATION >>> Import the new high-level KPI function from its dedicated module.
+# <<< SME INTEGRATION >>> This is the line that fixes the crash.
+# It makes the new function available to the rest of the application.
 from .clinic_kpis import generate_kpi_analysis_table
 
 
