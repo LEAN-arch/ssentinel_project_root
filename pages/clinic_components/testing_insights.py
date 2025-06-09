@@ -28,6 +28,7 @@ class TestingInsightsPreparer:
 
     This class processes raw KPI summary data and detailed health records to produce
     a set of structured DataFrames ready for direct consumption by UI components,
+
     covering summary statistics, overdue tests, and sample rejection reasons.
     """
 
@@ -40,6 +41,7 @@ class TestingInsightsPreparer:
             health_df_period: A DataFrame of health records for the report period.
         """
         self.kpis_summary = kpis_summary if isinstance(kpis_summary, dict) else {}
+        # Use a defensive copy to prevent side effects on the original DataFrame.
         self.df_health = health_df_period.copy() if isinstance(health_df_period, pd.DataFrame) else pd.DataFrame()
         self.key_test_configs = getattr(settings, 'KEY_TEST_TYPES_FOR_ANALYSIS', {})
         self.notes: List[str] = []
@@ -90,12 +92,13 @@ class TestingInsightsPreparer:
     def _prepare_overdue_list(self) -> pd.DataFrame:
         """
         Identifies and lists all pending tests that have exceeded their TAT threshold.
-        This method uses a vectorized approach for high performance.
+        This method uses a vectorized approach for high performance, avoiding slow loops.
         """
         if self.df_health.empty:
             self.notes.append("Overdue test analysis skipped: no detailed health data provided.")
             return pd.DataFrame(columns=OVERDUE_COLS)
 
+        # Prefer the more precise sample collection date if available, otherwise fall back.
         date_col = 'sample_collection_date' if 'sample_collection_date' in self.df_health and self.df_health['sample_collection_date'].notna().any() else 'encounter_date'
         required_cols = ['test_result', 'test_type', 'patient_id', date_col]
         
@@ -110,7 +113,7 @@ class TestingInsightsPreparer:
         ].copy()
         if df_pending.empty: return pd.DataFrame(columns=OVERDUE_COLS)
 
-        # Ensure timezone-naive comparison to avoid errors.
+        # Ensure timezone-naive comparison to avoid errors with pd.Timestamp.now().
         now_naive = pd.Timestamp.now().normalize()
         df_pending[date_col] = df_pending[date_col].dt.normalize()
         df_pending['days_pending'] = (now_naive - df_pending[date_col]).dt.days
@@ -119,7 +122,7 @@ class TestingInsightsPreparer:
         df_pending = df_pending[df_pending['days_pending'] >= 0]
         if df_pending.empty: return pd.DataFrame(columns=OVERDUE_COLS)
 
-        # Vectorized approach: Create a threshold map and apply it using .map for performance.
+        # Vectorized approach: Create a threshold map and apply it using .map for optimal performance.
         unique_tests = df_pending['test_type'].unique()
         threshold_map = {name: self._get_overdue_threshold(name) for name in unique_tests}
         df_pending['overdue_threshold_days'] = df_pending['test_type'].map(threshold_map)
@@ -128,7 +131,7 @@ class TestingInsightsPreparer:
         if df_overdue.empty: return pd.DataFrame(columns=OVERDUE_COLS)
         
         df_display = df_overdue.rename(columns={date_col: "Sample Collection/Registered Date"})
-        # Final selection, sorting, and indexing ensures a clean, predictable output.
+        # Final selection, sorting, and indexing ensures a clean, predictable, UI-ready output.
         return df_display[OVERDUE_COLS].sort_values('days_pending', ascending=False).reset_index(drop=True)
 
     def _prepare_rejection_reasons(self) -> pd.DataFrame:
