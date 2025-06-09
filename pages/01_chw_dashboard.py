@@ -1,4 +1,8 @@
 # ssentinel_project_root/pages/01_chw_dashboard.py
+# SME-EVALUATED AND REVISED VERSION (V2 - TypeError FIX & Refactor)
+# This version fixes the critical TypeError, removes redundant data cleaning,
+# and optimizes the filtering logic for better performance and maintainability.
+
 import streamlit as st
 import pandas as pd
 import logging
@@ -6,19 +10,13 @@ from datetime import date, timedelta
 from typing import Optional, Dict, Any, List
 
 # --- Configuration and Centralized Module Imports ---
-# SME NOTE: This is the corrected import block. It directly imports the
-# new, correct functions from their final locations, resolving all `ImportError` issues.
 try:
     from config import settings
     from data_processing.loaders import load_health_records
     from data_processing.helpers import hash_dataframe_safe
     from visualization.ui_elements import render_kpi_card
     from visualization.plots import plot_annotated_line_chart, create_empty_figure
-    
-    # Directly import the new, centralized functions
     from analytics.alerting import generate_chw_patient_alerts
-    
-    # Import the CORRECT functions from the component files
     from pages.chw_components.summary_metrics import calculate_chw_daily_summary_metrics
     from pages.chw_components.epi_signals import extract_chw_epi_signals
     from pages.chw_components.task_processing import generate_chw_tasks
@@ -36,6 +34,7 @@ except ImportError as e:
 logger = logging.getLogger(__name__)
 
 def _get_setting(attr_name: str, default_value: Any) -> Any:
+    """Helper to safely get attributes from the settings module."""
     return getattr(settings, attr_name, default_value)
 
 st.set_page_config(
@@ -44,17 +43,22 @@ st.set_page_config(
 )
 
 # --- Data Loading ---
+# <<< SME REVISION >>> This function has been significantly simplified.
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 300), hash_funcs={pd.DataFrame: hash_dataframe_safe})
 def get_dashboard_data() -> pd.DataFrame:
-    """Loads and prepares the base health records once for the entire dashboard."""
+    """
+    Loads the base health records once. Data cleaning and type conversion are now
+    fully handled by the robust `load_health_records` function.
+    """
     logger.info("CHW Dashboard: Loading base health records.")
-    df = load_health_records(source_context="CHWDash/LoadBaseData")
+    # <<< SME REVISION >>> Removed invalid `source_context` argument to fix the TypeError.
+    df = load_health_records()
     if not isinstance(df, pd.DataFrame) or df.empty:
+        logger.warning("CHW Dashboard: load_health_records returned an empty DataFrame.")
         return pd.DataFrame()
     
-    if 'encounter_date' in df.columns:
-        df['encounter_date'] = pd.to_datetime(df['encounter_date'], errors='coerce')
-        df.dropna(subset=['encounter_date'], inplace=True)
+    # <<< SME REVISION >>> Removed redundant data cleaning. The loaders.py module
+    # is now responsible for all type conversions and NA handling, simplifying this page.
     return df
 
 # --- Main UI ---
@@ -71,14 +75,19 @@ with st.sidebar:
         st.warning("No data loaded. Filters are disabled.")
         active_chw, active_zone, daily_date, trend_start, trend_end = None, None, date.today(), date.today() - timedelta(days=29), date.today()
     else:
-        chw_options = ["All CHWs"] + sorted(all_data['chw_id'].dropna().astype(str).unique())
-        zone_options = ["All Zones"] + sorted(all_data['zone_id'].dropna().astype(str).unique())
+        # <<< SME REVISION >>> Removed redundant .astype(str) as the loader now enforces dtypes.
+        chw_options = ["All CHWs"] + sorted(all_data['chw_id'].dropna().unique())
+        zone_options = ["All Zones"] + sorted(all_data['zone_id'].dropna().unique())
+        
         selected_chw = st.selectbox("Filter by CHW ID:", options=chw_options, key="chw_filter")
         selected_zone = st.selectbox("Filter by Zone:", options=zone_options, key="zone_filter")
+        
         min_date, max_date = all_data['encounter_date'].min().date(), all_data['encounter_date'].max().date()
         daily_date = st.date_input("View Daily Activity For:", value=max_date, min_value=min_date, max_value=max_date, key="daily_date_filter")
+        
         default_trend_start = max(min_date, daily_date - timedelta(days=29))
         trend_range = st.date_input("Select Trend Date Range:", value=[default_trend_start, daily_date], min_value=min_date, max_value=max_date, key="trend_date_filter")
+        
         active_chw = None if selected_chw == "All CHWs" else selected_chw
         active_zone = None if selected_zone == "All Zones" else selected_zone
         trend_start, trend_end = trend_range if len(trend_range) == 2 else (default_trend_start, daily_date)
@@ -90,11 +99,13 @@ else:
     daily_mask = (all_data['encounter_date'].dt.date == daily_date)
     trend_mask = (all_data['encounter_date'].dt.date.between(trend_start, trend_end))
     if active_chw:
-        daily_mask &= (all_data['chw_id'].astype(str) == active_chw)
-        trend_mask &= (all_data['chw_id'].astype(str) == active_chw)
+        # <<< SME REVISION >>> Removed redundant .astype(str).
+        daily_mask &= (all_data['chw_id'] == active_chw)
+        trend_mask &= (all_data['chw_id'] == active_chw)
     if active_zone:
-        daily_mask &= (all_data['zone_id'].astype(str) == active_zone)
-        trend_mask &= (all_data['zone_id'].astype(str) == active_zone)
+        # <<< SME REVISION >>> Removed redundant .astype(str).
+        daily_mask &= (all_data['zone_id'] == active_zone)
+        trend_mask &= (all_data['zone_id'] == active_zone)
     daily_df = all_data[daily_mask]
     trend_df = all_data[trend_mask]
 
