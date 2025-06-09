@@ -1,7 +1,8 @@
 # ssentinel_project_root/pages/01_chw_dashboard.py
-# SME-EVALUATED AND REVISED VERSION (V3 - TypeError FIX 2)
-# This version corrects the second TypeError by updating the call to
-# `generate_chw_tasks` to match its correct function signature.
+# SME-EVALUATED AND REVISED VERSION (V4 - KeyError FIX)
+# This version resolves the KeyError by removing all functionality related to
+# the 'chw_id' column, which does not exist in the current data source. It also
+# corrects a latent TypeError in the `generate_chw_patient_alerts` call.
 
 import streamlit as st
 import pandas as pd
@@ -25,8 +26,7 @@ except ImportError as e:
     st.error(
         "FATAL IMPORT ERROR: A required application component could not be loaded.\n\n"
         f"**Details:**\n`{e}`\n\n"
-        "Please ensure all component files (e.g., `analytics/alerting.py`, `pages/chw_components/*`) "
-        "are correctly saved on the server and that all `__init__.py` files exist."
+        "Please ensure all component files are correctly saved and `__init__.py` files exist."
     )
     st.stop()
 
@@ -38,28 +38,25 @@ def _get_setting(attr_name: str, default_value: Any) -> Any:
     return getattr(settings, attr_name, default_value)
 
 st.set_page_config(
-    page_title=f"CHW Dashboard - {_get_setting('APP_NAME', 'Sentinel')}",
+    page_title=f"Field Operations - {_get_setting('APP_NAME', 'Sentinel')}",
     page_icon="🧑‍🏫", layout="wide"
 )
 
 # --- Data Loading ---
 @st.cache_data(ttl=_get_setting('CACHE_TTL_SECONDS_WEB_REPORTS', 300), hash_funcs={pd.DataFrame: hash_dataframe_safe})
 def get_dashboard_data() -> pd.DataFrame:
-    """
-    Loads the base health records once. Data cleaning and type conversion are now
-    fully handled by the robust `load_health_records` function.
-    """
-    logger.info("CHW Dashboard: Loading base health records.")
+    """Loads the base health records once."""
+    logger.info("Field Operations Dashboard: Loading base health records.")
     df = load_health_records()
     if not isinstance(df, pd.DataFrame) or df.empty:
-        logger.warning("CHW Dashboard: load_health_records returned an empty DataFrame.")
+        logger.warning("Field Ops Dashboard: load_health_records returned an empty DataFrame.")
         return pd.DataFrame()
-    
     return df
 
 # --- Main UI ---
-st.title("🧑‍🏫 CHW Supervisor Operations View")
-st.markdown("Team Performance Monitoring & Field Support")
+# <<< SME REVISION >>> Title changed to be more generic as CHW-specific filtering is removed.
+st.title("🧑‍🏫 Field Operations View")
+st.markdown("Zone Performance Monitoring & Field Support")
 st.divider()
 
 all_data = get_dashboard_data()
@@ -69,12 +66,11 @@ with st.sidebar:
     st.header("Dashboard Filters")
     if all_data.empty:
         st.warning("No data loaded. Filters are disabled.")
-        active_chw, active_zone, daily_date, trend_start, trend_end = None, None, date.today(), date.today() - timedelta(days=29), date.today()
+        # <<< SME REVISION >>> Removed active_chw from this line.
+        active_zone, daily_date, trend_start, trend_end = None, date.today(), date.today() - timedelta(days=29), date.today()
     else:
-        chw_options = ["All CHWs"] + sorted(all_data['chw_id'].dropna().unique())
+        # <<< SME REVISION >>> Removed 'chw_id' filter as the column does not exist.
         zone_options = ["All Zones"] + sorted(all_data['zone_id'].dropna().unique())
-        
-        selected_chw = st.selectbox("Filter by CHW ID:", options=chw_options, key="chw_filter")
         selected_zone = st.selectbox("Filter by Zone:", options=zone_options, key="zone_filter")
         
         min_date, max_date = all_data['encounter_date'].min().date(), all_data['encounter_date'].max().date()
@@ -83,7 +79,6 @@ with st.sidebar:
         default_trend_start = max(min_date, daily_date - timedelta(days=29))
         trend_range = st.date_input("Select Trend Date Range:", value=[default_trend_start, daily_date], min_value=min_date, max_value=max_date, key="trend_date_filter")
         
-        active_chw = None if selected_chw == "All CHWs" else selected_chw
         active_zone = None if selected_zone == "All Zones" else selected_zone
         trend_start, trend_end = trend_range if len(trend_range) == 2 else (default_trend_start, daily_date)
 
@@ -93,22 +88,22 @@ if all_data.empty:
 else:
     daily_mask = (all_data['encounter_date'].dt.date == daily_date)
     trend_mask = (all_data['encounter_date'].dt.date.between(trend_start, trend_end))
-    if active_chw:
-        daily_mask &= (all_data['chw_id'] == active_chw)
-        trend_mask &= (all_data['chw_id'] == active_chw)
+    # <<< SME REVISION >>> Removed filtering logic for 'active_chw'.
     if active_zone:
         daily_mask &= (all_data['zone_id'] == active_zone)
         trend_mask &= (all_data['zone_id'] == active_zone)
     daily_df = all_data[daily_mask]
     trend_df = all_data[trend_mask]
 
-st.info(f"**Date:** {daily_date:%d %b %Y} | **CHW:** {active_chw or 'All'} | **Zone:** {active_zone or 'All'}")
+# <<< SME REVISION >>> Removed CHW from the info display.
+st.info(f"**Date:** {daily_date:%d %b %Y} | **Zone:** {active_zone or 'All'}")
 
 # --- Section 1: Daily Performance Snapshot ---
 st.header("📊 Daily Performance Snapshot")
 if daily_df.empty:
     st.markdown("ℹ️ No activity for the selected date and filters.")
 else:
+    # This component now summarizes by the active filter (e.g., zone).
     summary_kpis = calculate_chw_daily_summary_metrics(daily_df)
     kpi_cols = st.columns(4)
     with kpi_cols[0]: render_kpi_card(title="Visits Today", value_str=str(summary_kpis.get("visits_count", 0)), icon="👥")
@@ -122,9 +117,8 @@ st.header("🚦 Key Alerts & Tasks")
 if daily_df.empty:
     st.markdown("ℹ️ No activity data to generate alerts or tasks.")
 else:
-    chw_alerts = generate_chw_patient_alerts(patient_encounter_data_df=daily_df, for_date=daily_date)
-    # <<< SME REVISION >>> Removed the invalid `chw_id` and `zone_id` keyword arguments
-    # to match the function's correct signature and fix the TypeError.
+    # <<< SME REVISION >>> Removed invalid 'for_date' argument to fix latent TypeError.
+    chw_alerts = generate_chw_patient_alerts(patient_encounter_data_df=daily_df)
     chw_tasks = generate_chw_tasks(daily_df, for_date=daily_date)
     
     alert_col, task_col = st.columns(2)
@@ -165,8 +159,8 @@ else:
         st.info("No unusual symptom clusters detected today.")
 st.divider()
 
-# --- Section 4: CHW Team Activity Trends ---
-st.header("📈 CHW Team Activity Trends")
+# --- Section 4: Team Activity Trends ---
+st.header("📈 Field Team Activity Trends")
 st.markdown(f"Displaying trends from **{trend_start:%d %b %Y}** to **{trend_end:%d %b %Y}**.")
 if trend_df.empty:
     st.markdown("ℹ️ No historical data available for the selected trend period.")
