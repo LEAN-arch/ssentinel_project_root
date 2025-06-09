@@ -1,51 +1,49 @@
 # sentinel_project_root/visualization/__init__.py
 """
-Initializes the visualization package, making key functions and classes
-available at the top level for easier, cleaner imports in other modules.
+Initializes the visualization package, defining its public API.
+
+This package provides a suite of high-level, theme-aware functions for
+creating standardized Plotly charts and custom HTML/CSS UI components
+for the Sentinel Streamlit application.
 """
 
-# From plots.py
+# --- Core Plotting Functions from plots.py ---
 from .plots import (
+    set_plotly_theme,
     create_empty_figure,
     plot_bar_chart,
     plot_donut_chart,
-    plot_annotated_line_chart,
-    plot_choropleth_map  # DEFINITIVE FIX: Add the missing import
+    plot_line_chart,
+    plot_choropleth_map,
+    plot_heatmap,
+    plot_forecast_chart,
 )
 
-# From ui_elements.py
+# --- Custom UI Element Renderers from ui_elements.py ---
 from .ui_elements import (
     get_theme_color,
     render_kpi_card,
     render_traffic_light_indicator,
-    display_custom_styled_kpi_box
+    render_custom_kpi,
+    load_and_inject_css,
 )
 
-# From themes.py (assuming it exists to define the plotly theme template)
-try:
-    from .themes import sentinel_theme
-except ImportError:
-    # Fallback if themes.py doesn't exist or has an issue
-    sentinel_theme = "plotly_white"
-
-
-# --- Define __all__ for explicit public API definition ---
-# This tells tools and developers which names are part of the public API
-# and controls 'from visualization import *' behavior.
+# --- Define the canonical public API for the package ---
 __all__ = [
-    # plots
+    # plots.py
+    "set_plotly_theme",
     "create_empty_figure",
     "plot_bar_chart",
     "plot_donut_chart",
-    "plot_annotated_line_chart",
-    "plot_choropleth_map", # DEFINITIVE FIX: Add to the public API list
+    "plot_line_chart",
+    "plot_choropleth_map",
+    "plot_heatmap",
+    "plot_forecast_chart",
     
-    # ui_elements
+    # ui_elements.py
     "get_theme_color",
     "render_kpi_card",
     "render_traffic_light_indicator",
-    "display_custom_styled_kpi_box",
-    
-    # themes
-    "sentinel_theme"
+    "render_custom_kpi",
+    "load_and_inject_css",
 ]
