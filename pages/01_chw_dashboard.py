@@ -7,15 +7,13 @@ modernized data handling to prevent common errors. It is feature-complete.
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 import logging
 from datetime import date, timedelta
 from typing import Optional, Dict, Any, List
-from pathlib import Path
 
 # --- Configuration and Centralized Module Imports ---
-# SME NOTE: This is the corrected import block. It no longer attempts to import
-# the non-existent 'calculate_chw_activity_trends_data' function.
+# SME NOTE: This is the corrected import block. It directly imports the
+# new, correct functions from their final locations, resolving all `ImportError` issues.
 try:
     from config import settings
     from data_processing.loaders import load_health_records
@@ -23,22 +21,20 @@ try:
     from visualization.ui_elements import render_kpi_card
     from visualization.plots import plot_annotated_line_chart, create_empty_figure
     
-    # Import from the new, centralized analytics location
+    # Directly import the new, centralized functions
     from analytics.alerting import generate_chw_patient_alerts
     
-    # Import the CORRECT functions from the component wrappers
+    # Import the CORRECT functions from the component files
     from pages.chw_components.summary_metrics import calculate_chw_daily_summary_metrics
     from pages.chw_components.epi_signals import extract_chw_epi_signals
     from pages.chw_components.task_processing import generate_chw_tasks
-    # THIS IS THE CRITICAL LINE THAT MUST BE CORRECT:
-    from pages.chw_components.activity_trends import get_chw_activity_trends 
+    from pages.chw_components.activity_trends import get_chw_activity_trends
 except ImportError as e:
     st.error(
-        "FATAL IMPORT ERROR: A required application component could not be loaded. "
-        "This is likely because a file on the server was not updated correctly.\n\n"
+        "FATAL IMPORT ERROR: A required application component could not be loaded.\n\n"
         f"**Details:**\n`{e}`\n\n"
-        "Please ensure `pages/chw_components/activity_trends.py` and `analytics/alerting.py` "
-        "are updated with the latest versions and that all `__init__.py` files exist."
+        "Please ensure all component files (e.g., `analytics/alerting.py`, `pages/chw_components/*`) "
+        "are correctly saved on the server and that all `__init__.py` files exist."
     )
     st.stop()
 
@@ -83,16 +79,12 @@ with st.sidebar:
     else:
         chw_options = ["All CHWs"] + sorted(all_data['chw_id'].dropna().astype(str).unique())
         zone_options = ["All Zones"] + sorted(all_data['zone_id'].dropna().astype(str).unique())
-
         selected_chw = st.selectbox("Filter by CHW ID:", options=chw_options, key="chw_filter")
         selected_zone = st.selectbox("Filter by Zone:", options=zone_options, key="zone_filter")
-        
         min_date, max_date = all_data['encounter_date'].min().date(), all_data['encounter_date'].max().date()
         daily_date = st.date_input("View Daily Activity For:", value=max_date, min_value=min_date, max_value=max_date, key="daily_date_filter")
-        
         default_trend_start = max(min_date, daily_date - timedelta(days=29))
         trend_range = st.date_input("Select Trend Date Range:", value=[default_trend_start, daily_date], min_value=min_date, max_value=max_date, key="trend_date_filter")
-        
         active_chw = None if selected_chw == "All CHWs" else selected_chw
         active_zone = None if selected_zone == "All Zones" else selected_zone
         trend_start, trend_end = trend_range if len(trend_range) == 2 else (default_trend_start, daily_date)
@@ -121,10 +113,10 @@ if daily_df.empty:
 else:
     summary_kpis = calculate_chw_daily_summary_metrics(daily_df)
     kpi_cols = st.columns(4)
-    with kpi_cols[0]: render_kpi_card(title="Visits Today", value_str=str(summary_kpis.get("visits_count", 0)), icon="👥", help_text="Total unique patients encountered.")
-    with kpi_cols[1]: render_kpi_card(title="High Prio Follow-ups", value_str=str(summary_kpis.get("high_ai_prio_followups_count", 0)), icon="🎯", help_text="Patients needing urgent follow-up.")
-    with kpi_cols[2]: render_kpi_card(title="Critical SpO2 Cases", value_str=str(summary_kpis.get("critical_spo2_cases_identified_count", 0)), icon="💨", help_text="Patients with SpO2 < 90%.")
-    with kpi_cols[3]: render_kpi_card(title="High Fever Cases", value_str=str(summary_kpis.get("high_fever_cases_identified_count", 0)), icon="🔥", help_text="Patients with body temp ≥ 39.5°C.")
+    with kpi_cols[0]: render_kpi_card(title="Visits Today", value_str=str(summary_kpis.get("visits_count", 0)), icon="👥")
+    with kpi_cols[1]: render_kpi_card(title="High Prio Follow-ups", value_str=str(summary_kpis.get("high_ai_prio_followups_count", 0)), icon="🎯")
+    with kpi_cols[2]: render_kpi_card(title="Critical SpO2 Cases", value_str=str(summary_kpis.get("critical_spo2_cases_identified_count", 0)), icon="💨")
+    with kpi_cols[3]: render_kpi_card(title="High Fever Cases", value_str=str(summary_kpis.get("high_fever_cases_identified_count", 0)), icon="🔥")
 st.divider()
 
 # --- Section 2: Key Alerts & Tasks ---
@@ -177,9 +169,8 @@ st.divider()
 st.header("📈 CHW Team Activity Trends")
 st.markdown(f"Displaying trends from **{trend_start:%d %b %Y}** to **{trend_end:%d %b %Y}**.")
 if trend_df.empty:
-    st.markdown("ℹ️ No historical data for the selected trend period.")
+    st.markdown("ℹ️ No historical data available for the selected trend period.")
 else:
-    # THIS IS THE CRITICAL LINE THAT MUST BE CORRECT:
     activity_trends = get_chw_activity_trends(trend_df)
     
     cols = st.columns(2)
