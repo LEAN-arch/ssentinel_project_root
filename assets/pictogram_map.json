@@ -74,4 +74,36 @@
   "MISC_SYNC_NOW": "icons/sync_cloud_arrow.png",
   "MISC_LOGOUT": "icons/logout_door.png",
   "SOS_BUTTON": "icons/sos_button_alert.png"
+
+  {
+  "GUIDE_AIRWAY_POSITION": "guides/airway_clearance.png",
+  "GUIDE_OXYGEN_ADMIN": "guides/oxygen_administration.png",
+  "GUIDE_FALL_ASSESSMENT": "guides/fall_assessment_steps.png",
+  "GUIDE_DO_NOT_MOVE": "guides/do_not_move_spinal.png",
+  "GUIDE_OUTBREAK_FIELD_REPORT": "guides/outbreak_reporting_form.png",
+  "GUIDE_COMMUNITY_PRECAUTIONS": "guides/community_hygiene_precautions.png",
+  
+  "TASK_HOME_VISIT": "tasks/home_visit.png",
+  "TASK_VITALS_URGENT": "tasks/vitals_urgent.png",
+  "TASK_FOLLOWUP_AI": "tasks/ai_followup.png",
+  "TASK_REFERRAL_TRACK": "tasks/referral_track.png",
+  "TASK_MED_DELIVERY": "tasks/meds_delivery.png",
+  
+  "ALERT_CRITICAL_ICON": "icons/status_critical.png",
+  "ALERT_WARNING_ICON": "icons/status_warning.png",
+  "ALERT_INFO_ICON": "icons/status_info.png",
+  
+  "SENSOR_SPO2_LOW": "sensors/spo2_low.png",
+  "SENSOR_TEMP_HIGH": "sensors/temp_high.png",
+  "SENSOR_FALL_DETECTED": "sensors/fall_alert.png",
+  "SENSOR_BATTERY_LOW": "sensors/battery_low.png",
+  
+  "SYMPTOM_FEVER": "symptoms/fever.png",
+  "SYMPTOM_COUGH": "symptoms/cough.png",
+  "SYMPTOM_DIARRHEA": "symptoms/diarrhea.png",
+  
+  "MISC_SETTINGS": "icons/settings.png",
+  "MISC_SYNC": "icons/sync.png",
+  "MISC_SOS": "icons/sos.png"
+}
 }
