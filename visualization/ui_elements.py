@@ -4,7 +4,7 @@
 import html
 import logging
 from pathlib import Path
-from typing import Any, List, Optional, Union
+from typing import Any, Optional, Union
 
 import pandas as pd
 import streamlit as st
@@ -29,45 +29,28 @@ def load_and_inject_css(css_path: Union[str, Path]):
 
 
 def get_theme_color(semantic_name: str, fallback: str = "#6c757d") -> str:
-    """
-    Retrieves a theme color from settings using a semantic name.
-    e.g., 'risk_high', 'primary', 'positive_delta'.
-    """
+    """Retrieves a theme color from settings using a semantic name."""
     attr_name = f"COLOR_{semantic_name.upper()}"
     return getattr(settings, attr_name, fallback)
 
 
 def render_kpi_card(
-    title: str,
-    value: Any,
-    unit: str = "",
-    status_level: Optional[str] = None,
-    delta: Optional[float] = None,
-    delta_is_improvement: Optional[bool] = None,
-    help_text: Optional[str] = None,
-    icon: str = "💡"
+    title: str, value: Any, unit: str = "", status_level: Optional[str] = None,
+    delta: Optional[float] = None, delta_is_improvement: Optional[bool] = None,
+    help_text: Optional[str] = None, icon: str = "💡"
 ) -> None:
-    """
-    Renders a rich, custom HTML KPI card in Streamlit.
-    """
-    # --- Value Formatting ---
-    if pd.isna(value):
-        value_str = "N/A"
-    elif isinstance(value, float) and not value.is_integer():
-        value_str = f"{value:,.2f}"
-    elif isinstance(value, (int, float)):
-        value_str = f"{int(value):,}"
-    else:
-        value_str = str(value)
+    """Renders a rich, custom HTML KPI card in Streamlit."""
+    if pd.isna(value): value_str = "N/A"
+    elif isinstance(value, float) and not value.is_integer(): value_str = f"{value:,.2f}"
+    elif isinstance(value, (int, float)): value_str = f"{int(value):,}"
+    else: value_str = str(value)
         
-    # --- Delta Formatting ---
     delta_html = ""
     if delta is not None and delta_is_improvement is not None:
         delta_class = "positive" if delta_is_improvement else "negative"
         arrow = "▲" if delta_is_improvement else "▼"
         delta_html = f'<p class="kpi-delta {delta_class}">{arrow} {delta:+.1f}%</p>'
 
-    # --- CSS and Tooltip ---
     status_class = f"status-{status_level.lower().replace('_', '-')}" if status_level else ""
     tooltip_attr = f'title="{html.escape(help_text)}"' if help_text else ""
     unit_html = f'<span class="kpi-units">{html.escape(unit)}</span>' if unit else ""
@@ -87,14 +70,11 @@ def render_kpi_card(
     st.markdown(card_html, unsafe_allow_html=True)
 
 def render_traffic_light_indicator(
-    message: str,
-    status_level: str,
-    details: Optional[str] = None
+    message: str, status_level: str, details: Optional[str] = None
 ) -> None:
     """Renders a custom HTML traffic light status indicator."""
     status_class = f"status-{status_level.lower().replace('_', '-')}"
     details_html = f'<div class="traffic-light-details">{html.escape(details)}</div>' if details else ""
-
     indicator_html = f"""
     <div class="traffic-light-indicator">
         <div class="traffic-light-dot {status_class}"></div>
@@ -106,25 +86,16 @@ def render_traffic_light_indicator(
 
 
 def render_custom_kpi(
-    label: str,
-    value: Any,
-    sub_text: Optional[str] = None,
-    highlight_status: Optional[str] = None
+    label: str, value: Any, sub_text: Optional[str] = None, highlight_status: Optional[str] = None
 ) -> None:
     """Renders a custom-styled KPI box with an optional colored edge."""
-    # --- Value Formatting ---
-    if pd.isna(value):
-        value_display = "N/A"
-    elif isinstance(value, float) and not value.is_integer():
-        value_display = f"{value:,.1f}"
-    elif isinstance(value, (int, float)):
-        value_display = f"{int(value):,}"
-    else:
-        value_display = str(value)
+    if pd.isna(value): value_display = "N/A"
+    elif isinstance(value, float) and not value.is_integer(): value_display = f"{value:,.1f}"
+    elif isinstance(value, (int, float)): value_display = f"{int(value):,}"
+    else: value_display = str(value)
     
-    sub_text_html = f'<div class="custom-kpi-subtext">{html.escape(sub_text)}</div>' if sub_text else ""
+    sub_text_html = f'<div class="custom-kpi-subtext-small">{html.escape(sub_text)}</div>' if sub_text else ""
     edge_class = f"highlight-{highlight_status.lower().replace('_', '-')}-edge" if highlight_status else ""
-
     kpi_box_html = f"""
     <div class="custom-markdown-kpi-box {edge_class}">
         <div class="custom-kpi-label-top">{html.escape(label)}</div>
