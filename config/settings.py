@@ -1,7 +1,7 @@
 # sentinel_project_root/config/settings.py
-# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD - DEFINITIVE)
-# This definitive version corrects the directory path bug and correctly integrates all
-# data-specific settings required by the provided CSV file.
+# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD V2 - DEFINITIVE FIX)
+# This definitive version corrects the health records path to point to the
+# 'health_records_expanded.csv' file, resolving the critical startup error.
 
 import os
 import logging
@@ -42,7 +42,6 @@ LOG_DATE_FORMAT = os.getenv("SENTINEL_LOG_DATE_FORMAT", "%Y-%m-%d %H:%M:%S")
 
 # Paths
 ASSETS_DIR = validate_path(PROJECT_ROOT_DIR / "assets", "Assets directory", is_dir=True)
-# --- CRITICAL BUG FIX: Reverted to the original, correct directory name 'data_sources' ---
 DATA_SOURCES_DIR = validate_path(PROJECT_ROOT_DIR / "data_sources", "Data sources directory", is_dir=True)
 APP_LOGO_SMALL_PATH = str(validate_path(ASSETS_DIR / "sentinel_logo_small.png", "Small app logo"))
 APP_LOGO_LARGE_PATH = str(validate_path(ASSETS_DIR / "sentinel_logo_large.png", "Large app logo"))
@@ -50,7 +49,10 @@ STYLE_CSS_PATH_WEB = str(validate_path(ASSETS_DIR / "style_web_reports.css", "Gl
 ESCALATION_PROTOCOLS_JSON_PATH = str(validate_path(ASSETS_DIR / "escalation_protocols.json", "Escalation protocols JSON"))
 PICTOGRAM_MAP_JSON_PATH = str(validate_path(ASSETS_DIR / "pictogram_map.json", "Pictogram map JSON"))
 HAPTIC_PATTERNS_JSON_PATH = str(validate_path(ASSETS_DIR / "haptic_patterns.json", "Haptic patterns JSON"))
-HEALTH_RECORDS_PATH = str(validate_path(DATA_SOURCES_DIR / "health_records.csv", "Health records CSV"))
+
+# <<< SME REVISION >>> This is the critical fix. The path now points to the correct, expanded data file.
+HEALTH_RECORDS_PATH = str(validate_path(DATA_SOURCES_DIR / "health_records_expanded.csv", "Health records CSV"))
+
 ZONE_ATTRIBUTES_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_attributes.csv", "Zone attributes CSV"))
 ZONE_GEOMETRIES_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_geometries.geojson", "Zone geometries GeoJSON"))
 IOT_ENV_RECORDS_PATH = str(validate_path(DATA_SOURCES_DIR / "iot_clinic_environment.csv", "IoT clinic environment CSV"))
@@ -121,7 +123,6 @@ NODE_REPORTING_INTERVAL_HOURS = 24
 
 
 # --- V. Data Semantics & Categories ---
-# --- INTEGRATION: Settings updated to match the new `health_records.csv` data ---
 KEY_TEST_TYPES_FOR_ANALYSIS = {
     "Malaria RDT": {"disease_group": "Malaria", "target_tat_days": 0.5, "critical": True, "display_name": "Malaria RDT"},
     "CBC": {"disease_group": "General", "target_tat_days": 1, "critical": True, "display_name": "CBC"},
@@ -130,11 +131,9 @@ KEY_TEST_TYPES_FOR_ANALYSIS = {
     "Blood Glucose": {"disease_group": "NCD", "target_tat_days": 0.1, "critical": False, "display_name": "Blood Glucose"},
     "COVID-19 Ag": {"disease_group": "Respiratory", "target_tat_days": 0.25, "critical": True, "display_name": "COVID-19 Ag"},
 }
-# This derived list makes it easy to filter for critical tests elsewhere in the application.
 CRITICAL_TESTS = [k for k, v in KEY_TEST_TYPES_FOR_ANALYSIS.items() if v.get("critical", False)]
 OVERDUE_TEST_BUFFER_DAYS = 2
 KEY_CONDITIONS_FOR_ACTION = ['Malaria', 'Pneumonia', 'Diarrhea', 'Hypertension', 'Diabetes', 'URI', 'Bacterial Infection']
-# --- INTEGRATION: This is the critical list from your snippet ---
 KEY_DRUG_SUBSTRINGS_SUPPLY = ['Paracetamol', 'Amoxicillin', 'ORS Packet', 'Metformin', 'Lisinopril']
 NON_INFORMATIVE_SYMPTOMS = ['none', 'n/a', 'asymptomatic', '']
 TESTING_TOP_N_REJECTION_REASONS = 5
@@ -177,7 +176,6 @@ COLOR_BACKGROUND_PAGE = "#f8f9fa"
 COLOR_BACKGROUND_CONTENT = "#ffffff"
 COLOR_BACKGROUND_SUBTLE = "#e9ecef"
 COLOR_BACKGROUND_WHITE = "#FFFFFF"
-# --- BUG FIX: Corrected typo in transparent color definition ---
 COLOR_BACKGROUND_CONTENT_TRANSPARENT = 'rgba(255,255,255,0.85)'
 COLOR_BORDER_LIGHT = "#dee2e6"
 COLOR_BORDER_MEDIUM = "#ced4da"
