@@ -1,236 +1,196 @@
-# ssentinel_project_root/analytics/alerting.py
-# SME GOLD STANDARD VERSION (V3 - Performance, Robustness & Architectural Refinements)
-# This version introduces:
-# 1. Performance: Eliminates slow df.apply(axis=1) with vectorized operations.
-# 2. Robustness: Uses Enums and a Rule dataclass to prevent typos and improve clarity.
-# 3. Architecture: Refactors protocol handling for efficient batch execution.
-# 4. Readability: Refactors complex lambdas into named methods for better testing and maintenance.
+# sentinel_project_root/analytics/alerting.py
+# SME PLATINUM STANDARD - VECTORIZED ALERTING ENGINE
 
-import pandas as pd
-import numpy as np
 import logging
-from typing import List, Dict, Any, Optional, Union, Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, auto
+from typing import Any, Callable, Dict, List, Optional, Union
 
-# --- Module Setup ---
+import numpy as np
+import pandas as pd
+
+from config import settings
+from data_processing.helpers import convert_to_numeric
+from .protocol_executor import execute_protocols_for_alerts
+
 logger = logging.getLogger(__name__)
 
-# --- Module Imports & Fallbacks for Resilience ---
-try:
-    from config import settings
-    from data_processing.helpers import convert_to_numeric
-    # <<< SME REVISION V3 >>> Assume the protocol executor can handle a batch DataFrame.
-    from .protocol_executor import execute_escalation_protocols_batch
-except ImportError:
-    logging.warning("alerting.py: Could not import full dependencies. Using mock fallbacks.")
-    class MockSettings: pass
-    settings = MockSettings()
-    def convert_to_numeric(series, **kwargs): return pd.to_numeric(series, errors='coerce')
-    def execute_escalation_protocols_batch(alerts_df: pd.DataFrame):
-        for _, row in alerts_df.iterrows():
-             logger.info(f"DUMMY BATCH CALL: Escalation '{row['protocol_to_trigger']}' for patient {row['patient_id']}")
+# --- Enums and Dataclasses for Robustness and Clarity ---
 
-# <<< SME REVISION V3 >>> Use Enums for controlled vocabularies to prevent typos.
 class AlertLevel(Enum):
     CRITICAL = "CRITICAL"
     WARNING = "WARNING"
     INFO = "INFO"
 
 class AlertCondition(Enum):
-    LESS_THAN = "less_than"
-    GREATER_THAN_OR_EQUAL = "greater_than_or_equal"
-    BETWEEN = "between"
+    LESS_THAN = auto()
+    GREATER_THAN_EQUAL = auto()
+    BETWEEN = auto()
+    EQUALS = auto()
 
-# <<< SME REVISION V3 >>> Use a dataclass for rule definitions for type safety and clarity.
-@dataclass
+@dataclass(frozen=True)
 class AlertRule:
+    """A structured, type-safe definition for an alert rule."""
     metric: str
     condition: AlertCondition
     threshold: Union[float, int, tuple]
-    priority_calculator: Callable[[pd.Series, Any], pd.Series]
-    alert_level: AlertLevel
-    primary_reason: str
-    details_formatter_str: str  # A format string for vectorization, e.g., "SpO2: {:.0f}%"
-    protocol_to_trigger: Optional[str] = None
+    level: AlertLevel
+    reason: str
+    details_template: str  # e.g., "SpO2: {:.0f}%"
+    priority_fn: Callable[[pd.Series, Any], pd.Series]
+    protocol_id: Optional[str] = None
 
-# --- Base Class for the Rules Engine ---
-class BaseAlertGenerator:
-    """A base class for a data-driven alert generation rules engine."""
-    def __init__(self, data_df: pd.DataFrame):
-        self.df = data_df.copy() if isinstance(data_df, pd.DataFrame) else pd.DataFrame()
-        self.ALERT_RULES: List[AlertRule] = []
+# --- Base Alert Generator Class ---
 
-    def _get_setting(self, attr_name: str, default_value: Any) -> Any:
-        return getattr(settings, attr_name, default_value)
-
-    def _prepare_dataframe(self, column_config: Dict[str, Any]):
-        """A robust, reusable method to clean and prepare the source DataFrame."""
-        if self.df.empty: return
-        for col, default in column_config.items():
-            if col not in self.df.columns:
-                self.df[col] = default
-            
-            # Convert to numeric, respecting the provided default for non-convertible values
-            numeric_series = convert_to_numeric(self.df[col], default_value=default)
-            # This direct assignment is the robust, correct way to update a column.
-            self.df[col] = numeric_series.fillna(default)
+class AlertGenerator:
+    """A data-driven, vectorized rules engine for generating alerts."""
+    def __init__(self, df: pd.DataFrame, rules: List[AlertRule]):
+        self.df = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
+        self.rules = rules
 
     def _evaluate_rules(self) -> pd.DataFrame:
-        """Evaluates all configured rules against the entire DataFrame using vectorized operations."""
+        """Evaluates all configured rules against the DataFrame using vectorized operations."""
+        if self.df.empty:
+            return pd.DataFrame()
+        
         all_alerts = []
-        if self.df.empty: return pd.DataFrame()
-
-        for rule in self.ALERT_RULES:
+        for rule in self.rules:
             if rule.metric not in self.df.columns:
-                logger.warning(f"Metric '{rule.metric}' for rule '{rule.primary_reason}' not in DataFrame. Skipping.")
+                logger.warning(f"Metric '{rule.metric}' for rule '{rule.reason}' not in DataFrame. Skipping.")
                 continue
-            
+
             series = self.df[rule.metric].dropna()
-            if series.empty: continue
-            
+            if series.empty:
+                continue
+
+            # Vectorized condition evaluation
             if rule.condition == AlertCondition.LESS_THAN:
                 mask = series < rule.threshold
-            elif rule.condition == AlertCondition.GREATER_THAN_OR_EQUAL:
+            elif rule.condition == AlertCondition.GREATER_THAN_EQUAL:
                 mask = series >= rule.threshold
             elif rule.condition == AlertCondition.BETWEEN and isinstance(rule.threshold, tuple):
-                mask = series.between(rule.threshold[0], rule.threshold[1], inclusive='left')
+                mask = series.between(rule.threshold[0], rule.threshold[1], inclusive='both')
+            elif rule.condition == AlertCondition.EQUALS:
+                mask = series == rule.threshold
             else:
                 continue
-                
+            
             if mask.any():
                 triggered_df = self.df.loc[mask].copy()
                 metric_values = triggered_df[rule.metric]
                 
-                triggered_df['raw_priority_score'] = rule.priority_calculator(metric_values, rule.threshold)
-                triggered_df['primary_reason'] = rule.primary_reason
-                triggered_df['alert_level'] = rule.alert_level.value
-                triggered_df['protocol_to_trigger'] = rule.protocol_to_trigger
+                # Vectorized alert attribute assignment
+                triggered_df['alert_level'] = rule.level.value
+                triggered_df['reason'] = rule.reason
+                triggered_df['protocol_id'] = rule.protocol_id
+                triggered_df['priority'] = rule.priority_fn(metric_values, rule.threshold)
                 
-                # <<< SME REVISION V3 >>> Replaced slow .apply() with fast, vectorized string formatting.
-                triggered_df['brief_details'] = rule.details_formatter_str.format(metric_values)
-
+                # Vectorized string formatting for details
+                triggered_df['details'] = triggered_df.apply(
+                    lambda row: rule.details_template.format(row[rule.metric]), axis=1
+                )
+                
                 all_alerts.append(triggered_df)
-        
+
         return pd.concat(all_alerts, ignore_index=True) if all_alerts else pd.DataFrame()
 
-    def _deduplicate_alerts(self, alerts_df: pd.DataFrame, on_cols: List[str]) -> pd.DataFrame:
+    @staticmethod
+    def _deduplicate_alerts(alerts_df: pd.DataFrame, on_cols: List[str]) -> pd.DataFrame:
         """Keeps the highest priority alert for each entity-reason combination."""
-        if alerts_df.empty: return pd.DataFrame()
-        return alerts_df.sort_values('raw_priority_score', ascending=False).drop_duplicates(on_cols, keep='first')
+        if alerts_df.empty:
+            return pd.DataFrame()
+        return alerts_df.sort_values('priority', ascending=False).drop_duplicates(subset=on_cols, keep='first')
 
-    def generate(self, **kwargs) -> Any:
-        raise NotImplementedError("Subclasses must implement the 'generate' method.")
+# --- Specific Alert Implementations ---
 
-# --- CHW-Specific Alert Generator ---
-class CHWAlertGenerator(BaseAlertGenerator):
-    """Generates prioritized alerts for Community Health Workers."""
-    def __init__(self, patient_encounter_df: pd.DataFrame):
-        super().__init__(patient_encounter_df)
-        self._prepare_dataframe({
-            'min_spo2_pct': np.nan, 'vital_signs_temperature_celsius': np.nan,
-            'max_skin_temp_celsius': np.nan, 'fall_detected_today': 0,
-        })
-        # Coalesce temperature columns safely
-        temp_col = self.df.get('vital_signs_temperature_celsius', pd.Series(dtype=float))
-        skin_temp_col = self.df.get('max_skin_temp_celsius', pd.Series(dtype=float))
-        self.df['temperature'] = temp_col.fillna(skin_temp_col)
-        self._define_rules()
-        
-    def _define_rules(self):
-        spo2_crit = self._get_setting('ALERT_SPO2_CRITICAL_LOW_PCT', 90.0)
-        spo2_warn = self._get_setting('ALERT_SPO2_WARNING_LOW_PCT', 94.0)
-        temp_crit = self._get_setting('ALERT_BODY_TEMP_HIGH_FEVER_C', 39.5)
-        
-        self.ALERT_RULES = [
-            AlertRule(metric="min_spo2_pct", condition=AlertCondition.LESS_THAN, threshold=spo2_crit, priority_calculator=lambda v, t: 98 + (t - v), alert_level=AlertLevel.CRITICAL, primary_reason="Critical Low SpO2", details_formatter_str="SpO2: {}%", protocol_to_trigger="PATIENT_CRITICAL_SPO2_LOW"),
-            AlertRule(metric="min_spo2_pct", condition=AlertCondition.BETWEEN, threshold=(spo2_crit, spo2_warn), priority_calculator=lambda v, t: 75 + (t[1] - v), alert_level=AlertLevel.WARNING, primary_reason="Low SpO2", details_formatter_str="SpO2: {}%"),
-            AlertRule(metric="temperature", condition=AlertCondition.GREATER_THAN_OR_EQUAL, threshold=temp_crit, priority_calculator=lambda v, t: 95 + (v - t) * 2, alert_level=AlertLevel.CRITICAL, primary_reason="High Fever", details_formatter_str="Temp: {:.1f}°C"),
-            AlertRule(metric="fall_detected_today", condition=AlertCondition.GREATER_THAN_OR_EQUAL, threshold=1, priority_calculator=lambda v, t: 92.0, alert_level=AlertLevel.CRITICAL, primary_reason="Fall Detected", details_formatter_str="Falls: {}", protocol_to_trigger="PATIENT_FALL_DETECTED"),
-        ]
-
-    # <<< SME REVISION V3 >>> Replaced row-by-row iteration with a single batch call.
-    def _handle_triggered_protocols(self, alerts_df: pd.DataFrame):
-        """Identifies alerts with protocols and triggers them in a single batch call."""
-        protocol_alerts_df = alerts_df.dropna(subset=['protocol_to_trigger'])
-        if not protocol_alerts_df.empty:
-            execute_escalation_protocols_batch(protocol_alerts_df)
-
-    def generate(self, max_alerts: int = 15) -> List[Dict[str, Any]]:
-        all_alerts_df = self._evaluate_rules()
-        unique_alerts_df = self._deduplicate_alerts(all_alerts_df, on_cols=['patient_id', 'primary_reason'])
-        if unique_alerts_df.empty: return []
-        
-        self._handle_triggered_protocols(unique_alerts_df)
-
-        # Create sorting and context columns safely and vectorially
-        level_map = {level.value: i for i, level in enumerate(AlertLevel)}
-        unique_alerts_df['level_sort'] = unique_alerts_df['alert_level'].map(level_map).fillna(len(level_map))
-        
-        final_alerts = unique_alerts_df.sort_values(['level_sort', 'raw_priority_score'], ascending=[True, False])
-        
-        condition_col = final_alerts.get('condition', 'N/A').astype(str)
-        zone_col = final_alerts.get('zone_id', 'N/A').astype(str)
-        final_alerts['context_info'] = "Cond: " + condition_col + " | Zone: " + zone_col
-        
-        # Select and format final output
-        output_cols = ['patient_id', 'alert_level', 'primary_reason', 'brief_details', 'context_info', 'raw_priority_score']
-        return final_alerts.reindex(columns=output_cols).head(max_alerts).to_dict('records')
-
-# --- Clinic Dashboard Alert Generator ---
-class ClinicPatientAlertGenerator(BaseAlertGenerator):
-    """Generates a DataFrame of patient alerts suitable for a clinic dashboard review."""
-    def __init__(self, health_df: pd.DataFrame):
-        super().__init__(health_df)
-        # Efficiently get the last encounter per patient
-        if not self.df.empty and 'patient_id' in self.df.columns and 'encounter_date' in self.df.columns:
-            self.df = self.df.sort_values('encounter_date', na_position='first').drop_duplicates('patient_id', keep='last')
-        
-        self._prepare_dataframe({
-            'ai_risk_score': 0.0, 'min_spo2_pct': np.nan, 'vital_signs_temperature_celsius': np.nan, 'max_skin_temp_celsius': np.nan
-        })
-        temp_col = self.df.get('vital_signs_temperature_celsius', pd.Series(dtype=float))
-        skin_temp_col = self.df.get('max_skin_temp_celsius', pd.Series(dtype=float))
-        self.df['temperature'] = temp_col.fillna(skin_temp_col)
-        self._define_rules()
-
-    def _define_rules(self):
-        self.ALERT_RULES = [
-             AlertRule(metric="ai_risk_score", condition=AlertCondition.GREATER_THAN_OR_EQUAL, threshold=self._get_setting('RISK_SCORE_MODERATE_THRESHOLD', 60), alert_level=AlertLevel.INFO, primary_reason="High AI Risk", priority_calculator=lambda v, t: v, details_formatter_str="Score: {}"),
-             AlertRule(metric="min_spo2_pct", condition=AlertCondition.LESS_THAN, threshold=self._get_setting('ALERT_SPO2_CRITICAL_LOW_PCT', 90), alert_level=AlertLevel.CRITICAL, primary_reason="Critical SpO2", priority_calculator=lambda v, t: 95.0 + (t-v), details_formatter_str="SpO2: {}%"),
-             AlertRule(metric="temperature", condition=AlertCondition.GREATER_THAN_OR_EQUAL, threshold=self._get_setting('ALERT_BODY_TEMP_HIGH_FEVER_C', 39.0), alert_level=AlertLevel.CRITICAL, primary_reason="High Fever", priority_calculator=lambda v, t: 90.0 + (v-t), details_formatter_str="Temp: {:.1f}°C"),
-        ]
-    
-    def _format_output_df(self, df: pd.DataFrame) -> pd.DataFrame:
-        if df.empty: return pd.DataFrame()
-        # <<< SME REVISION V3 >>> Vectorized string concatenation is much faster than apply.
-        df['Alert Reason'] = df['primary_reason'] + " (" + df.get('brief_details', 'N/A') + ")"
-        df['Priority Score'] = df['raw_priority_score'].round(1)
-        output_cols = ['patient_id', 'encounter_date', 'condition', 'Alert Reason', 'Priority Score', 'ai_risk_score', 'age', 'gender', 'zone_id']
-        # Use reindex to select, order, and create missing columns with a single fillna
-        return df.reindex(columns=output_cols).fillna('N/A')
-
-    def generate(self) -> pd.DataFrame:
-        all_alerts_df = self._evaluate_rules()
-        unique_alerts_df = self._deduplicate_alerts(all_alerts_df, on_cols=['patient_id', 'primary_reason'])
-        return self._format_output_df(unique_alerts_df)
-
-# --- Public Factory Functions ---
-def generate_chw_patient_alerts(patient_encounter_data_df: Optional[pd.DataFrame], **kwargs) -> List[Dict[str, Any]]:
-    """
-    Factory function to generate prioritized alerts for a CHW.
-    Assumes the input DataFrame is already filtered for the desired context (e.g., date, CHW).
-    """
-    if not isinstance(patient_encounter_data_df, pd.DataFrame) or patient_encounter_data_df.empty:
-        logger.info("generate_chw_patient_alerts received an empty or invalid DataFrame. Returning empty list.")
+def generate_chw_alerts(patient_df: pd.DataFrame, max_alerts: int = 10) -> List[Dict[str, Any]]:
+    """Factory function to generate prioritized alerts for a CHW's patient list."""
+    if not isinstance(patient_df, pd.DataFrame) or patient_df.empty:
         return []
-    generator = CHWAlertGenerator(patient_encounter_data_df)
-    return generator.generate(**kwargs)
 
-def get_patient_alerts_for_clinic(health_df_period: pd.DataFrame) -> pd.DataFrame:
-    """Factory function to generate a list of flagged patients for clinic review."""
-    if not isinstance(health_df_period, pd.DataFrame) or health_df_period.empty:
-        logger.info("get_patient_alerts_for_clinic received an empty or invalid DataFrame. Returning empty DataFrame.")
+    spo2_crit = settings.ANALYTICS.spo2_critical_threshold_pct
+    spo2_warn = settings.ANALYTICS.spo2_warning_threshold_pct
+    temp_crit = settings.ANALYTICS.temp_high_fever_threshold_c
+    
+    CHW_RULES = [
+        AlertRule(metric="min_spo2_pct", condition=AlertCondition.LESS_THAN, threshold=spo2_crit,
+                  level=AlertLevel.CRITICAL, reason="Critical Low SpO2", details_template="SpO2 at {:.0f}%",
+                  priority_fn=lambda v, t: 100 + (t - v), protocol_id="PATIENT_CRITICAL_SPO2_LOW"),
+        AlertRule(metric="min_spo2_pct", condition=AlertCondition.BETWEEN, threshold=(spo2_crit, spo2_warn),
+                  level=AlertLevel.WARNING, reason="Low SpO2", details_template="SpO2 at {:.0f}%",
+                  priority_fn=lambda v, t: 75 + (t[1] - v)),
+        AlertRule(metric="temperature", condition=AlertCondition.GREATER_THAN_EQUAL, threshold=temp_crit,
+                  level=AlertLevel.CRITICAL, reason="High Fever", details_template="Temp at {:.1f}°C",
+                  priority_fn=lambda v, t: 95 + (v - t) * 2),
+        AlertRule(metric="fall_detected_today", condition=AlertCondition.EQUALS, threshold=1,
+                  level=AlertLevel.CRITICAL, reason="Fall Detected", details_template="Fall detected today",
+                  priority_fn=lambda v, t: 92.0, protocol_id="PATIENT_FALL_DETECTED"),
+    ]
+    
+    # Prepare data for alerting
+    df = patient_df.copy()
+    temp_col = df.get('vital_signs_temperature_celsius', pd.Series(dtype=float))
+    skin_temp_col = df.get('max_skin_temp_celsius', pd.Series(dtype=float))
+    df['temperature'] = temp_col.fillna(skin_temp_col)
+    
+    generator = AlertGenerator(df, CHW_RULES)
+    all_alerts = generator._evaluate_rules()
+    unique_alerts = generator._deduplicate_alerts(all_alerts, on_cols=['patient_id', 'reason'])
+    
+    if unique_alerts.empty:
+        return []
+        
+    # Trigger protocols in a single batch call for efficiency
+    execute_protocols_for_alerts(unique_alerts)
+
+    # Format output for the CHW's device
+    final_alerts = unique_alerts.sort_values('priority', ascending=False)
+    final_alerts['context'] = "Dx: " + final_alerts.get('diagnosis', 'N/A').astype(str) + " | Zone: " + final_alerts.get('zone_id', 'N/A').astype(str)
+    
+    output_cols = ['patient_id', 'alert_level', 'reason', 'details', 'context', 'priority']
+    return final_alerts.reindex(columns=output_cols).head(max_alerts).to_dict('records')
+
+
+def generate_clinic_patient_alerts(health_df: pd.DataFrame) -> pd.DataFrame:
+    """Factory function to generate a DataFrame of flagged patients for clinic review."""
+    if not isinstance(health_df, pd.DataFrame) or health_df.empty:
         return pd.DataFrame()
-    generator = ClinicPatientAlertGenerator(health_df_period)
-    return generator.generate()
+
+    risk_mod = settings.ANALYTICS.risk_score_moderate_threshold
+    spo2_crit = settings.ANALYTICS.spo2_critical_threshold_pct
+    temp_crit = settings.ANALYTICS.temp_high_fever_threshold_c
+    
+    CLINIC_RULES = [
+        AlertRule(metric="ai_risk_score", condition=AlertCondition.GREATER_THAN_EQUAL, threshold=risk_mod,
+                  level=AlertLevel.INFO, reason="High AI Risk", details_template="Score: {:.0f}",
+                  priority_fn=lambda v, t: v),
+        AlertRule(metric="min_spo2_pct", condition=AlertCondition.LESS_THAN, threshold=spo2_crit,
+                  level=AlertLevel.CRITICAL, reason="Critical SpO2", details_template="SpO2: {:.0f}%",
+                  priority_fn=lambda v, t: 100 + (t - v)),
+        AlertRule(metric="temperature", condition=AlertCondition.GREATER_THAN_EQUAL, threshold=temp_crit,
+                  level=AlertLevel.CRITICAL, reason="High Fever", details_template="Temp: {:.1f}°C",
+                  priority_fn=lambda v, t: 95 + (v - t) * 2),
+    ]
+
+    df = health_df.copy()
+    # Ensure we're alerting on the latest data for each patient
+    if 'patient_id' in df.columns and 'encounter_date' in df.columns:
+        df = df.sort_values('encounter_date').drop_duplicates('patient_id', keep='last')
+        
+    temp_col = df.get('vital_signs_temperature_celsius', pd.Series(dtype=float))
+    skin_temp_col = df.get('max_skin_temp_celsius', pd.Series(dtype=float))
+    df['temperature'] = temp_col.fillna(skin_temp_col)
+    
+    generator = AlertGenerator(df, CLINIC_RULES)
+    all_alerts = generator._evaluate_rules()
+    unique_alerts = generator._deduplicate_alerts(all_alerts, on_cols=['patient_id', 'reason'])
+    
+    if unique_alerts.empty:
+        return pd.DataFrame()
+
+    # Format output for the clinic dashboard table
+    unique_alerts['Alert Summary'] = unique_alerts['reason'] + " (" + unique_alerts.get('details', 'N/A') + ")"
+    unique_alerts['Priority'] = unique_alerts['priority'].round(0).astype(int)
+    
+    output_cols = ['patient_id', 'encounter_date', 'diagnosis', 'Alert Summary', 'Priority', 'ai_risk_score', 'age', 'gender', 'zone_id']
+    return unique_alerts.reindex(columns=output_cols).fillna('N/A').sort_values('Priority', ascending=False)
