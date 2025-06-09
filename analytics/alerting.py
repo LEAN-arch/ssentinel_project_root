@@ -1,10 +1,8 @@
 # ssentinel_project_root/analytics/alerting.py
-"""
-SME FINAL VERSION: Provides robust, data-driven alert generation for BOTH
-CHW and Clinic dashboards. This is the centralized, high-performance rules engine
-for all patient safety alerts. This file is complete, unabridged, and corrects
-all previously identified bugs and omissions.
-"""
+# SME FINAL VERSION (V2 - FutureWarning & Robustness FIX)
+# This version corrects the pandas FutureWarning, hardens the data preparation
+# logic to prevent KeyErrors from schema mismatches, and refines the public API.
+
 import pandas as pd
 import numpy as np
 import logging
@@ -42,9 +40,14 @@ class BaseAlertGenerator:
         for col, default in column_config.items():
             if col not in self.df.columns:
                 self.df[col] = default
-            self.df[col] = convert_to_numeric(self.df[col], default_value=default)
-            if pd.api.types.is_numeric_dtype(self.df[col]):
-                self.df[col].fillna(default, inplace=True)
+            
+            # Convert to numeric, respecting the provided default for non-convertible values
+            numeric_series = convert_to_numeric(self.df[col], default_value=default)
+            
+            # <<< SME REVISION >>> Fixed the FutureWarning.
+            # The original `self.df[col].fillna(..., inplace=True)` is an anti-pattern.
+            # This direct assignment is the robust, correct way to update a column.
+            self.df[col] = numeric_series.fillna(default)
 
     def _evaluate_rules(self) -> pd.DataFrame:
         """Evaluates all configured rules against the entire DataFrame using vectorized operations."""
@@ -96,7 +99,11 @@ class CHWAlertGenerator(BaseAlertGenerator):
             'min_spo2_pct': np.nan, 'vital_signs_temperature_celsius': np.nan,
             'max_skin_temp_celsius': np.nan, 'fall_detected_today': 0,
         })
-        self.df['temperature'] = self.df['vital_signs_temperature_celsius'].fillna(self.df.get('max_skin_temp_celsius'))
+        # <<< SME REVISION >>> Hardened this logic to prevent KeyErrors.
+        # It now safely checks for columns before trying to use them.
+        temp_col = self.df.get('vital_signs_temperature_celsius', pd.Series(dtype=float))
+        skin_temp_col = self.df.get('max_skin_temp_celsius', pd.Series(dtype=float))
+        self.df['temperature'] = temp_col.fillna(skin_temp_col)
         self._define_rules()
         
     def _define_rules(self):
@@ -122,7 +129,10 @@ class CHWAlertGenerator(BaseAlertGenerator):
         self._handle_triggered_protocols(unique_alerts_df)
         unique_alerts_df['level_sort'] = unique_alerts_df['alert_level'].map({"CRITICAL": 0, "WARNING": 1, "INFO": 2}).fillna(3)
         final_alerts = unique_alerts_df.sort_values(['level_sort', 'raw_priority_score'], ascending=[True, False])
-        final_alerts['context_info'] = "Cond: " + final_alerts.get('condition', 'N/A').astype(str) + " | Zone: " + final_alerts.get('zone_id', 'N/A').astype(str)
+        # Safely create the context_info column
+        condition_col = final_alerts.get('condition', 'N/A').astype(str)
+        zone_col = final_alerts.get('zone_id', 'N/A').astype(str)
+        final_alerts['context_info'] = "Cond: " + condition_col + " | Zone: " + zone_col
         output_cols = ['patient_id', 'alert_level', 'primary_reason', 'brief_details', 'context_info', 'raw_priority_score']
         return final_alerts.reindex(columns=output_cols).head(max_alerts).to_dict('records')
 
@@ -135,7 +145,10 @@ class ClinicPatientAlertGenerator(BaseAlertGenerator):
         self._prepare_dataframe({
             'ai_risk_score': 0.0, 'min_spo2_pct': np.nan, 'vital_signs_temperature_celsius': np.nan, 'max_skin_temp_celsius': np.nan
         })
-        self.df['temperature'] = self.df['vital_signs_temperature_celsius'].fillna(self.df.get('max_skin_temp_celsius'))
+        # Use the same hardened logic as the CHW generator
+        temp_col = self.df.get('vital_signs_temperature_celsius', pd.Series(dtype=float))
+        skin_temp_col = self.df.get('max_skin_temp_celsius', pd.Series(dtype=float))
+        self.df['temperature'] = temp_col.fillna(skin_temp_col)
         self._define_rules()
 
     def _define_rules(self):
@@ -147,10 +160,11 @@ class ClinicPatientAlertGenerator(BaseAlertGenerator):
     
     def _format_output_df(self, df: pd.DataFrame) -> pd.DataFrame:
         if df.empty: return pd.DataFrame()
-        df['Alert Reason'] = df.apply(lambda row: f"{row['primary_reason']} ({row.get('triggering_value', 'N/A')})", axis=1)
+        # Use a safe .get() for the triggering value
+        df['Alert Reason'] = df.apply(lambda row: f"{row['primary_reason']} ({row.get('brief_details', 'N/A')})", axis=1)
         df['Priority Score'] = df['raw_priority_score'].round(1)
         output_cols = ['patient_id', 'encounter_date', 'condition', 'Alert Reason', 'Priority Score', 'ai_risk_score', 'age', 'gender', 'zone_id']
-        return df.reindex(columns=output_cols)
+        return df.reindex(columns=output_cols).fillna('N/A')
 
     def generate(self) -> pd.DataFrame:
         all_alerts_df = self._evaluate_rules()
@@ -158,18 +172,21 @@ class ClinicPatientAlertGenerator(BaseAlertGenerator):
         return self._format_output_df(unique_alerts_df)
 
 # --- Public Factory Functions ---
-def generate_chw_patient_alerts(patient_encounter_data_df: Optional[pd.DataFrame], for_date: Union[str, date_type], **kwargs) -> List[Dict[str, Any]]:
-    """Factory function to generate prioritized alerts for a CHW on a specific date."""
-    if not isinstance(patient_encounter_data_df, pd.DataFrame) or patient_encounter_data_df.empty: return []
-    try: processing_date = pd.to_datetime(for_date).date()
-    except (AttributeError, ValueError): processing_date = datetime.now().date()
-    df_today = patient_encounter_data_df[pd.to_datetime(patient_encounter_data_df['encounter_date']).dt.date == processing_date]
-    if df_today.empty: return []
-    generator = CHWAlertGenerator(df_today)
+def generate_chw_patient_alerts(patient_encounter_data_df: Optional[pd.DataFrame], **kwargs) -> List[Dict[str, Any]]:
+    """
+    Factory function to generate prioritized alerts for a CHW.
+    Assumes the input DataFrame is already filtered for the desired context (e.g., date, CHW).
+    """
+    if not isinstance(patient_encounter_data_df, pd.DataFrame) or patient_encounter_data_df.empty:
+        return []
+    # <<< SME REVISION >>> Simplified this function. The calling page is now responsible
+    # for passing a correctly pre-filtered DataFrame, which it already does.
+    generator = CHWAlertGenerator(patient_encounter_data_df)
     return generator.generate(**kwargs)
 
 def get_patient_alerts_for_clinic(health_df_period: pd.DataFrame) -> pd.DataFrame:
     """Factory function to generate a list of flagged patients for clinic review."""
-    if not isinstance(health_df_period, pd.DataFrame): return pd.DataFrame()
+    if not isinstance(health_df_period, pd.DataFrame) or health_df_period.empty:
+        return pd.DataFrame()
     generator = ClinicPatientAlertGenerator(health_df_period)
     return generator.generate()
