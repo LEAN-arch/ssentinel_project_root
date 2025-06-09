@@ -1,113 +1,30 @@
-# sentinel_project_root/pages/05_glossary_page.py
-# Glossary of Terms for the "Sentinel Health Co-Pilot" System.
+# sentinel_project_root/pages/05_System_Glossary.py
+# SME PLATINUM STANDARD - GLOSSARY PAGE
+
+import html
+import logging
 
 import streamlit as st
-import logging
-from typing import Optional, Any, Union, Dict, List 
-import html 
-from pathlib import Path 
-
 from config import settings
 
+# --- Page Setup ---
+st.set_page_config(page_title="Glossary", page_icon="📜", layout="wide")
 logger = logging.getLogger(__name__)
 
-# --- Page Configuration (Call this early) ---
-try:
-    page_icon_value = "📜" 
-    # CORRECTED: Use APP_LOGO_SMALL_PATH, which is defined in settings.py, instead of the non-existent APP_FAVICON_PATH.
-    if hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'APP_LOGO_SMALL_PATH'):
-        favicon_path = Path(settings.PROJECT_ROOT_DIR) / settings.APP_LOGO_SMALL_PATH
-        if favicon_path.is_file():
-            page_icon_value = str(favicon_path)
-        else:
-            logger.warning(f"Favicon for Glossary page not found: {favicon_path}")
-
-    page_layout_value = "wide" 
-    if hasattr(settings, 'APP_LAYOUT'):
-        page_layout_value = settings.APP_LAYOUT
-        
-    st.set_page_config(
-        page_title=f"Glossary - {settings.APP_NAME if hasattr(settings, 'APP_NAME') else 'App'}",
-        page_icon=page_icon_value,
-        layout=page_layout_value
-    )
-except Exception as e_page_config:
-    logger.error(f"Error applying page configuration for Glossary page: {e_page_config}", exc_info=True)
-    st.set_page_config(page_title="Glossary", page_icon="📜", layout="wide") 
-
-# --- Sidebar ---
-st.sidebar.markdown("---") 
-try:
-    if hasattr(settings, 'PROJECT_ROOT_DIR') and hasattr(settings, 'APP_LOGO_SMALL_PATH'):
-        project_root_path = Path(settings.PROJECT_ROOT_DIR)
-        logo_path_sidebar = project_root_path / settings.APP_LOGO_SMALL_PATH
-
-        if logo_path_sidebar.is_file():
-            st.sidebar.image(str(logo_path_sidebar.resolve()), width=230) # LOGO WIDTH SET TO 230
-        else:
-            logger.warning(f"Sidebar logo for Glossary page not found at resolved path: {logo_path_sidebar.resolve()}")
-            st.sidebar.caption("Logo not found.")
-    else:
-        logger.warning("PROJECT_ROOT_DIR or APP_LOGO_SMALL_PATH missing in settings for Glossary sidebar logo.")
-        st.sidebar.caption("Logo config missing.")
-except Exception as e_logo_glossary: 
-    logger.error(f"Unexpected error displaying Glossary sidebar logo: {e_logo_glossary}", exc_info=True)
-    st.sidebar.caption("Error loading logo.")
-st.sidebar.markdown("---") 
-# st.sidebar.header("Sections")
-# st.sidebar.markdown("[System Concepts](#system-architecture-core-concepts)")
-# st.sidebar.markdown("[Clinical & Operational](#clinical-epidemiological-operational-terms)")
-# st.sidebar.markdown("[Technical & Data](#technical-data-platform-terms)")
-
-
-# --- Main Page Content ---
-st.title(f"📜 {settings.APP_NAME if hasattr(settings, 'APP_NAME') else 'Sentinel Co-Pilot'} - Glossary of Terms") # Added default for APP_NAME
-st.markdown(
-    "Definitions for common terms, abbreviations, metrics, and system-specific concepts "
-    "used throughout the Sentinel Health Co-Pilot platform."
-)
-st.divider()
-
-def _display_glossary_term(
-    term_name: str,
-    definition_text: str,
-    related_config_variable_name: Optional[str] = None
-) -> None:
-    """ Displays a glossary term and its definition in a standardized format. """
-    st.markdown(f"#### {html.escape(term_name)}") 
-    st.markdown(f"*{html.escape(definition_text)}*") 
+# --- Helper Function ---
+def display_term(term: str, definition: str, config_key: str = None):
+    st.markdown(f"#### {html.escape(term)}")
+    st.markdown(f"*{html.escape(definition)}*")
     
-    if related_config_variable_name:
-        config_value_display: Any = None 
-        try:
-            config_value_display = getattr(settings, related_config_variable_name, None)
-        except AttributeError: 
-            logger.warning(f"AttributeError accessing settings.{related_config_variable_name}")
-            pass 
-
-        display_val_str = f"(config '{html.escape(related_config_variable_name)}' not found or value is None)"
-        if config_value_display is not None:
-            try:
-                if isinstance(config_value_display, list):
-                    preview_list = [str(item) for item in config_value_display[:min(5, len(config_value_display))]]
-                    display_val_str = ", ".join(preview_list)
-                    if len(config_value_display) > 5: display_val_str += ", ..."
-                elif isinstance(config_value_display, dict):
-                    dict_items_preview = list(config_value_display.items())[:min(2, len(config_value_display))]
-                    preview_dict_str_parts = [f"{repr(k)}: {repr(v)}" for k, v in dict_items_preview]
-                    display_val_str = "{ " + ", ".join(preview_dict_str_parts) + " }"
-                    if len(config_value_display) > 2: 
-                        display_val_str = display_val_str[:-1] + ", ...}" 
-                else:
-                    display_val_str = str(config_value_display)
-                
-                if len(display_val_str) > 150: 
-                    display_val_str = display_val_str[:147] + "..."
-            except Exception as e_format_config: 
-                logger.error(f"Error formatting config value for {related_config_variable_name}: {e_format_config}")
-                display_val_str = "(Error formatting value)"
-        
-        st.caption(f"*(Related config: `settings.{html.escape(related_config_variable_name)}` = `{html.escape(display_val_str)}`)*")
+    if config_key and hasattr(settings, config_key):
+        value = getattr(settings, config_key, "Not Found")
+        if isinstance(value, (list, dict)) and len(str(value)) > 100:
+            value_str = f"{str(value)[:100]}..."
+        else:
+            value_str = str(value)
+        st.caption(f"`settings.{config_key}` = `{html.escape(value_str)}`")
+    elif config_key:
+        st.caption(f"`settings.{config_key}` (Not found in current config)")
     st.markdown("---")
 
 
@@ -156,21 +73,6 @@ _display_glossary_term(
     "Data synchronization strategy where devices transfer data to higher tiers only when a viable, low-cost, stable communication channel is available (e.g., Bluetooth, local Wi-Fi, QR).",
     "EDGE_DATA_SYNC_PROTOCOLS_SUPPORTED" 
 )
-
-st.header("🩺 Clinical, Epidemiological & Operational Terms", anchor="clinical-epidemiological-operational-terms")
-risk_score_high_setting = settings.RISK_SCORE_HIGH_THRESHOLD if hasattr(settings, 'RISK_SCORE_HIGH_THRESHOLD') else 'N/A'
-fatigue_high_setting = settings.FATIGUE_INDEX_HIGH_THRESHOLD if hasattr(settings, 'FATIGUE_INDEX_HIGH_THRESHOLD') else 'N/A'
-heat_risk_setting = settings.ALERT_AMBIENT_HEAT_INDEX_RISK_C if hasattr(settings, 'ALERT_AMBIENT_HEAT_INDEX_RISK_C') else 'N/A'
-heat_danger_setting = settings.ALERT_AMBIENT_HEAT_INDEX_DANGER_C if hasattr(settings, 'ALERT_AMBIENT_HEAT_INDEX_DANGER_C') else 'N/A'
-key_condition_example = (settings.KEY_CONDITIONS_FOR_ACTION[0] 
-                         if hasattr(settings, 'KEY_CONDITIONS_FOR_ACTION') and settings.KEY_CONDITIONS_FOR_ACTION 
-                         else 'TB')
-facility_coverage_low_setting = (settings.DISTRICT_INTERVENTION_FACILITY_COVERAGE_LOW_PCT 
-                                 if hasattr(settings, 'DISTRICT_INTERVENTION_FACILITY_COVERAGE_LOW_PCT') else 'N/A')
-fatigue_moderate_setting = settings.FATIGUE_INDEX_MODERATE_THRESHOLD if hasattr(settings, 'FATIGUE_INDEX_MODERATE_THRESHOLD') else 'N/A'
-hrv_low_setting = settings.STRESS_HRV_LOW_THRESHOLD_MS if hasattr(settings, 'STRESS_HRV_LOW_THRESHOLD_MS') else 'N/A'
-spo2_warn_low_setting = settings.ALERT_SPO2_WARNING_LOW_PCT if hasattr(settings, 'ALERT_SPO2_WARNING_LOW_PCT') else 'N/A'
-tat_target_setting = settings.TARGET_TEST_TURNAROUND_DAYS if hasattr(settings, 'TARGET_TEST_TURNAROUND_DAYS') else 'N/A'
 
 _display_glossary_term(
     "AI Risk Score (Patient/Worker)", 
@@ -272,10 +174,25 @@ _display_glossary_term(
     "EDGE_MODEL_VITALS_DETERIORATION" 
 )
 
-st.divider()
-footer_text = settings.APP_FOOTER_TEXT if hasattr(settings, 'APP_FOOTER_TEXT') else "Sentinel Health Co-Pilot."
-st.caption(footer_text)
+# --- Filter and Display ---
+query = search_query.lower()
+if query:
+    filtered_terms = [
+        t for t in GLOSSARY_TERMS 
+        if query in t['term'].lower() or query in t['definition'].lower() or (t.get('config_key') and query in t['config_key'].lower())
+    ]
+else:
+    filtered_terms = GLOSSARY_TERMS
 
-app_name_log = settings.APP_NAME if hasattr(settings, 'APP_NAME') else 'App'
-app_version_log = settings.APP_VERSION if hasattr(settings, 'APP_VERSION') else 'N/A'
-logger.info(f"Glossary page for {app_name_log} (v{app_version_log}) loaded.")
+if not filtered_terms and query:
+    st.warning(f"No results found for '{html.escape(query)}'.")
+
+categories = sorted(list(set(t['category'] for t in filtered_terms)))
+for category in categories:
+    st.header(category)
+    for term in filtered_terms:
+        if term['category'] == category:
+            display_term(term['term'], term['definition'], term.get('config_key'))
+
+st.divider()
+st.caption(settings.APP_FOOTER_TEXT)
