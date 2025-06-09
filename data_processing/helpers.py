@@ -7,7 +7,7 @@ import logging
 import re
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Type, Union
 
 import numpy as np
 import pandas as pd
@@ -40,7 +40,6 @@ def convert_to_numeric(
     if pd.notna(default_value):
         numeric_series = numeric_series.fillna(default_value)
     
-    # Use pandas nullable integer type to support NaNs if necessary
     if target_type is int:
         if numeric_series.isnull().any():
             numeric_series = numeric_series.astype(pd.Int64Dtype())
@@ -68,7 +67,6 @@ def robust_json_load(file_path: Union[str, Path]) -> Optional[Union[Dict, List]]
 
 def hash_dataframe(df: pd.DataFrame) -> str:
     """Creates a consistent SHA256 hash for a DataFrame, suitable for caching."""
-    # Using pandas' built-in, C-optimized hasher is the most reliable method.
     return hashlib.sha256(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
 
 
@@ -78,15 +76,6 @@ class DataPipeline:
     """
     A fluent interface for applying a sequence of data processing operations.
     Enables expressive, readable, and chainable cleaning pipelines.
-
-    Usage:
-        processed_df = (
-            DataPipeline(raw_df)
-            .clean_column_names()
-            .convert_date_columns(['event_date'])
-            .standardize_missing_values({'age': 0, 'notes': 'unknown'})
-            .get_dataframe()
-        )
     """
     def __init__(self, df: pd.DataFrame):
         if not isinstance(df, pd.DataFrame):
@@ -110,16 +99,15 @@ class DataPipeline:
                 .str.replace(r'[\s\W]+', '_', regex=True)
                 .str.strip('_'))
         
-        # Handle duplicated column names after cleaning
         if cols.duplicated().any():
-            counts = Counter(cols)
+            counts = Counter()
             new_cols = []
-            for i, col in enumerate(cols):
-                if counts[col] > 1:
-                    suffix = cols[:i].tolist().count(col)
-                    new_cols.append(f"{col}_{suffix + 1}")
+            for name in cols:
+                if counts[name] > 0:
+                    new_cols.append(f"{name}_{counts[name]}")
                 else:
-                    new_cols.append(col)
+                    new_cols.append(name)
+                counts[name] += 1
             self.df.columns = new_cols
         else:
             self.df.columns = cols
@@ -134,7 +122,7 @@ class DataPipeline:
         for col, default_val in column_defaults.items():
             if col in self.df.columns:
                 series = self.df[col]
-                if pd.api.types.is_numeric_dtype(type(default_val)):
+                if isinstance(default_val, (int, float)):
                     target_type = int if isinstance(default_val, int) else float
                     self.df[col] = convert_to_numeric(series, target_type, default_val)
                 else:
@@ -163,7 +151,7 @@ class DataPipeline:
                     logger.warning(f"Could not cast column '{col}' to {dtype}. Skipping. Error: {e}")
         return self
 
-    def pipe(self, func: callable, *args, **kwargs) -> 'DataPipeline':
+    def pipe(self, func: Callable, *args, **kwargs) -> 'DataPipeline':
         """Applies a custom function to the DataFrame in the pipeline."""
         self.df = func(self.df, *args, **kwargs)
         return self
