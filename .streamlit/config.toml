@@ -3,59 +3,39 @@
 # This file centralizes server, theme, and application behavior settings.
 
 # --- Global Configuration ---
-# Settings that apply to the Streamlit application globally.
 [global]
 # Set to false to disable telemetry data collection by Streamlit.
 gatherUsageStats = false
+# Set to true to run the garbage collector after every script execution.
+# Can help with memory management in long-running apps.
+runOnSave = true 
 
 # --- Server Configuration ---
-# Controls the behavior of the Streamlit server process.
 [server]
-# The port the server will listen on. Default is 8501.
 port = 8501
-
-# If true, will not open a browser window on start. Ideal for server/cloud deployments.
 headless = true
-
-# Enables Cross-Origin Resource Sharing (CORS) protection. Default is true.
-# Only disable if you understand the security implications.
-enableCORS = true
-
-# Enables XSRF (Cross-Site Request Forgery) protection. Default is true.
-# It is highly recommended to keep this enabled for security.
+enableCORS = false # Set to false for Streamlit Cloud deployment compatibility
 enableXsrfProtection = true
+maxUploadSize = 100
 
-# The maximum size, in megabytes, for file uploads.
-maxUploadSize = 50
-
-# [SOLUTION FOR "inotify watch limit reached" ERROR]
-# Uncomment the line below to disable the file watcher if you are in an
-# environment with a low inotify limit and cannot change the OS setting.
+# [SME Recommendation for Stability]
+# Uncomment the line below to disable the file watcher. This prevents errors
+# like "inotify watch limit reached" in containerized or certain Linux
+# environments and can improve performance by preventing unnecessary reruns.
 # fileWatcherType = "none"
 
-
-# --- Runner Configuration ---
-# Controls how Streamlit executes the application script.
-[runner]
-# If true, the script will re-run automatically whenever a source file is saved.
-# This is linked to the fileWatcherType setting in the [server] section.
-runOnSave = true
-
-
 # --- Theme Configuration ---
-# Defines the base visual theme for the application.
-# These values can be overridden by a custom CSS file.
+# Defines the base visual theme. These values are the source of truth,
+# mirrored in config/settings.py and assets/style_web_reports.css for consistency.
 [theme]
-primaryColor = "#1976D2"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#f8f9fa"
-textColor = "#343a40"
-font = "sans serif"
-
+primaryColor="#1976D2"
+backgroundColor="#F8F9FA"
+secondaryBackgroundColor="#FFFFFF"
+textColor="#343A40"
+font="sans serif"
 
 # --- Mapbox Configuration ---
 # Required for using custom Mapbox styles in st.map().
+# This token is managed via environment variables in the application's config.
 [mapbox]
-# To use Mapbox maps, sign up for a free account at https://mapbox.com,
-# get a public access token, and uncomment the line below.
-# token = "YOUR_MAPBOX_PUBLIC_ACCESS_TOKEN"
+# token = "SET_VIA_SENTINEL_MAPBOX_TOKEN_ENV_VAR"
