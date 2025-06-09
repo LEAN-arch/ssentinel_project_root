@@ -1,8 +1,8 @@
 # sentinel_project_root/data_processing/loaders.py
-# SME PLATINUM STANDARD (V7 - MODEL-DRIVEN & REFINED API)
-# This version refactors the internal configuration using Pydantic models for
-# ultimate robustness and clarity. It also refines the public API for
-# better encapsulation and developer experience.
+# SME PLATINUM STANDARD (V8 - FINAL INTEGRATED VERSION)
+# This definitive version uses Pydantic models for robust configuration and
+# automatically enriches the health records data upon loading to ensure a
+# consistent, analytics-ready data contract across the application.
 
 """
 Contains standardized data loading functions for the Sentinel application,
@@ -10,17 +10,19 @@ driven by a robust, model-validated configuration.
 """
 import pandas as pd
 import logging
-from typing import Optional, Dict, List, Any, Type
+from typing import Optional, Dict, List, Any, Type, Union
 from pathlib import Path
 
-# <<< SME REVISION V7 >>> Use Pydantic for configuration models.
+# --- Platinum Standard Imports ---
 from pydantic import BaseModel, Field
 
-# --- Module Imports & Initial Setup ---
+# --- Sentinel System Imports ---
 try:
-    from config.settings import settings
-    # Assuming the fluent DataPipeline from the helpers V4 review
+    from config import settings
+    # Use the fluent DataPipeline from helpers
     from .helpers import DataPipeline, robust_json_load
+    # <<< SME INTEGRATION >>> Import the enrichment function to be called automatically.
+    from .enrichment import enrich_health_records_for_kpis
 except ImportError as e:
     # Critical failure path if core dependencies are missing
     logging.basicConfig(level=logging.ERROR)
@@ -30,7 +32,7 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
-# <<< SME REVISION V7 >>> Pydantic models for type-safe, validated configuration.
+# --- Pydantic Models for Type-Safe, Validated Configuration ---
 class CsvDataSourceConfig(BaseModel):
     """Defines the schema for loading and processing a CSV data source."""
     setting_attr: str
@@ -50,26 +52,25 @@ class DataLoader:
     A declarative, configuration-driven class for loading and processing data sources.
     It uses model-validated configurations to ensure robust and consistent data loading.
     """
-    # <<< SME REVISION V7 >>> Configuration is now an instance of the Pydantic models.
     _DATA_CONFIG: Dict[str, Union[CsvDataSourceConfig, GeoJsonDataSourceConfig]] = {
         'health_records': CsvDataSourceConfig(
             setting_attr='HEALTH_RECORDS_PATH',
-            date_cols=['encounter_date'],
-            dtype_map={'patient_id': str, 'chw_id': str, 'clinic_id': str},
-            required_cols=['patient_id', 'encounter_date', 'age', 'gender', 'test_type', 'test_result', 'diagnosis'],
+            date_cols=['encounter_date', 'sample_collection_date', 'test_result_date'],
+            dtype_map={'patient_id': str, 'chw_id': str, 'clinic_id': str, 'zone_id': str},
+            required_cols=['patient_id', 'encounter_date', 'age', 'gender', 'test_type', 'diagnosis'],
             read_csv_options={'low_memory': False}
         ),
         'iot_environment': CsvDataSourceConfig(
             setting_attr='IOT_ENV_RECORDS_PATH',
             date_cols=['timestamp'],
-            dtype_map={'room_id': str, 'sensor_id': str},
+            dtype_map={'room_id': str, 'sensor_id': str, 'zone_id': str},
             required_cols=['timestamp', 'room_name', 'avg_co2_ppm', 'avg_temp_celsius'],
         ),
         'zone_attributes': CsvDataSourceConfig(
             setting_attr='ZONE_ATTRIBUTES_PATH',
-            rename_map={'name': 'zone_name', 'id': 'zone_id'}, # More robust renaming
+            rename_map={'name': 'zone_name', 'id': 'zone_id'}, # Robust renaming
             dtype_map={'zone_id': str},
-            required_cols=['zone_id', 'zone_name'],
+            required_cols=['zone_id', 'zone_name', 'population'],
         ),
         'zone_geometries': GeoJsonDataSourceConfig(
             setting_attr='ZONE_GEOMETRIES_PATH'
@@ -84,11 +85,10 @@ class DataLoader:
             return None
         
         path_obj = Path(path_str)
-        # If path is not absolute, resolve it relative to the main data directory.
         if not path_obj.is_absolute():
             base_dir = getattr(settings, 'DATA_SOURCES_DIR', None)
             if not base_dir:
-                logger.error("DATA_SOURCES_DIR not in settings; cannot resolve relative path: {path_obj}")
+                logger.error(f"DATA_SOURCES_DIR not in settings; cannot resolve relative path: {path_obj}")
                 return None
             path_obj = Path(base_dir) / path_obj
         
@@ -103,7 +103,6 @@ class DataLoader:
             return False
         return True
 
-    # <<< SME REVISION V7 >>> Refactored to be the primary public method.
     def load_csv(self, config_key: str, file_path_str: Optional[str] = None) -> pd.DataFrame:
         """A generic method to load, clean, standardize, and validate a CSV based on its configuration."""
         config = self._DATA_CONFIG.get(config_key)
@@ -122,63 +121,42 @@ class DataLoader:
                 logger.warning(f"({config_key}) CSV at {file_path} loaded as empty.")
                 return pd.DataFrame()
 
-            # <<< SME REVISION V7 >>> Use the fluent DataPipeline for cleaning.
+            # Use the fluent DataPipeline for cleaning and date conversion
             pipeline = DataPipeline(df).clean_column_names()
-            
-            # Resiliently rename columns
             df_processed = pipeline.to_df().rename(columns=config.rename_map)
 
-            # Resiliently apply data types only to columns that exist.
+            # Resiliently apply data types
             for col, dtype in config.dtype_map.items():
                 if col in df_processed.columns:
                     try:
                         df_processed[col] = df_processed[col].astype(dtype)
-                    except (ValueError, TypeError) as e:
-                        logger.warning(f"({config_key}) Could not cast column '{col}' to {dtype}. Error: {e}. Leaving as is.")
+                    except (ValueError, TypeError):
+                        logger.warning(f"({config_key}) Could not cast column '{col}' to {dtype}. Leaving as is.")
 
             if not self._validate_schema(df_processed, config.required_cols, config_key):
                 return pd.DataFrame()
 
-            # Re-wrap in pipeline for final date conversion step.
             df_final = DataPipeline(df_processed).convert_date_columns(config.date_cols).to_df()
-
             logger.info(f"({config_key}) Successfully loaded and processed {len(df_final)} records from '{file_path.name}'.")
             return df_final
         except Exception as e:
             logger.critical(f"({config_key}) CRITICAL ERROR loading CSV from {file_path}: {e}", exc_info=True)
             return pd.DataFrame()
 
-    def load_zone_data(self, attributes_path: Optional[str] = None, geometries_path: Optional[str] = None) -> pd.DataFrame:
-        """Loads and merges zone attributes (CSV) and geometries (GeoJSON)."""
-        attributes_df = self.load_csv('zone_attributes', attributes_path)
-        
-        geom_config = self._DATA_CONFIG.get('zone_geometries')
-        geom_path = self._resolve_path(geometries_path, geom_config.setting_attr if geom_config else '')
-
-        geometries_df = pd.DataFrame()
-        if geom_path and geom_path.is_file():
-            geo_data = robust_json_load(geom_path)
-            if isinstance(geo_data, dict) and 'features' in geo_data:
-                geometries_list = [
-                    {"zone_id": str(feat["properties"].get("zone_id", feat["properties"].get("id"))).strip(), "geometry_obj": feat["geometry"]}
-                    for feat in geo_data.get("features", [])
-                    if feat.get("properties") and feat.get("geometry") and feat["properties"].get("zone_id", feat["properties"].get("id")) is not None
-                ]
-                if geometries_list:
-                    geometries_df = pd.DataFrame(geometries_list)
-
-        if attributes_df.empty and geometries_df.empty: return pd.DataFrame()
-        if attributes_df.empty: return geometries_df
-        if geometries_df.empty: return attributes_df
-
-        return pd.merge(attributes_df, geometries_df, on="zone_id", how="outer")
-
 # --- Singleton Instance and Public API ---
 _loader = DataLoader()
 
 def load_health_records(file_path: Optional[str] = None) -> pd.DataFrame:
-    """Loads, cleans, and standardizes the primary health records data."""
-    return _loader.load_csv('health_records', file_path)
+    """
+    Loads, cleans, standardizes, and enriches the primary health records data.
+    This function ensures that any consumer receives a fully analytics-ready DataFrame.
+    """
+    df = _loader.load_csv('health_records', file_path)
+    # <<< SME INTEGRATION >>> Automatically apply KPI enrichment to fulfill the data contract.
+    if not df.empty:
+        logger.info(f"Enriching {len(df)} health records for KPI calculations.")
+        df = enrich_health_records_for_kpis(df)
+    return df
 
 def load_iot_clinic_environment_data(file_path: Optional[str] = None) -> pd.DataFrame:
     """Loads, cleans, and standardizes IoT clinic environment data."""
@@ -186,21 +164,34 @@ def load_iot_clinic_environment_data(file_path: Optional[str] = None) -> pd.Data
 
 def load_zone_data(attributes_file_path: Optional[str] = None, geometries_file_path: Optional[str] = None) -> pd.DataFrame:
     """Loads and merges zone attribute data (CSV) and zone geometries (GeoJSON)."""
-    return _loader.load_zone_data(attributes_file_path, geometries_file_path)
+    # This is a more complex operation not fitting the simple CSV loader, so it's kept separate.
+    attributes_df = _loader.load_csv('zone_attributes', attributes_file_path)
+    
+    geom_config = _loader._DATA_CONFIG.get('zone_geometries')
+    geom_path = _loader._resolve_path(geometries_file_path, geom_config.setting_attr if geom_config else '')
+
+    geometries_df = pd.DataFrame()
+    if geom_path and geom_path.is_file():
+        geo_data = robust_json_load(geom_path)
+        if isinstance(geo_data, dict) and 'features' in geo_data:
+            geometries_list = [
+                {"zone_id": str(feat["properties"].get("zone_id", feat["properties"].get("id"))).strip(), "geometry_obj": feat["geometry"]}
+                for feat in geo_data.get("features", [])
+                if feat.get("properties") and feat.get("geometry") and feat["properties"].get("zone_id", feat["properties"].get("id")) is not None
+            ]
+            if geometries_list:
+                geometries_df = pd.DataFrame(geometries_list)
+
+    if attributes_df.empty and geometries_df.empty: return pd.DataFrame()
+    if attributes_df.empty: return geometries_df
+    if geometries_df.empty: return attributes_df
+
+    return pd.merge(attributes_df, geometries_df, on="zone_id", how="outer")
 
 def load_json_config(path_or_setting: str, default: Any = None) -> Any:
     """Loads a JSON config file from a path or a settings attribute name."""
-    # Attempt to resolve as a setting first, then as a direct path.
     file_path = _loader._resolve_path(None, path_or_setting) or _loader._resolve_path(path_or_setting, '')
     if not file_path or not file_path.is_file(): return default
     
     data = robust_json_load(file_path)
-    # Return data if valid, otherwise return the provided default.
     return data if data is not None else default
-
-# --- Wrapper functions for specific JSON configs ---
-def load_escalation_protocols() -> Dict[str, Any]:
-    return load_json_config('ESCALATION_PROTOCOLS_JSON_PATH', default={})
-
-def load_pictogram_map() -> Dict[str, str]:
-    return load_json_config('PICTOGRAM_MAP_JSON_PATH', default={})
