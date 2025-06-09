@@ -1,92 +1,111 @@
-# sentinel_project_root/pages/02_clinic_dashboard.py
-# SME PLATINUM STANDARD (V6 - REFACTORED & SIMPLIFIED)
-# This version outsources complex business logic to a dedicated analytics module,
-# making this file cleaner, more maintainable, and focused on UI rendering.
+# sentinel_project_root/pages/02_Clinic_Dashboard.py
+# SME PLATINUM STANDARD - CLINIC OPERATIONS DASHBOARD
 
-import streamlit as st
-import pandas as pd
 import logging
 from datetime import date, timedelta
-from typing import Tuple
 
-# --- Sentinel System Imports ---
-try:
-    from config import settings
-    from data_processing import load_health_records, load_iot_clinic_environment_data
-    # <<< SME REVISION V6 >>> Import the new, high-level analytics function.
-    from analytics.clinic_kpis import generate_kpi_analysis_table
-    from analytics.supply_forecasting import generate_simple_supply_forecast
-    from analytics.alerting import get_patient_alerts_for_clinic
-    from visualization.plots import plot_bar_chart, plot_donut_chart
-    # ... other visualization imports
-except ImportError as e:
-    st.error(f"Fatal Error: A required module could not be imported. Details: {e}")
-    st.stop()
+import pandas as pd
+import streamlit as st
 
+from analytics import generate_kpi_analysis_table
+from config import settings
+from data_processing import (get_cached_environmental_kpis, get_cached_trend,
+                             load_health_records, load_iot_records)
+from visualization import (create_empty_figure, plot_bar_chart,
+                           plot_line_chart, render_traffic_light_indicator)
+
+# --- Page Setup ---
+st.set_page_config(page_title="Clinic Dashboard", page_icon="🏥", layout="wide")
 logger = logging.getLogger(__name__)
 
-# --- Data Loading (already well-structured) ---
-@st.cache_data(ttl=settings.CACHE_TTL_SECONDS_WEB_REPORTS, show_spinner="Loading operational data...")
-def get_dashboard_data() -> Tuple[pd.DataFrame, pd.DataFrame, bool, date, date]:
-    # ... (This function remains the same, but we now assume the loader or an
-    #      enrichment step adds the necessary boolean flag columns to `health_df`)
-    health_df = load_health_records() # Assumed to be enriched upstream now
-    iot_df = load_iot_clinic_environment_data()
-    iot_available = not iot_df.empty
-    min_date, max_date = health_df['encounter_date'].min().date(), health_df['encounter_date'].max().date()
-    return health_df, iot_df, iot_available, min_date, max_date
+# --- Data Loading ---
+@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, show_spinner="Loading operational data...")
+def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+    health_df = load_health_records()
+    iot_df = load_iot_records()
+    return health_df, iot_df
 
-# --- Tab Rendering Functions (already well-structured) ---
-# ... All `render_..._tab` functions remain here, as they are pure UI code ...
-# Example: def render_epidemiology_tab(data: pd.DataFrame): ...
+# --- UI Rendering Functions for Tabs ---
+def render_epidemiology_tab(df: pd.DataFrame):
+    st.subheader("Top 5 Diagnoses by Volume")
+    if df.empty:
+        st.info("No encounter data for this period.")
+        return
+    top_diagnoses = df['diagnosis'].value_counts().nlargest(5).reset_index()
+    top_diagnoses.columns = ['diagnosis', 'count']
+    fig = plot_bar_chart(top_diagnoses, x_col='diagnosis', y_col='count', title="Top 5 Diagnoses")
+    st.plotly_chart(fig, use_container_width=True)
 
-# --- Main Application Logic ---
-def main():
-    st.set_page_config(page_title="Clinic Dashboard", page_icon="🏥", layout="wide")
-    st.title("🏥 Clinic Operations & Management Console")
-    st.divider()
-
-    # --- Load Data ---
-    full_health_df, full_iot_df, iot_available, abs_min_date, abs_max_date = get_dashboard_data()
-    if full_health_df.empty:
-        st.error("No health data available. Dashboard cannot be rendered.")
-        st.stop()
-
-    # --- Sidebar Filters ---
-    st.sidebar.header("Console Filters")
-    default_start = max(abs_min_date, abs_max_date - timedelta(days=29))
-    start_date, end_date = st.sidebar.date_input(
-        "Select Date Range:", value=(default_start, abs_max_date),
-        min_value=abs_min_date, max_value=abs_max_date
+def render_environment_tab(df: pd.DataFrame):
+    st.subheader("Facility Environmental Quality")
+    if df.empty:
+        st.info("No environmental data for this period.")
+        return
+    env_kpis = get_cached_environmental_kpis(df)
+    
+    render_traffic_light_indicator(
+        "Average CO₂ Levels",
+        "HIGH_RISK" if env_kpis.get('avg_co2_ppm', 0) > 1500 else "MODERATE_CONCERN" if env_kpis.get('avg_co2_ppm', 0) > 1000 else "ACCEPTABLE",
+        f"{env_kpis.get('avg_co2_ppm', 0):.0f} PPM"
+    )
+    render_traffic_light_indicator(
+        "Rooms with High Noise",
+        "HIGH_RISK" if env_kpis.get('rooms_with_high_noise_count', 0) > 0 else "ACCEPTABLE",
+        f"{env_kpis.get('rooms_with_high_noise_count', 0)} rooms"
     )
 
-    # --- Filter Data for Display ---
-    period_health_df = full_health_df[full_health_df['encounter_date'].dt.date.between(start_date, end_date)]
-    period_iot_df = full_iot_df[full_iot_df['timestamp'].dt.date.between(start_date, end_date)] if iot_available else pd.DataFrame()
+    co2_trend = get_cached_trend(df=df, value_col='avg_co2_ppm', date_col='timestamp', freq='h')
+    fig = plot_line_chart(co2_trend, title="Hourly Average CO₂ Trend", y_title="CO₂ (PPM)")
+    st.plotly_chart(fig, use_container_width=True)
 
-    st.info(f"**Displaying Clinic Console for:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}`")
+# --- Main Page ---
+st.title("🏥 Clinic Operations & Management Console")
+st.markdown("Monitor service efficiency, care quality, resource management, and facility safety.")
+st.divider()
 
-    # --- KPI Section ---
-    st.header("🚀 Performance Snapshot with Trend Analysis")
-    if not period_health_df.empty:
-        # <<< SME REVISION V6 >>> Call the single, high-level analytics function.
-        # All complex logic is now encapsulated in `generate_kpi_analysis_table`.
-        kpi_analysis_df = generate_kpi_analysis_table(full_health_df, start_date, end_date)
-        st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True,
-            column_config={
-                "Current Period": st.column_config.NumberColumn(format="%.2f"),
-                "90-Day Trend": st.column_config.ImageColumn()
-                # ... other column configs
-            })
-    else:
-        st.info("No encounter data available for this period to generate KPI analysis.")
-    st.divider()
+full_health_df, full_iot_df = get_data()
+if full_health_df.empty:
+    st.error("No health data available. Dashboard cannot be rendered.")
+    st.stop()
 
-    # --- Tabbed Section ---
-    st.header("🛠️ Operational Areas Deep Dive")
-    tabs = st.tabs(["📈 Epidemiology", "🔬 Testing", "💊 Supply Chain", "🧍 Patients", "🌿 Environment"])
-    # with tabs[0]: render_epidemiology_tab(period_health_df)
-    # ... etc.
+# --- Sidebar Filters ---
+with st.sidebar:
+    st.header("Filters")
+    min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
+    start_date, end_date = st.date_input(
+        "Select Date Range:",
+        value=(max(min_date, max_date - timedelta(days=29)), max_date),
+        min_value=min_date, max_value=max_date
+    )
 
-if __name__ == "__main__":
-    main()
+# --- Filter Data for Display ---
+period_health_df = full_health_df[full_health_df['encounter_date'].dt.date.between(start_date, end_date)]
+period_iot_df = full_iot_df[full_iot_df['timestamp'].dt.date.between(start_date, end_date)] if not full_iot_df.empty else pd.DataFrame()
+
+st.info(f"**Displaying Clinic Console for:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}`")
+
+# --- KPI Section ---
+st.header("🚀 Performance Snapshot with Trend Analysis")
+if not period_health_df.empty:
+    kpi_analysis_df = generate_kpi_analysis_table(full_health_df, start_date, end_date)
+    st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True,
+        column_config={
+            "Current": st.column_config.NumberColumn(format="%.1f"),
+            "Previous": st.column_config.NumberColumn(format="%.1f"),
+            "Trend (90d)": st.column_config.ImageColumn(label="90-Day Trend")
+        }
+    )
+else:
+    st.info("No encounter data available to generate KPI analysis for this period.")
+st.divider()
+
+# --- Tabbed Section ---
+st.header("🛠️ Operational Areas Deep Dive")
+tabs = st.tabs(["📈 Epidemiology", "🌿 Environment", "🔬 Testing", "💊 Supply Chain"])
+with tabs[0]: render_epidemiology_tab(period_health_df)
+with tabs[1]: render_environment_tab(period_iot_df)
+with tabs[2]: st.info("Testing insights coming soon.")
+with tabs[3]: st.info("Supply chain analytics coming soon.")
+
+st.divider()
+st.caption(settings.APP_FOOTER_TEXT)
