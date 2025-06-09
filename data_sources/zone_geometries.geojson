@@ -1,95 +1,12 @@
 {
   "type": "FeatureCollection",
-  "crs": {
-    "type": "name",
-    "properties": {
-      "name": "urn:ogc:def:crs:EPSG::4326"
-    }
-  },
+  "crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:EPSG::4326" }},
   "features": [
-    {
-      "type": "Feature",
-      "properties": {
-        "zone_id": "ZoneA",
-        "name": "Alpha Central District",
-        "description": "Urban center with mixed residential and commercial areas."
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [
-          [ [36.80, -1.25], [36.82, -1.25], [36.82, -1.27], [36.80, -1.27], [36.80, -1.25] ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "zone_id": "ZoneB",
-        "name": "Beta Southern Plains",
-        "description": "Rural agricultural area, prone to seasonal flooding."
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [
-          [ [36.78, -1.28], [36.83, -1.28], [36.83, -1.32], [36.78, -1.32], [36.78, -1.28] ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "zone_id": "ZoneC",
-        "name": "Gamma Eastern Hills",
-        "description": "Hilly terrain with informal settlements."
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [
-          [ [36.83, -1.24], [36.85, -1.24], [36.85, -1.26], [36.83, -1.26], [36.83, -1.24] ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "zone_id": "ZoneD",
-        "name": "Delta Western Coast",
-        "description": "Coastal region with fishing villages."
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [
-          [ [36.75, -1.25], [36.77, -1.25], [36.77, -1.28], [36.75, -1.28], [36.75, -1.25] ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "zone_id": "ZoneE",
-        "name": "Epsilon Northern Valley",
-        "description": "Remote valley, pastoral lands."
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [
-          [ [36.80, -1.22], [36.83, -1.22], [36.83, -1.24], [36.80, -1.24], [36.80, -1.22] ]
-        ]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "zone_id": "ZoneF",
-        "name": "Foxtrot Industrial Park",
-        "description": "Industrial zone with worker housing."
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [
-           [ [36.86, -1.27], [36.88, -1.27], [36.88, -1.29], [36.86, -1.29], [36.86, -1.27] ]
-        ]
-      }
-    }
+    { "type": "Feature", "properties": { "zone_id": "Zone-A", "name": "Alpha Central" }, "geometry": { "type": "Polygon", "coordinates": [ [ [36.80, -1.25], [36.82, -1.25], [36.82, -1.27], [36.80, -1.27], [36.80, -1.25] ] ] }},
+    { "type": "Feature", "properties": { "zone_id": "Zone-B", "name": "Beta South" }, "geometry": { "type": "Polygon", "coordinates": [ [ [36.78, -1.28], [36.83, -1.28], [36.83, -1.32], [36.78, -1.32], [36.78, -1.28] ] ] }},
+    { "type": "Feature", "properties": { "zone_id": "Zone-C", "name": "Gamma Hills" }, "geometry": { "type": "Polygon", "coordinates": [ [ [36.83, -1.24], [36.85, -1.24], [36.85, -1.26], [36.83, -1.26], [36.83, -1.24] ] ] }},
+    { "type": "Feature", "properties": { "zone_id": "Zone-D", "name": "Delta Coast" }, "geometry": { "type": "Polygon", "coordinates": [ [ [36.75, -1.25], [36.77, -1.25], [36.77, -1.28], [36.75, -1.28], [36.75, -1.25] ] ] }},
+    { "type": "Feature", "properties": { "zone_id": "Zone-E", "name": "Epsilon Valley" }, "geometry": { "type": "Polygon", "coordinates": [ [ [36.80, -1.22], [36.83, -1.22], [36.83, -1.24], [36.80, -1.24], [36.80, -1.22] ] ] }},
+    { "type": "Feature", "properties": { "zone_id": "Zone-F", "name": "Foxtrot Park" }, "geometry": { "type": "Polygon", "coordinates": [ [ [36.86, -1.27], [36.88, -1.27], [36.88, -1.29], [36.86, -1.29], [36.86, -1.27] ] ] }}
   ]
 }
