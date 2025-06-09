@@ -1,7 +1,7 @@
 zone_id,name,population,socio_economic_index,num_clinics,avg_travel_time_clinic_min,area_sqkm,predominant_hazard_type,primary_livelihood,water_source_main
-ZoneA,Alpha Central,12500,0.62,3,15,40.5,URBAN_HEAT_ISLAND,Services,Piped Network
-ZoneB,Beta South,18200,0.38,1,55,150.2,SEASONAL_FLOODING,Agriculture,Borehole/Community Well
-ZoneC,Gamma Hills,7800,0.81,1,10,25.0,LANDSLIDE_RISK,Small Business/Artisanal,Piped (Intermittent)
-ZoneD,Delta Coast,14000,0.50,2,25,75.8,COASTAL_STORM,Fishing/Tourism,Piped Network
-ZoneE,Epsilon Valley,9500,0.45,1,40,90.0,DROUGHT_RISK,Pastoralism/Agriculture,River/Spring Fed
-ZoneF,Foxtrot Park,3200,0.68,0,30,15.5,AIR_POLLUTION,Factory Work,Utility Tanker
+Zone-A,Alpha Central,12500,0.62,3,15,40.5,URBAN_HEAT_ISLAND,Services,Piped Network
+Zone-B,Beta South,18200,0.38,1,55,150.2,SEASONAL_FLOODING,Agriculture,Borehole
+Zone-C,Gamma Hills,7800,0.81,1,10,25.0,LANDSLIDE_RISK,Artisanal,Piped Intermittent
+Zone-D,Delta Coast,14000,0.50,2,25,75.8,COASTAL_STORM,Fishing,Piped Network
+Zone-E,Epsilon Valley,9500,0.45,1,40,90.0,DROUGHT_RISK,Pastoralism,River Fed
+Zone-F,Foxtrot Park,3200,0.68,0,30,15.5,AIR_POLLUTION,Industrial,Utility Tanker
