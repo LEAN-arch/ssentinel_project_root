@@ -4,29 +4,23 @@
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
-import numpy as np
-from pydantic import (BaseModel, Field, FilePath, DirectoryPath, field_validator,
-                      model_validator, computed_field, PositiveInt, PositiveFloat,
-                      NonNegativeInt, NonNegativeFloat)
+from pydantic import (BaseModel, DirectoryPath, Field, FilePath,
+                      computed_field, model_validator)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# --- Logger for Settings Loading ---
 settings_logger = logging.getLogger(__name__)
 
 # --- Nested Models for Structured Configuration ---
 
 class TestTypeConfig(BaseModel):
-    """Configuration for a specific laboratory test type."""
     disease_group: str
-    target_tat_days: PositiveFloat
+    target_tat_days: float
     is_critical: bool
     display_name: str
 
 class ModelWeightsConfig(BaseModel):
-    """Encapsulates weights for AI/ML models for easy tuning."""
-    # Risk Model Weights
     base_age_gt_65: float = 10.0
     base_age_lt_5: float = 12.0
     symptom_cluster_severity_high: float = 25.0
@@ -34,8 +28,6 @@ class ModelWeightsConfig(BaseModel):
     vital_spo2_critical: float = 35.0
     vital_temp_critical: float = 25.0
     comorbidity: float = 15.0
-
-    # Follow-up Priority Model Weights
     risk_score_multiplier: float = 0.6
     critical_vital_alert: float = 40.0
     pending_urgent_referral: float = 30.0
@@ -43,11 +35,10 @@ class ModelWeightsConfig(BaseModel):
     poor_med_adherence: float = 20.0
 
 class AnalyticsConfig(BaseModel):
-    """Configuration for analytics, forecasting, and thresholds."""
-    # --- Health & Operational Thresholds ---
     spo2_critical_threshold_pct: int = 90
     spo2_warning_threshold_pct: int = 94
     temp_high_fever_threshold_c: float = 39.0
+    noise_high_threshold_db: int = 80
     risk_score_low_threshold: int = 40
     risk_score_moderate_threshold: int = 65
     supply_critical_threshold_days: int = 7
@@ -59,21 +50,9 @@ class AnalyticsConfig(BaseModel):
     prophet_seasonality_prior_scale: float = 10.0
     random_seed: int = 42
 
-    @model_validator(mode='after')
-    def validate_thresholds(self) -> 'AnalyticsConfig':
-        if not self.risk_score_low_threshold < self.risk_score_moderate_threshold:
-            raise ValueError("Risk score 'low' threshold must be less than 'moderate' threshold.")
-        if not self.supply_critical_threshold_days < self.supply_low_threshold_days:
-            raise ValueError("Supply 'critical' threshold must be less than 'low' threshold.")
-        return self
-
 # --- Main Settings Class ---
 
 class Settings(BaseSettings):
-    """
-    Manages all application settings using Pydantic for validation and type safety.
-    Loads settings from environment variables with a specified prefix.
-    """
     model_config = SettingsConfigDict(
         env_prefix='SENTINEL_',
         case_sensitive=False,
@@ -82,7 +61,6 @@ class Settings(BaseSettings):
         extra='ignore'
     )
 
-    # --- I. Core System & Directory Configuration ---
     PROJECT_ROOT_DIR: DirectoryPath = Path(__file__).resolve().parent.parent
     APP_NAME: str = "Sentinel Health Co-Pilot"
     APP_VERSION: str = "5.0.0"
@@ -92,7 +70,6 @@ class Settings(BaseSettings):
     LOG_FORMAT: str = "%(asctime)s - %(name)s.%(funcName)s:%(lineno)d - %(levelname)s - %(message)s"
     LOG_DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
 
-    # --- II. Path Configuration (Validated) ---
     ASSETS_DIR: DirectoryPath
     DATA_SOURCES_DIR: DirectoryPath
     APP_LOGO_SMALL_PATH: FilePath
@@ -127,7 +104,6 @@ class Settings(BaseSettings):
             values.setdefault('IOT_RECORDS_PATH', data / "iot_clinic_environment.csv")
         return values
 
-    # --- III. Data Semantics & Categories ---
     KEY_TEST_TYPES: Dict[str, TestTypeConfig] = {
         "Malaria RDT": TestTypeConfig(disease_group="Vector-Borne", target_tat_days=0.5, is_critical=True, display_name="Malaria RDT"),
         "CBC": TestTypeConfig(disease_group="General", target_tat_days=1.0, is_critical=True, display_name="CBC"),
@@ -140,7 +116,7 @@ class Settings(BaseSettings):
     SYMPTOM_CLUSTERS: Dict[str, List[str]] = {
         "respiratory_distress": ["difficulty breathing", "rapid breathing", "chest pain"],
         "severe_febrile": ["fever", "chills", "severe headache", "stiff neck"],
-        "dehydration_shock": ["diarrhea", "vomiting", "lethargy", "sunken eyes", "no tears"],
+        "dehydration_shock": ["diarrhea", "vomiting", "lethargy", "sunken eyes"],
     }
     
     @computed_field
@@ -148,18 +124,15 @@ class Settings(BaseSettings):
     def CRITICAL_TESTS(self) -> List[str]:
         return [k for k, v in self.KEY_TEST_TYPES.items() if v.is_critical]
 
-    # --- IV. Analytics, Models & Forecasting ---
     ANALYTICS: AnalyticsConfig = AnalyticsConfig()
     MODEL_WEIGHTS: ModelWeightsConfig = ModelWeightsConfig()
 
-    # --- V. UI, Visualization & Theming ---
     WEB_CACHE_TTL_SECONDS: int = 3600
     MAPBOX_TOKEN: Optional[str] = Field(None, description="Set via SENTINEL_MAPBOX_TOKEN env var")
     MAPBOX_STYLE: str = "carto-positron"
-    MAP_DEFAULT_CENTER: Tuple[float, float] = (-1.286389, 36.817223) # Lat, Lon
+    MAP_DEFAULT_CENTER: Tuple[float, float] = (-1.286389, 36.817223)
     MAP_DEFAULT_ZOOM: int = 5
     
-    # Color palette - The single source of truth
     COLOR_PRIMARY: str = "#1976D2"
     COLOR_SECONDARY: str = "#546E7A"
     COLOR_ACCENT: str = "#4D7BF3"
@@ -181,7 +154,6 @@ class Settings(BaseSettings):
     def APP_FOOTER_TEXT(self) -> str:
         return f"© {datetime.now().year} {self.ORGANIZATION_NAME}. Actionable Intelligence for Resilient Health Systems."
 
-# --- Singleton Instance ---
 try:
     settings = Settings()
     settings_logger.info(f"Sentinel settings loaded. App: {settings.APP_NAME} v{settings.APP_VERSION}")
