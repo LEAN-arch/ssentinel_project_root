@@ -1,10 +1,4 @@
 # ssentinel_project_root/pages/01_chw_dashboard.py
-"""
-CHW Supervisor Operations View for the Sentinel Health Co-Pilot.
-SME FINAL VERSION: This script uses a corrected, robust import structure and
-modernized data handling to prevent common errors. It is feature-complete.
-"""
-
 import streamlit as st
 import pandas as pd
 import logging
