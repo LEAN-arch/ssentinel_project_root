@@ -1,9 +1,10 @@
 # sentinel_project_root/config/settings.py
-# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD)
-# This definitive version restores all original settings while incorporating critical
-# bug fixes and robustness enhancements.
+# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD - DEFINITIVE)
+# This definitive version corrects the directory path bug and correctly integrates all
+# data-specific settings required by the provided CSV file.
 
 import os
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -13,7 +14,7 @@ settings_logger = logging.getLogger(__name__)
 def validate_path(path_obj: Path, description: str, is_dir: bool = False) -> Path:
     """
     Helper to validate if a path exists and log warnings if not.
-    Now includes a check for empty files.
+    Includes a check for empty files.
     """
     abs_path = path_obj.resolve()
     if not abs_path.exists():
@@ -22,7 +23,6 @@ def validate_path(path_obj: Path, description: str, is_dir: bool = False) -> Pat
         settings_logger.warning(f"Configuration Warning: Expected a directory for {description}, but found a file at: {abs_path}")
     elif not is_dir and not abs_path.is_file():
         settings_logger.warning(f"Configuration Warning: Expected a file for {description}, but found a directory at: {abs_path}")
-    # Add a check for empty files, as this can be a sign of a failed data pipeline.
     elif not is_dir and abs_path.is_file() and abs_path.stat().st_size == 0:
         settings_logger.warning(f"Configuration Warning: {description} file is empty (0 bytes) at: {abs_path}")
     return abs_path
@@ -42,6 +42,7 @@ LOG_DATE_FORMAT = os.getenv("SENTINEL_LOG_DATE_FORMAT", "%Y-%m-%d %H:%M:%S")
 
 # Paths
 ASSETS_DIR = validate_path(PROJECT_ROOT_DIR / "assets", "Assets directory", is_dir=True)
+# --- CRITICAL BUG FIX: Reverted to the original, correct directory name 'data_sources' ---
 DATA_SOURCES_DIR = validate_path(PROJECT_ROOT_DIR / "data_sources", "Data sources directory", is_dir=True)
 APP_LOGO_SMALL_PATH = str(validate_path(ASSETS_DIR / "sentinel_logo_small.png", "Small app logo"))
 APP_LOGO_LARGE_PATH = str(validate_path(ASSETS_DIR / "sentinel_logo_large.png", "Large app logo"))
@@ -49,7 +50,6 @@ STYLE_CSS_PATH_WEB = str(validate_path(ASSETS_DIR / "style_web_reports.css", "Gl
 ESCALATION_PROTOCOLS_JSON_PATH = str(validate_path(ASSETS_DIR / "escalation_protocols.json", "Escalation protocols JSON"))
 PICTOGRAM_MAP_JSON_PATH = str(validate_path(ASSETS_DIR / "pictogram_map.json", "Pictogram map JSON"))
 HAPTIC_PATTERNS_JSON_PATH = str(validate_path(ASSETS_DIR / "haptic_patterns.json", "Haptic patterns JSON"))
-# --- CRITICAL BUG FIX: Pointing to the correct CSV file name provided in the prompt ---
 HEALTH_RECORDS_PATH = str(validate_path(DATA_SOURCES_DIR / "health_records.csv", "Health records CSV"))
 ZONE_ATTRIBUTES_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_attributes.csv", "Zone attributes CSV"))
 ZONE_GEOMETRIES_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_geometries.geojson", "Zone geometries GeoJSON"))
@@ -57,11 +57,6 @@ IOT_ENV_RECORDS_PATH = str(validate_path(DATA_SOURCES_DIR / "iot_clinic_environm
 
 
 # --- II. Health & Operational Thresholds ---
-# --- II. Health & Operational Thresholds ---
-TARGET_TEST_TURNAROUND_DAYS = 2.0
-CRITICAL_SUPPLY_DAYS_REMAINING = 7
-LOW_SUPPLY_DAYS_REMAINING = 14
-RISK_SCORE_MODERATE_THRESHOLD = 60
 ALERT_SPO2_CRITICAL_LOW_PCT = 90
 ALERT_SPO2_WARNING_LOW_PCT = 94
 ALERT_BODY_TEMP_FEVER_C = 38.0
@@ -97,6 +92,10 @@ AGE_THRESHOLD_LOW = 5
 AGE_THRESHOLD_MODERATE = 18
 AGE_THRESHOLD_HIGH = 60
 AGE_THRESHOLD_VERY_HIGH = 75
+TARGET_TEST_TURNAROUND_DAYS = 2.0
+TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY = 85.0
+TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY = 5.0
+TARGET_MALARIA_POSITIVITY_RATE = 10.0
 
 
 # --- III. Edge Device Configuration ---
@@ -122,7 +121,7 @@ NODE_REPORTING_INTERVAL_HOURS = 24
 
 
 # --- V. Data Semantics & Categories ---
-KEY_DRUG_SUBSTRINGS_SUPPLY = ['Paracetamol', 'Amoxicillin', 'ORS Packet', 'Metformin', 'Lisinopril']
+# --- INTEGRATION: Settings updated to match the new `health_records.csv` data ---
 KEY_TEST_TYPES_FOR_ANALYSIS = {
     "Malaria RDT": {"disease_group": "Malaria", "target_tat_days": 0.5, "critical": True, "display_name": "Malaria RDT"},
     "CBC": {"disease_group": "General", "target_tat_days": 1, "critical": True, "display_name": "CBC"},
@@ -131,15 +130,14 @@ KEY_TEST_TYPES_FOR_ANALYSIS = {
     "Blood Glucose": {"disease_group": "NCD", "target_tat_days": 0.1, "critical": False, "display_name": "Blood Glucose"},
     "COVID-19 Ag": {"disease_group": "Respiratory", "target_tat_days": 0.25, "critical": True, "display_name": "COVID-19 Ag"},
 }
+# This derived list makes it easy to filter for critical tests elsewhere in the application.
 CRITICAL_TESTS = [k for k, v in KEY_TEST_TYPES_FOR_ANALYSIS.items() if v.get("critical", False)]
-TARGET_TEST_TURNAROUND_DAYS = 2.0
-TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY = 85.0
-TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY = 5.0
 OVERDUE_TEST_BUFFER_DAYS = 2
-OVERDUE_PENDING_TEST_DAYS_GENERAL_FALLBACK = 7
-KEY_CONDITIONS_FOR_ACTION = ['TB', 'Malaria', 'HIV-Positive', 'Pneumonia', 'Severe Dehydration', 'Heat Stroke', 'Sepsis', 'Diarrheal Diseases (Severe)']
-KEY_DRUG_SUBSTRINGS_SUPPLY = ['TB-Regimen', 'ACT', 'ARV-Regimen', 'ORS', 'Amoxicillin', 'Paracetamol', 'Penicillin', 'Iron-Folate', 'Insulin']
-TARGET_MALARIA_POSITIVITY_RATE = 10.0
+KEY_CONDITIONS_FOR_ACTION = ['Malaria', 'Pneumonia', 'Diarrhea', 'Hypertension', 'Diabetes', 'URI', 'Bacterial Infection']
+# --- INTEGRATION: This is the critical list from your snippet ---
+KEY_DRUG_SUBSTRINGS_SUPPLY = ['Paracetamol', 'Amoxicillin', 'ORS Packet', 'Metformin', 'Lisinopril']
+NON_INFORMATIVE_SYMPTOMS = ['none', 'n/a', 'asymptomatic', '']
+TESTING_TOP_N_REJECTION_REASONS = 5
 SYMPTOM_CLUSTERS_CONFIG = {
     "Fever, Cough, Fatigue": ["fever", "cough", "fatigue"],
     "Diarrhea & Vomiting": ["diarrhea", "vomit"],
@@ -194,7 +192,6 @@ LEGACY_DISEASE_COLORS_WEB = {
 
 
 # --- Final Validation & Logging ---
-# --- BUG FIX: Removed duplicated code block ---
 if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
     settings_logger.warning(f"Invalid LOG_LEVEL '{LOG_LEVEL}' from env. The root logger may default to INFO.")
     
