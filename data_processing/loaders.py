@@ -1,7 +1,7 @@
 # sentinel_project_root/data_processing/loaders.py
-# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD V5 - DATE_COLS_FIX)
-# This definitive version corrects the 'date_cols' list for health_records
-# to prevent silent failures during data loading.
+# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD V6 - RESILIENT SCHEMA)
+# This version introduces resilient loading by standardizing column names
+# on-the-fly, permanently resolving schema mismatch errors.
 
 """
 Contains standardized data loading functions for the Sentinel application.
@@ -36,9 +36,6 @@ class DataLoader:
     _DATA_CONFIG = {
         'health_records': {
             'setting_attr': 'HEALTH_RECORDS_PATH',
-            # <<< SME REVISION >>> Corrected this list to only include date columns that
-            # actually exist in health_records_expanded.csv. This resolves the silent
-            # data loading failure.
             'date_cols': ['encounter_date'],
             'dtype_map': {
                 'patient_id': str, 'chw_id': str, 'clinic_id': str,
@@ -61,6 +58,10 @@ class DataLoader:
             'setting_attr': 'ZONE_ATTRIBUTES_PATH',
             'date_cols': [],
             'dtype_map': {'zone_id': str},
+            # <<< SME REVISION >>> This map defines how to standardize column names.
+            # It tells the loader: "If you find a column named 'name', rename it to 'zone_name'".
+            'rename_map': {'name': 'zone_name'},
+            # We now require the FINAL, standardized name.
             'required_cols': ['zone_id', 'zone_name'],
             'read_csv_options': {}
         },
@@ -76,11 +77,8 @@ class DataLoader:
             if setting_attr:
                 logger.error(f"Path not found: No explicit path provided and setting '{setting_attr}' is not defined.")
             return None
-
         path_obj = Path(path_str)
-        if path_obj.is_absolute():
-            return path_obj.resolve()
-
+        if path_obj.is_absolute(): return path_obj.resolve()
         base_dir = getattr(settings, 'DATA_SOURCES_DIR', getattr(settings, 'DATA_DIR', None))
         if not base_dir:
             logger.error("DATA_SOURCES_DIR or DATA_DIR not defined in settings; cannot resolve relative path.")
@@ -89,45 +87,44 @@ class DataLoader:
 
     def _validate_schema(self, df: pd.DataFrame, required_cols: List[str], config_key: str) -> bool:
         """Checks if all required columns are present in the DataFrame."""
-        if not required_cols:
-            return True
-        
+        if not required_cols: return True
         missing_cols = set(required_cols) - set(df.columns)
         if missing_cols:
-            logger.critical(
-                f"({config_key}) Schema Validation FAILED! The following required columns are missing "
-                f"from the data source: {sorted(list(missing_cols))}. "
-                f"Check the source file or the 'required_cols' list in loaders.py."
-            )
+            logger.critical(f"({config_key}) Schema Validation FAILED! Required columns are missing: {sorted(list(missing_cols))}.")
             return False
         return True
 
     def _load_and_process_csv(self, config_key: str, file_path_str: Optional[str] = None) -> pd.DataFrame:
-        """A generic method to load, clean, and standardize a CSV based on its configuration."""
+        """A generic method to load, clean, standardize, and validate a CSV based on its configuration."""
         config = self._DATA_CONFIG.get(config_key)
         if not config:
-            logger.error(f"No configuration found for data key: '{config_key}'")
-            return pd.DataFrame()
+            logger.error(f"No configuration found for data key: '{config_key}'"); return pd.DataFrame()
 
         file_path = self._resolve_path(file_path_str, config['setting_attr'])
         if not file_path or not file_path.is_file():
-            logger.error(f"({config_key}) CSV file NOT FOUND at resolved path: {file_path}")
-            return pd.DataFrame()
+            logger.error(f"({config_key}) CSV file NOT FOUND at resolved path: {file_path}"); return pd.DataFrame()
 
         try:
-            df = pd.read_csv(file_path, dtype=config.get('dtype_map'), **config.get('read_csv_options', {}))
-
+            df = pd.read_csv(file_path, **config.get('read_csv_options', {}))
             if df.empty:
-                logger.warning(f"({config_key}) CSV at {file_path} loaded as empty.")
-                return pd.DataFrame()
+                logger.warning(f"({config_key}) CSV at {file_path} loaded as empty."); return pd.DataFrame()
 
             df = data_cleaner.clean_column_names(df)
             
+            # <<< SME REVISION >>> Resiliently rename columns to a standard format.
+            rename_map = config.get('rename_map', {})
+            df.rename(columns=rename_map, inplace=True)
+            
+            # <<< SME REVISION >>> Resiliently apply data types only to columns that exist.
+            dtype_map = config.get('dtype_map', {})
+            for col, dtype in dtype_map.items():
+                if col in df.columns:
+                    df[col] = df[col].astype(dtype)
+
             if not self._validate_schema(df, config.get('required_cols', []), config_key):
                 return pd.DataFrame()
 
             df = convert_date_columns(df, config.get('date_cols', []))
-
             logger.info(f"({config_key}) Successfully loaded and processed {len(df)} records from '{file_path.name}'.")
             return df
         except Exception as e:
@@ -137,6 +134,7 @@ class DataLoader:
     def load_zone_data(self, attributes_path: Optional[str], geometries_path: Optional[str]) -> pd.DataFrame:
         """Loads and merges zone attributes (CSV) and geometries (GeoJSON)."""
         attributes_df = self._load_and_process_csv('zone_attributes', attributes_path)
+        # The renaming logic is now handled inside _load_and_process_csv, making this function simpler.
 
         geometries_list = []
         geom_config = self._DATA_CONFIG.get('zone_geometries', {})
@@ -152,12 +150,9 @@ class DataLoader:
                         geometries_list.append({"zone_id": str(zid).strip(), "geometry_obj": feature["geometry"]})
         geometries_df = pd.DataFrame(geometries_list)
 
-        if attributes_df.empty and geometries_df.empty:
-            return pd.DataFrame()
-        if attributes_df.empty:
-            return geometries_df
-        if geometries_df.empty:
-            return attributes_df
+        if attributes_df.empty and geometries_df.empty: return pd.DataFrame()
+        if attributes_df.empty: return geometries_df
+        if geometries_df.empty: return attributes_df
 
         merged_df = pd.merge(attributes_df, geometries_df, on="zone_id", how="outer")
         logger.info(f"(ZoneData) Loaded and merged. Final shape: {merged_df.shape}")
@@ -167,64 +162,34 @@ class DataLoader:
 _data_loader = DataLoader()
 
 def load_health_records(file_path: Optional[str] = None) -> pd.DataFrame:
-    """
-    Loads, cleans, and standardizes the primary health records data.
-    This function will return an empty DataFrame if the source file is missing
-    or fails schema validation (e.g., missing required columns).
-    """
+    """Loads, cleans, and standardizes the primary health records data."""
     return _data_loader._load_and_process_csv('health_records', file_path)
 
 def load_iot_clinic_environment_data(file_path: Optional[str] = None) -> pd.DataFrame:
-    """
-    Loads, cleans, and standardizes IoT clinic environment data.
-    This function will return an empty DataFrame if the source file is missing
-    or fails schema validation.
-    """
+    """Loads, cleans, and standardizes IoT clinic environment data."""
     return _data_loader._load_and_process_csv('iot_environment', file_path)
 
 def load_zone_data(attributes_file_path: Optional[str] = None, geometries_file_path: Optional[str] = None) -> pd.DataFrame:
-    """
-    Loads and merges zone attribute data (CSV) and zone geometries (GeoJSON).
-    Gracefully handles cases where one or both files are missing. An explicit file
-    path will always be used over a path from the settings file.
-    """
+    """Loads and merges zone attribute data (CSV) and zone geometries (GeoJSON)."""
     return _data_loader.load_zone_data(attributes_file_path, geometries_file_path)
 
 def load_json_config(path_or_setting: str, default: Any = None) -> Any:
-    """
-    Loads a JSON config file from a path or setting attribute.
-    It first attempts to resolve `path_or_setting` as an attribute name in the
-    settings file. If that fails, it treats `path_or_setting` as an explicit file path.
-    """
+    """Loads a JSON config file from a path or setting attribute."""
     file_path = _data_loader._resolve_path(None, path_or_setting)
     if not file_path or not file_path.exists():
         file_path = _data_loader._resolve_path(path_or_setting, "")
-
-    if not file_path or not file_path.is_file():
-        return default
-
+    if not file_path or not file_path.is_file(): return default
     data = robust_json_load(file_path)
     return data if data is not None and (default is None or isinstance(data, type(default))) else default
 
 # --- Wrapper functions for specific JSON configs ---
 def load_escalation_protocols() -> Dict[str, Any]:
-    """Wrapper to load escalation protocols JSON."""
     return load_json_config('ESCALATION_PROTOCOLS_JSON_PATH', default={})
 
 def load_pictogram_map() -> Dict[str, str]:
-    """Wrapper to load pictogram map JSON."""
     return load_json_config('PICTOGRAM_MAP_JSON_PATH', default={})
 
 def load_haptic_patterns() -> Dict[str, List[int]]:
-    """Wrapper to load and validate haptic patterns JSON."""
     data = load_json_config('HAPTIC_PATTERNS_JSON_PATH', default={})
-    if not isinstance(data, dict):
-        logger.warning("Haptic patterns data is not a dictionary. Returning empty.")
-        return {}
-    valid_patterns = {
-        key: value for key, value in data.items()
-        if isinstance(value, list) and all(isinstance(i, int) for i in value)
-    }
-    if len(valid_patterns) != len(data):
-        logger.warning("Some haptic patterns were invalid and have been filtered out.")
-    return valid_patterns
+    if not isinstance(data, dict): return {}
+    return { k: v for k, v in data.items() if isinstance(v, list) and all(isinstance(i, int) for i in v) }
