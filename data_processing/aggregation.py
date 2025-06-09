@@ -1,187 +1,181 @@
 # sentinel_project_root/data_processing/aggregation.py
-"""
-A collection of robust, high-performance, and encapsulated components for
-aggregating data to compute KPIs and summaries for Sentinel dashboards.
-"""
-import pandas as pd
-import numpy as np
-import logging
-from typing import Dict, Any, Optional, Union, Callable
-import streamlit as st
-import re
+# SME PLATINUM STANDARD - DECISION-GRADE AGGREGATIONS
 
-try:
-    from config import settings
-    from .helpers import convert_to_numeric
-except ImportError:
-    logging.warning("Critical import error in aggregation.py. Using fallbacks.", exc_info=True)
-    class MockSettings: pass
-    settings = MockSettings()
-    def convert_to_numeric(series: pd.Series) -> pd.Series:
-        return pd.to_numeric(series, errors='coerce')
+import logging
+from typing import Any, Callable, Dict, Optional, Union
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+
+from config import settings
+from .helpers import convert_to_numeric, hash_dataframe
 
 logger = logging.getLogger(__name__)
 
-def hash_dataframe_safe(df: pd.DataFrame) -> int:
-    """A robust hashing function for pandas DataFrames suitable for st.cache_data."""
-    return pd.util.hash_pandas_object(df, index=True).sum()
+# --- Core KPI Calculation Functions ---
+
+def calculate_clinic_kpis(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Calculates a comprehensive set of decision-grade KPIs for a clinic context.
+
+    This function expects a pre-enriched DataFrame from `enrich_health_records_with_kpis`.
+
+    Returns:
+        A dictionary of calculated KPIs.
+    """
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return {}
+
+    kpis: Dict[str, Any] = {}
+
+    # 1. Testing Efficiency KPIs
+    conclusive_tests = df[df['sample_status'].str.lower().isin(['completed', 'rejected by lab'])]
+    if not conclusive_tests.empty:
+        kpis['avg_test_tat_days'] = conclusive_tests['test_turnaround_days'].mean()
+        
+        # Calculate % of tests meeting target TAT
+        # This requires a join-like operation if targets vary by test_type
+        test_type_configs = settings.KEY_TEST_TYPES
+        target_map = {name: config.target_tat_days for name, config in test_type_configs.items()}
+        
+        # Create a 'target_tat' column for vectorized comparison
+        conclusive_tests['target_tat'] = conclusive_tests['test_type'].map(target_map)
+        met_tat = (conclusive_tests['test_turnaround_days'] <= conclusive_tests['target_tat']).sum()
+        kpis['perc_tests_within_tat'] = (met_tat / len(conclusive_tests.dropna(subset=['target_tat']))) * 100 if len(conclusive_tests.dropna(subset=['target_tat'])) > 0 else 0
+    else:
+        kpis['avg_test_tat_days'] = np.nan
+        kpis['perc_tests_within_tat'] = 0.0
+
+    # 2. Test Quality & Demand KPIs
+    kpis['sample_rejection_rate_perc'] = df['is_rejected'].mean() * 100 if 'is_rejected' in df else 0.0
+    kpis['pending_critical_tests_count'] = df['is_critical_and_pending'].sum() if 'is_critical_and_pending' in df else 0
+
+    # 3. Supply Chain KPIs
+    kpis['key_items_at_risk_count'] = df['is_supply_at_risk'].sum() if 'is_supply_at_risk' in df else 0
+    
+    # 4. Test Positivity Rates (as a dictionary for detailed breakdown)
+    positivity_breakdown = {}
+    test_df = df.dropna(subset=['test_type', 'is_positive'])
+    if not test_df.empty:
+        # Calculate positivity rate per test type
+        positivity_groups = test_df.groupby('test_type')['is_positive'].agg(['mean', 'count'])
+        for test_type, data in positivity_groups.iterrows():
+            positivity_breakdown[test_type] = {
+                'positivity_rate_perc': data['mean'] * 100,
+                'total_conclusive_tests': data['count']
+            }
+    kpis['positivity_rates'] = positivity_breakdown
+
+    return kpis
+
+
+def calculate_environmental_kpis(iot_df: pd.DataFrame) -> Dict[str, Any]:
+    """Calculates summary KPIs from IoT environmental data."""
+    if not isinstance(iot_df, pd.DataFrame) or iot_df.empty:
+        return {}
+
+    kpis: Dict[str, Any] = {
+        'avg_co2_ppm': iot_df['avg_co2_ppm'].mean(),
+        'avg_pm25_ugm3': iot_df['avg_pm25'].mean(),
+        'avg_waiting_room_occupancy': iot_df['waiting_room_occupancy'].mean(),
+    }
+    
+    # Get latest noise reading per room and count high-noise alerts
+    if 'timestamp' in iot_df.columns and 'room_name' in iot_df.columns and 'avg_noise_db' in iot_df.columns:
+        latest_readings = iot_df.sort_values('timestamp').drop_duplicates('room_name', keep='last')
+        high_noise_threshold = getattr(settings.ANALYTICS, 'noise_high_threshold_db', 80)
+        kpis['rooms_with_high_noise_count'] = (latest_readings['avg_noise_db'] > high_noise_threshold).sum()
+    else:
+        kpis['rooms_with_high_noise_count'] = 0
+
+    return kpis
+
+def calculate_district_kpis(enriched_zone_df: pd.DataFrame) -> Dict[str, Any]:
+    """Calculates high-level summary KPIs for an entire district from enriched zone data."""
+    if not isinstance(enriched_zone_df, pd.DataFrame) or enriched_zone_df.empty:
+        return {}
+
+    kpis: Dict[str, Any] = {}
+    population = enriched_zone_df['population'].sum()
+    kpis['total_population'] = int(population)
+    kpis['total_zones'] = len(enriched_zone_df)
+    
+    # Population-weighted average risk score
+    if population > 0 and 'avg_risk_score' in enriched_zone_df.columns:
+        weighted_avg = np.average(
+            enriched_zone_df['avg_risk_score'].fillna(0),
+            weights=enriched_zone_df['population']
+        )
+        kpis['population_weighted_avg_risk_score'] = weighted_avg
+    else:
+        kpis['population_weighted_avg_risk_score'] = enriched_zone_df['avg_risk_score'].mean()
+
+    # Count zones exceeding risk threshold
+    high_risk_threshold = settings.ANALYTICS.risk_score_moderate_threshold
+    kpis['zones_in_high_risk_count'] = (enriched_zone_df['avg_risk_score'] > high_risk_threshold).sum()
+    
+    # Aggregate total key disease cases across the district
+    active_case_cols = [col for col in enriched_zone_df.columns if col.startswith('active_cases_')]
+    for col in active_case_cols:
+        disease_name = col.replace('active_cases_', '').replace('_', ' ').title()
+        kpis[f'total_{disease_name.lower().replace(" ", "_")}_cases'] = int(enriched_zone_df[col].sum())
+        
+    return kpis
 
 # --- Generic Trend Calculation Utility ---
-def get_trend_data(df: Optional[pd.DataFrame], value_col: str, date_col: str, agg_func: Union[str, Callable] = 'mean', **kwargs) -> pd.Series:
+
+def calculate_trend(
+    df: Optional[pd.DataFrame],
+    value_col: str,
+    date_col: str,
+    freq: str = 'D',
+    agg_func: Union[str, Callable] = 'mean'
+) -> pd.Series:
     """
     Calculates a time-series trend for a given column, aggregated by a specified period.
-    
-    SME NOTE: DEFINITIVE BACKWARD-COMPATIBILITY FIX.
-    This function now accepts either `freq=` (the new, preferred name) or `period=`
-    (the old name) from its keyword arguments (`**kwargs`). This prevents TypeErrors
-    from any page in the application (like 02_clinic_dashboard.py or
-    03_district_dashboard.py) that calls this shared function, regardless of which
-    parameter name it uses.
     """
-    # Handle backward compatibility for the frequency/period argument.
-    # It will look for 'freq' first, then 'period', then default to 'D'.
-    freq = kwargs.get('freq', kwargs.get('period', 'D'))
-
     if not isinstance(df, pd.DataFrame) or df.empty or date_col not in df.columns or value_col not in df.columns:
         return pd.Series(dtype=np.float64)
-    
+
     df_trend = df[[date_col, value_col]].copy()
     df_trend[date_col] = pd.to_datetime(df_trend[date_col], errors='coerce')
     df_trend[value_col] = convert_to_numeric(df_trend[value_col])
     df_trend.dropna(subset=[date_col, value_col], inplace=True)
 
-    if df_trend.empty: return pd.Series(dtype=np.float64)
-    
+    if df_trend.empty:
+        return pd.Series(dtype=np.float64)
+
     try:
-        if freq == 'H': freq = 'h' # Use modern, non-deprecated frequency string
         trend_series = df_trend.set_index(date_col)[value_col].resample(freq).agg(agg_func)
-        if isinstance(agg_func, str) and agg_func in ['count', 'size', 'nunique']:
-            trend_series = trend_series.fillna(0).astype(int)
+        # For counts, fill missing periods with 0 for a continuous trend line
+        if isinstance(agg_func, str) and agg_func in ['count', 'size', 'nunique', 'sum']:
+            trend_series = trend_series.fillna(0)
+            if not pd.api.types.is_float_dtype(trend_series.dtype):
+                 trend_series = trend_series.astype(int)
         return trend_series
     except Exception as e:
         logger.error(f"Error generating trend for '{value_col}': {e}", exc_info=True)
         return pd.Series(dtype=np.float64)
 
-# --- Preparer Classes for KPI Calculation ---
+# --- Streamlit-Cached Wrapper Functions for UI ---
 
-class ClinicKPIPreparer:
-    """Encapsulates all logic for calculating clinic-level summary KPIs."""
-    def __init__(self, health_df: pd.DataFrame):
-        self.df = health_df.copy() if isinstance(health_df, pd.DataFrame) else pd.DataFrame()
-        self.summary: Dict[str, Any] = {"overall_avg_test_turnaround_conclusive_days": np.nan, "perc_critical_tests_tat_met": 0.0, "total_pending_critical_tests_patients": 0, "sample_rejection_rate_perc": 0.0, "key_drug_stockouts_count": 0, "test_summary_details": {}}
+@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
+def get_cached_clinic_kpis(df: Optional[pd.DataFrame], _source_context: str = "") -> Dict[str, Any]:
+    """Cached wrapper for calculate_clinic_kpis for Streamlit performance."""
+    return calculate_clinic_kpis(df)
 
-    def _calculate_testing_kpis(self):
-        if not all(c in self.df.columns for c in ['test_type', 'test_result', 'test_turnaround_days', 'sample_status', 'patient_id']): return
-        conclusive = self.df[~self.df['test_result'].str.lower().isin(['pending', 'rejected', 'unknown'])]
-        if not conclusive.empty: self.summary["overall_avg_test_turnaround_conclusive_days"] = conclusive['test_turnaround_days'].mean()
-        critical_keys = [k for k, v in getattr(settings, 'KEY_TEST_TYPES_FOR_ANALYSIS', {}).items() if isinstance(v, dict) and v.get("critical")]
-        critical_df = self.df[self.df['test_type'].isin(critical_keys)]
-        if not critical_df.empty:
-            conclusive_crit = critical_df[~critical_df['test_result'].str.lower().isin(['pending', 'rejected'])]
-            if not conclusive_crit.empty:
-                target_map = {k: v.get('target_tat_days', getattr(settings, 'TARGET_TEST_TURNAROUND_DAYS', 7)) for k, v in getattr(settings, 'KEY_TEST_TYPES_FOR_ANALYSIS', {}).items()}
-                conclusive_crit_with_target = conclusive_crit.assign(target_tat=lambda x: x['test_type'].map(target_map))
-                self.summary["perc_critical_tests_tat_met"] = ((conclusive_crit_with_target['test_turnaround_days'] <= conclusive_crit_with_target['target_tat']).mean() * 100)
-            self.summary["total_pending_critical_tests_patients"] = critical_df[critical_df['test_result'].str.lower() == 'pending']['patient_id'].nunique()
-        valid_status = self.df[self.df['sample_status'].notna() & ~self.df['sample_status'].str.lower().isin(['unknown', ''])]
-        denominator = valid_status['patient_id'].nunique()
-        if denominator > 0:
-            rejected = valid_status[valid_status['sample_status'].str.lower() == 'rejected by lab']['patient_id'].nunique()
-            self.summary["sample_rejection_rate_perc"] = (rejected / denominator) * 100
+@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
+def get_cached_environmental_kpis(iot_df: Optional[pd.DataFrame], _source_context: str = "") -> Dict[str, Any]:
+    """Cached wrapper for calculate_environmental_kpis for Streamlit performance."""
+    return calculate_environmental_kpis(iot_df)
 
-    def _calculate_supply_kpis(self):
-        if not all(c in self.df.columns for c in ['item', 'item_stock_agg_zone', 'consumption_rate_per_day', 'encounter_date', 'zone_id']): return
-        latest = self.df.sort_values('encounter_date').drop_duplicates(subset=['item', 'zone_id'], keep='last').copy()
-        latest['consumption_rate_per_day'] = latest['consumption_rate_per_day'].replace(0, 0.001)
-        latest['days_of_supply'] = latest['item_stock_agg_zone'] / latest['consumption_rate_per_day']
-        key_drugs_pattern = '|'.join(map(re.escape, getattr(settings, 'KEY_DRUG_SUBSTRINGS_SUPPLY', [])))
-        if not key_drugs_pattern: return
-        key_drugs_stock_df = latest[latest['item'].str.contains(key_drugs_pattern, case=False, na=False)]
-        if not key_drugs_stock_df.empty:
-            self.summary["key_drug_stockouts_count"] = key_drugs_stock_df[key_drugs_stock_df['days_of_supply'] < getattr(settings, 'CRITICAL_SUPPLY_DAYS_REMAINING', 7)]['item'].nunique()
+@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
+def get_cached_district_kpis(enriched_zone_df: Optional[pd.DataFrame], _source_context: str = "") -> Dict[str, Any]:
+    """Cached wrapper for calculate_district_kpis for Streamlit performance."""
+    return calculate_district_kpis(enriched_zone_df)
 
-    def _calculate_test_breakdown(self):
-        if not all(c in self.df.columns for c in ['test_type', 'test_result', 'patient_id', 'sample_status', 'test_turnaround_days']): return
-        tests_df = self.df[self.df['test_type'].isin(getattr(settings, 'KEY_TEST_TYPES_FOR_ANALYSIS', {}).keys())].copy()
-        if tests_df.empty: return
-        tests_df['is_positive'] = (tests_df['test_result'].str.lower() == 'positive')
-        conclusive_df = tests_df[~tests_df['test_result'].str.lower().isin(['pending', 'rejected', 'unknown'])]
-        if not conclusive_df.empty:
-            agg_spec = {'positive_rate_perc': pd.NamedAgg(column='is_positive', aggfunc=lambda x: x.mean() * 100 if len(x) > 0 else 0.0)}
-            breakdown = conclusive_df.groupby('test_type').agg(**agg_spec)
-            self.summary['test_summary_details'] = breakdown.to_dict('index')
-        else: self.summary['test_summary_details'] = {}
-
-    def prepare(self) -> Dict[str, Any]:
-        if self.df.empty: return self.summary
-        self._calculate_testing_kpis(); self._calculate_supply_kpis(); self._calculate_test_breakdown()
-        return self.summary
-
-class ClinicEnvKPIPreparer:
-    def __init__(self, iot_df: pd.DataFrame):
-        self.df = iot_df.copy() if isinstance(iot_df, pd.DataFrame) else pd.DataFrame()
-        self.summary: Dict[str, Any] = {"avg_co2_overall_ppm": np.nan, "avg_pm25_overall_ugm3": np.nan, "avg_waiting_room_occupancy_overall_persons": np.nan, "rooms_noise_high_alert_latest_count": 0}
-
-    def prepare(self) -> Dict[str, Any]:
-        if self.df.empty: return self.summary
-        for col in ['avg_co2_ppm', 'avg_pm25', 'avg_noise_db', 'waiting_room_occupancy']:
-            if col in self.df.columns: self.df[col] = convert_to_numeric(self.df[col])
-        self.summary['avg_co2_overall_ppm'] = self.df.get('avg_co2_ppm', pd.Series(dtype=float)).mean()
-        self.summary['avg_pm25_overall_ugm3'] = self.df.get('avg_pm25', pd.Series(dtype=float)).mean()
-        self.summary['avg_waiting_room_occupancy_overall_persons'] = self.df.get('waiting_room_occupancy', pd.Series(dtype=float)).mean()
-        if 'timestamp' in self.df.columns and 'room_name' in self.df.columns:
-            latest = self.df.sort_values('timestamp').drop_duplicates('room_name', keep='last')
-            self.summary['rooms_noise_high_alert_latest_count'] = (latest.get('avg_noise_db', pd.Series(dtype=float)) > getattr(settings, 'ALERT_AMBIENT_NOISE_HIGH_DBA', 80)).sum()
-        return self.summary
-
-class CHWDailySummaryPreparer:
-    def __init__(self, health_df: pd.DataFrame): self.df = health_df
-    def prepare(self): return {} 
-
-class DistrictKPIPreparer:
-    """SME NOTE: FUNCTIONAL FIX. The logic for this preparer was missing and has now been implemented."""
-    def __init__(self, enriched_zone_df: pd.DataFrame):
-        self.df = enriched_zone_df.copy() if isinstance(enriched_zone_df, pd.DataFrame) else pd.DataFrame()
-
-    def prepare(self) -> Dict[str, Any]:
-        if self.df.empty: return {}
-        kpis: Dict[str, Any] = {}
-        kpis['total_population_district'] = int(self.df.get('population', 0).sum())
-        kpis['total_zones_in_df'] = len(self.df)
-        
-        pop = self.df.get('population')
-        risk = self.df.get('avg_risk_score')
-        
-        if pop is not None and risk is not None and pop.sum() > 0:
-            kpis['population_weighted_avg_ai_risk_score'] = np.average(risk, weights=pop)
-        else:
-            kpis['population_weighted_avg_ai_risk_score'] = risk.mean() if risk is not None else 0.0
-
-        if risk is not None:
-            high_risk_threshold = getattr(settings, 'DISTRICT_ZONE_HIGH_RISK_AVG_SCORE', 7.5)
-            kpis['zones_meeting_high_risk_criteria_count'] = int((risk > high_risk_threshold).sum())
-        else:
-            kpis['zones_meeting_high_risk_criteria_count'] = 0
-            
-        return kpis
-
-# --- Public Factory Functions ---
-# SME NOTE: These are now fully robust and call the corrected/implemented classes above.
-@st.cache_data(ttl=getattr(settings, 'CACHE_TTL_SECONDS_WEB_REPORTS', 3600), hash_funcs={pd.DataFrame: hash_dataframe_safe})
-def get_clinic_summary_kpis(health_df_period: Optional[pd.DataFrame], source_context: str = "") -> Dict[str, Any]:
-    return ClinicKPIPreparer(health_df_period).prepare()
-
-@st.cache_data(ttl=getattr(settings, 'CACHE_TTL_SECONDS_WEB_REPORTS', 3600), hash_funcs={pd.DataFrame: hash_dataframe_safe})
-def get_clinic_environmental_summary_kpis(iot_df_period: Optional[pd.DataFrame], source_context: str = "") -> Dict[str, Any]:
-    return ClinicEnvKPIPreparer(iot_df_period).prepare()
-
-@st.cache_data(ttl=getattr(settings, 'CACHE_TTL_SECONDS_WEB_REPORTS', 3600), hash_funcs={pd.DataFrame: hash_dataframe_safe})
-def get_chw_summary_kpis(health_df_daily: Optional[pd.DataFrame], for_date: Any, source_context: str = "") -> Dict[str, Any]:
-    if not isinstance(health_df_daily, pd.DataFrame) or health_df_daily.empty: return CHWDailySummaryPreparer(pd.DataFrame()).prepare()
-    target_date = pd.to_datetime(for_date).date()
-    daily_df = health_df_daily[pd.to_datetime(health_df_daily['encounter_date']).dt.date == target_date]
-    return CHWDailySummaryPreparer(daily_df).prepare()
-
-@st.cache_data(ttl=getattr(settings, 'CACHE_TTL_SECONDS_WEB_REPORTS', 3600), hash_funcs={pd.DataFrame: hash_dataframe_safe})
-def get_district_summary_kpis(enriched_zone_df: Optional[pd.DataFrame], source_context: str = "") -> Dict[str, Any]:
-    return DistrictKPIPreparer(enriched_zone_df).prepare()
+@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
+def get_cached_trend(df: Optional[pd.DataFrame], **kwargs) -> pd.Series:
+    """Cached wrapper for calculate_trend for Streamlit performance."""
+    return calculate_trend(df, **kwargs)
