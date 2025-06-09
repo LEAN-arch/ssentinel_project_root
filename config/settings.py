@@ -1,171 +1,190 @@
 # sentinel_project_root/config/settings.py
-# SME PLATINUM STANDARD (V4.1 - IMPORT FIX)
-# This definitive version corrects the critical ImportError by importing
-# `computed_field` from `pydantic` instead of `typing`.
+# SME PLATINUM STANDARD - CENTRALIZED CONFIGURATION HUB
 
-import os
 import logging
 from datetime import datetime
 from pathlib import Path
-# <<< SME FIX >>> `computed_field` is removed from this import.
-from typing import List, Dict, Literal, Any
+from typing import Any, Dict, List, Literal, Tuple
 
-# <<< SME FIX >>> `computed_field` is added to the pydantic import.
-from pydantic import BaseModel, Field, field_validator, model_validator, computed_field
+import numpy as np
+from pydantic import (BaseModel, Field, FilePath, DirectoryPath, field_validator,
+                      model_validator, computed_field, PositiveInt, PositiveFloat,
+                      NonNegativeInt, NonNegativeFloat)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# --- Logger Setup ---
+# --- Logger for Settings Loading ---
 settings_logger = logging.getLogger(__name__)
 
-# --- Helper Functions (can be outside the class or static methods) ---
-def _validate_path(path_val: Any, info: Any, is_dir: bool = False) -> Path:
-    """ Pydantic-compatible validator for file/directory paths. """
-    if not isinstance(path_val, (str, Path)):
-        raise ValueError(f"Path must be a string or Path object, not {type(path_val)}")
-    
-    path_obj = Path(path_val).resolve()
-    description = info.field_name.replace('_', ' ').title()
-
-    if not path_obj.exists():
-        settings_logger.warning(f"Config Warning: {description} not found at: {path_obj}")
-    elif is_dir and not path_obj.is_dir():
-        settings_logger.warning(f"Config Warning: Expected directory for {description}, found file at: {path_obj}")
-    elif not is_dir and not path_obj.is_file():
-        settings_logger.warning(f"Config Warning: Expected file for {description}, found directory at: {path_obj}")
-    elif not is_dir and path_obj.stat().st_size == 0:
-        settings_logger.warning(f"Config Warning: {description} file is empty at: {path_obj}")
-    return path_obj
-
 # --- Nested Models for Structured Configuration ---
+
 class TestTypeConfig(BaseModel):
+    """Configuration for a specific laboratory test type."""
     disease_group: str
-    target_tat_days: float
-    critical: bool
+    target_tat_days: PositiveFloat
+    is_critical: bool
     display_name: str
 
-class SymptomClusterConfig(BaseModel):
-    fever_cough_fatigue: List[str] = Field(..., alias="Fever, Cough, Fatigue")
-    diarrhea_vomiting: List[str] = Field(..., alias="Diarrhea & Vomiting")
-    fever_rash: List[str] = Field(..., alias="Fever & Rash")
+class ModelWeightsConfig(BaseModel):
+    """Encapsulates weights for AI/ML models for easy tuning."""
+    # Risk Model Weights
+    base_age_gt_65: float = 10.0
+    base_age_lt_5: float = 12.0
+    symptom_cluster_severity_high: float = 25.0
+    symptom_cluster_severity_med: float = 15.0
+    vital_spo2_critical: float = 35.0
+    vital_temp_critical: float = 25.0
+    comorbidity: float = 15.0
+
+    # Follow-up Priority Model Weights
+    risk_score_multiplier: float = 0.6
+    critical_vital_alert: float = 40.0
+    pending_urgent_referral: float = 30.0
+    days_overdue_multiplier: float = 1.5
+    poor_med_adherence: float = 20.0
+
+class AnalyticsConfig(BaseModel):
+    """Configuration for analytics, forecasting, and thresholds."""
+    # --- Health & Operational Thresholds ---
+    spo2_critical_threshold_pct: int = 90
+    spo2_warning_threshold_pct: int = 94
+    temp_high_fever_threshold_c: float = 39.0
+    risk_score_low_threshold: int = 40
+    risk_score_moderate_threshold: int = 65
+    supply_critical_threshold_days: int = 7
+    supply_low_threshold_days: int = 14
+    test_tat_overdue_buffer_days: int = 2
+    top_n_rejection_reasons: int = 5
+    prophet_forecast_days: int = 90
+    prophet_changepoint_prior_scale: float = 0.05
+    prophet_seasonality_prior_scale: float = 10.0
+    random_seed: int = 42
+
+    @model_validator(mode='after')
+    def validate_thresholds(self) -> 'AnalyticsConfig':
+        if not self.risk_score_low_threshold < self.risk_score_moderate_threshold:
+            raise ValueError("Risk score 'low' threshold must be less than 'moderate' threshold.")
+        if not self.supply_critical_threshold_days < self.supply_low_threshold_days:
+            raise ValueError("Supply 'critical' threshold must be less than 'low' threshold.")
+        return self
 
 # --- Main Settings Class ---
+
 class Settings(BaseSettings):
     """
     Manages all application settings using Pydantic for validation and type safety.
     Loads settings from environment variables with a specified prefix.
     """
-    model_config = SettingsConfigDict(env_prefix='SENTINEL_', case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_prefix='SENTINEL_',
+        case_sensitive=False,
+        env_file='.env',
+        env_file_encoding='utf-8',
+        extra='ignore'
+    )
 
     # --- I. Core System & Directory Configuration ---
-    PROJECT_ROOT_DIR: Path = Path(__file__).resolve().parent.parent
+    PROJECT_ROOT_DIR: DirectoryPath = Path(__file__).resolve().parent.parent
     APP_NAME: str = "Sentinel Health Co-Pilot"
-    APP_VERSION: str = "4.0.3"
-    ORGANIZATION_NAME: str = "LMIC Health Futures Initiative"
-    SUPPORT_CONTACT_INFO: str = "support@lmic-health-futures.org"
+    APP_VERSION: str = "5.0.0"
+    ORGANIZATION_NAME: str = "Resilient Health Systems Initiative"
+    SUPPORT_CONTACT_INFO: str = "support@rhsc.org"
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    LOG_FORMAT: str = "%(asctime)s - %(name)s.%(funcName)s:%(lineno)d - %(levelname)s - %(message)s"
     LOG_DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
-    
-    # Paths (will use validators)
-    ASSETS_DIR: Path
-    DATA_SOURCES_DIR: Path
-    APP_LOGO_SMALL_PATH: Path
-    APP_LOGO_LARGE_PATH: Path
-    STYLE_CSS_PATH_WEB: Path
-    ESCALATION_PROTOCOLS_JSON_PATH: Path
-    PICTOGRAM_MAP_JSON_PATH: Path
-    HAPTIC_PATTERNS_JSON_PATH: Path
-    HEALTH_RECORDS_PATH: Path
-    ZONE_ATTRIBUTES_PATH: Path
-    ZONE_GEOMETRIES_PATH: Path
-    IOT_ENV_RECORDS_PATH: Path
 
-    @field_validator('ASSETS_DIR', 'DATA_SOURCES_DIR', mode='before')
-    @classmethod
-    def validate_dirs(cls, v, info):
-        return _validate_path(v, info, is_dir=True)
-
-    @field_validator(
-        'APP_LOGO_SMALL_PATH', 'APP_LOGO_LARGE_PATH', 'STYLE_CSS_PATH_WEB', 'ESCALATION_PROTOCOLS_JSON_PATH',
-        'PICTOGRAM_MAP_JSON_PATH', 'HAPTIC_PATTERNS_JSON_PATH', 'HEALTH_RECORDS_PATH',
-        'ZONE_ATTRIBUTES_PATH', 'ZONE_GEOMETRIES_PATH', 'IOT_ENV_RECORDS_PATH', mode='before'
-    )
-    @classmethod
-    def validate_files(cls, v, info):
-        return _validate_path(v, info, is_dir=False)
+    # --- II. Path Configuration (Validated) ---
+    ASSETS_DIR: DirectoryPath
+    DATA_SOURCES_DIR: DirectoryPath
+    APP_LOGO_SMALL_PATH: FilePath
+    APP_LOGO_LARGE_PATH: FilePath
+    STYLE_CSS_PATH: FilePath
+    ESCALATION_PROTOCOLS_PATH: FilePath
+    PICTOGRAM_MAP_PATH: FilePath
+    HAPTIC_PATTERNS_PATH: FilePath
+    HEALTH_RECORDS_PATH: FilePath
+    ZONE_ATTRIBUTES_PATH: FilePath
+    ZONE_GEOMETRIES_PATH: FilePath
+    IOT_RECORDS_PATH: FilePath
 
     @model_validator(mode='before')
     @classmethod
     def set_default_paths(cls, values: Any) -> Any:
         if isinstance(values, dict):
             root = values.get('PROJECT_ROOT_DIR', Path(__file__).resolve().parent.parent)
-            values.setdefault('ASSETS_DIR', root / "assets")
-            values.setdefault('DATA_SOURCES_DIR', root / "data_sources")
-            assets = values.get('ASSETS_DIR')
-            data = values.get('DATA_SOURCES_DIR')
-            
+            assets = root / "assets"
+            data = root / "data_sources"
+            values.setdefault('ASSETS_DIR', assets)
+            values.setdefault('DATA_SOURCES_DIR', data)
             values.setdefault('APP_LOGO_SMALL_PATH', assets / "sentinel_logo_small.png")
             values.setdefault('APP_LOGO_LARGE_PATH', assets / "sentinel_logo_large.png")
-            values.setdefault('STYLE_CSS_PATH_WEB', assets / "style_web_reports.css")
-            values.setdefault('ESCALATION_PROTOCOLS_JSON_PATH', assets / "escalation_protocols.json")
-            values.setdefault('PICTOGRAM_MAP_JSON_PATH', assets / "pictogram_map.json")
-            values.setdefault('HAPTIC_PATTERNS_JSON_PATH', assets / "haptic_patterns.json")
+            values.setdefault('STYLE_CSS_PATH', assets / "style_web_reports.css")
+            values.setdefault('ESCALATION_PROTOCOLS_PATH', assets / "escalation_protocols.json")
+            values.setdefault('PICTOGRAM_MAP_PATH', assets / "pictogram_map.json")
+            values.setdefault('HAPTIC_PATTERNS_PATH', assets / "haptic_patterns.json")
             values.setdefault('HEALTH_RECORDS_PATH', data / "health_records_expanded.csv")
             values.setdefault('ZONE_ATTRIBUTES_PATH', data / "zone_attributes.csv")
             values.setdefault('ZONE_GEOMETRIES_PATH', data / "zone_geometries.geojson")
-            values.setdefault('IOT_ENV_RECORDS_PATH', data / "iot_clinic_environment.csv")
+            values.setdefault('IOT_RECORDS_PATH', data / "iot_clinic_environment.csv")
         return values
 
-    # --- II. Health & Operational Thresholds ---
-    ALERT_SPO2_CRITICAL_LOW_PCT: int = 90
-    ALERT_SPO2_WARNING_LOW_PCT: int = 94
-    ALERT_BODY_TEMP_HIGH_FEVER_C: float = 39.5
-    RISK_SCORE_LOW_THRESHOLD: int = 40
-    RISK_SCORE_MODERATE_THRESHOLD: int = 60
-    RISK_SCORE_HIGH_THRESHOLD: int = 75
-    CRITICAL_SUPPLY_DAYS_REMAINING: int = 7
-    LOW_SUPPLY_DAYS_REMAINING: int = 14
-    TARGET_TEST_TURNAROUND_DAYS: float = 2.0
-    OVERDUE_TEST_BUFFER_DAYS: int = 2
-    TESTING_TOP_N_REJECTION_REASONS: int = 10
-    # ... other thresholds
-    RANDOM_SEED: int = 42
-
-    # --- V. Data Semantics & Categories ---
-    KEY_TEST_TYPES_FOR_ANALYSIS: Dict[str, TestTypeConfig] = {
-        "Malaria RDT": {"disease_group": "Malaria", "target_tat_days": 0.5, "critical": True, "display_name": "Malaria RDT"},
-        "CBC": {"disease_group": "General", "target_tat_days": 1, "critical": True, "display_name": "CBC"},
-        "COVID-19 Ag": {"disease_group": "Respiratory", "target_tat_days": 0.25, "critical": True, "display_name": "COVID-19 Ag"},
+    # --- III. Data Semantics & Categories ---
+    KEY_TEST_TYPES: Dict[str, TestTypeConfig] = {
+        "Malaria RDT": TestTypeConfig(disease_group="Vector-Borne", target_tat_days=0.5, is_critical=True, display_name="Malaria RDT"),
+        "CBC": TestTypeConfig(disease_group="General", target_tat_days=1.0, is_critical=True, display_name="CBC"),
+        "COVID-19 Ag": TestTypeConfig(disease_group="Respiratory", target_tat_days=0.25, is_critical=True, display_name="COVID-19 Ag"),
+        "Urinalysis": TestTypeConfig(disease_group="General", target_tat_days=0.5, is_critical=False, display_name="Urinalysis"),
+        "Stool Test": TestTypeConfig(disease_group="Gastrointestinal", target_tat_days=2.0, is_critical=False, display_name="Stool Test"),
     }
-    KEY_DIAGNOSES_FOR_ACTION: List[str] = ['Malaria', 'Pneumonia', 'Diarrhea', 'Hypertension', 'Diabetes']
-    KEY_DRUG_SUBSTRINGS_SUPPLY: List[str] = ['Paracetamol', 'Amoxicillin', 'ORS Packet', 'Metformin']
+    KEY_DIAGNOSES: List[str] = ['Malaria', 'Pneumonia', 'Diarrhea', 'Tuberculosis', 'Hypertension', 'Diabetes']
+    KEY_SUPPLY_ITEMS: List[str] = ['Paracetamol', 'Amoxicillin', 'ORS', 'Metformin', 'Gloves', 'Syringe']
+    SYMPTOM_CLUSTERS: Dict[str, List[str]] = {
+        "respiratory_distress": ["difficulty breathing", "rapid breathing", "chest pain"],
+        "severe_febrile": ["fever", "chills", "severe headache", "stiff neck"],
+        "dehydration_shock": ["diarrhea", "vomiting", "lethargy", "sunken eyes", "no tears"],
+    }
     
-    # ... other semantic configs
-
-    # <<< SME FIX >>> These @computed_field decorators will now work correctly.
     @computed_field
     @property
     def CRITICAL_TESTS(self) -> List[str]:
-        return [k for k, v in self.KEY_TEST_TYPES_FOR_ANALYSIS.items() if v.critical]
-        
+        return [k for k, v in self.KEY_TEST_TYPES.items() if v.is_critical]
+
+    # --- IV. Analytics, Models & Forecasting ---
+    ANALYTICS: AnalyticsConfig = AnalyticsConfig()
+    MODEL_WEIGHTS: ModelWeightsConfig = ModelWeightsConfig()
+
+    # --- V. UI, Visualization & Theming ---
+    WEB_CACHE_TTL_SECONDS: int = 3600
+    MAPBOX_TOKEN: Optional[str] = Field(None, description="Set via SENTINEL_MAPBOX_TOKEN env var")
+    MAPBOX_STYLE: str = "carto-positron"
+    MAP_DEFAULT_CENTER: Tuple[float, float] = (-1.286389, 36.817223) # Lat, Lon
+    MAP_DEFAULT_ZOOM: int = 5
+    
+    # Color palette - The single source of truth
+    COLOR_PRIMARY: str = "#1976D2"
+    COLOR_SECONDARY: str = "#546E7A"
+    COLOR_ACCENT: str = "#4D7BF3"
+    COLOR_BACKGROUND_PAGE: str = "#F8F9FA"
+    COLOR_BACKGROUND_CONTENT: str = "#FFFFFF"
+    COLOR_TEXT_PRIMARY: str = "#343A40"
+    COLOR_TEXT_HEADINGS: str = "#1A2557"
+    COLOR_TEXT_MUTED: str = "#6C757D"
+    COLOR_BORDER: str = "#DEE2E6"
+    COLOR_RISK_HIGH: str = "#D32F2F"
+    COLOR_RISK_MODERATE: str = "#FBC02D"
+    COLOR_RISK_LOW: str = "#388E3C"
+    COLOR_DELTA_POSITIVE: str = "#27AE60"
+    COLOR_DELTA_NEGATIVE: str = "#C0392B"
+    PLOTLY_COLORWAY: List[str] = [COLOR_PRIMARY, COLOR_DELTA_POSITIVE, COLOR_RISK_MODERATE, COLOR_RISK_HIGH, COLOR_SECONDARY, COLOR_ACCENT]
+    
     @computed_field
     @property
     def APP_FOOTER_TEXT(self) -> str:
         return f"© {datetime.now().year} {self.ORGANIZATION_NAME}. Actionable Intelligence for Resilient Health Systems."
 
-    # --- VI. Web Dashboard & VII. Color Palette ---
-    CACHE_TTL_SECONDS_WEB_REPORTS: int = Field(default=3600, alias="CACHE_TTL")
-    MAPBOX_STYLE_WEB: str = "carto-positron"
-    MAP_DEFAULT_CENTER_LAT: float = -1.286389
-    MAP_DEFAULT_CENTER_LON: float = 36.817223
-    MAP_DEFAULT_ZOOM_LEVEL: int = 5
-    COLOR_ACTION_PRIMARY: str = "#1976D2"
-    # ... other colors
-
 # --- Singleton Instance ---
 try:
     settings = Settings()
-    settings_logger.info(f"Sentinel settings loaded and validated. APP_NAME: {settings.APP_NAME} v{settings.APP_VERSION}.")
+    settings_logger.info(f"Sentinel settings loaded. App: {settings.APP_NAME} v{settings.APP_VERSION}")
 except Exception as e:
     settings_logger.critical(f"FATAL: Could not initialize application settings. Error: {e}", exc_info=True)
     raise
