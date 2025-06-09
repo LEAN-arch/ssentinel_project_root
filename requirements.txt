@@ -1,41 +1,28 @@
-# sentinel_project_root/.streamlit/config.toml
-# Streamlit application configuration for Sentinel Health Co-Pilot.
-# This file centralizes server, theme, and application behavior settings.
+# sentinel_project_root/requirements.txt
+# Python dependencies for the Sentinel Health Co-Pilot application.
+# Use 'pip install -r requirements.txt' to install.
 
-# --- Global Configuration ---
-[global]
-# Set to false to disable telemetry data collection by Streamlit.
-gatherUsageStats = false
-# Set to true to run the garbage collector after every script execution.
-# Can help with memory management in long-running apps.
-runOnSave = true 
+# --- Core Web Framework ---
+streamlit>=1.30.0
 
-# --- Server Configuration ---
-[server]
-port = 8501
-headless = true
-enableCORS = false # Set to false for Streamlit Cloud deployment compatibility
-enableXsrfProtection = true
-maxUploadSize = 100
+# --- Data Handling and Numerics ---
+pandas>=2.0.0
+numpy>=1.24.0
 
-# [SME Recommendation for Stability]
-# Uncomment the line below to disable the file watcher. This prevents errors
-# like "inotify watch limit reached" in containerized or certain Linux
-# environments and can improve performance by preventing unnecessary reruns.
-# fileWatcherType = "none"
+# --- Configuration Management ---
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
 
-# --- Theme Configuration ---
-# Defines the base visual theme. These values are the source of truth,
-# mirrored in config/settings.py and assets/style_web_reports.css for consistency.
-[theme]
-primaryColor="#1976D2"
-backgroundColor="#F8F9FA"
-secondaryBackgroundColor="#E9ECEF"
-textColor="#343A40"
-font="sans serif"
+# --- Data Visualization ---
+plotly>=5.15.0
+# Required by Plotly for static image export (e.g., sparklines)
+kaleido>=0.2.1
 
-# --- Mapbox Configuration ---
-# Required for using custom Mapbox styles in st.map().
-# This token is managed via environment variables in the application's config.
-[mapbox]
-# token = "SET_VIA_SENTINEL_MAPBOX_TOKEN_ENV_VAR"
+# --- Advanced Analytics & Forecasting ---
+# Prophet by Meta for time-series forecasting
+prophet>=1.1.5
+# Scikit-learn can be added here for more advanced ML models
+# scikit-learn>=1.3.0
+
+# --- Utility ---
+packaging>=23.0
