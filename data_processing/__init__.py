@@ -31,10 +31,10 @@ from .enrichment import (
 
 # --- Data Aggregation from aggregation.py ---
 from .aggregation import (
-    calculate_clinic_kpis,
-    calculate_environmental_kpis,
-    calculate_district_kpis,
-    calculate_trend
+    get_cached_clinic_kpis,
+    get_cached_environmental_kpis,
+    get_cached_district_kpis,
+    get_cached_trend,
 )
 
 # --- Define the canonical public API for the package ---
@@ -56,8 +56,8 @@ __all__ = [
     "enrich_zone_data_with_aggregates",
 
     # aggregation.py
-    "calculate_clinic_kpis",
-    "calculate_environmental_kpis",
-    "calculate_district_kpis",
-    "calculate_trend",
+    "get_cached_clinic_kpis",
+    "get_cached_environmental_kpis",
+    "get_cached_district_kpis",
+    "get_cached_trend",
 ]
