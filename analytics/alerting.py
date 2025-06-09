@@ -42,7 +42,9 @@ class BaseAlertGenerator:
                 self.df[col] = default
             # `convert_to_numeric` should handle filling NaNs if the whole series is convertible
             self.df[col] = convert_to_numeric(self.df[col])
-            self.df[col].fillna(default, inplace=True)
+            # Ensure default value is applied after conversion if NaNs remain
+            if self.df[col].isnull().any():
+                self.df[col].fillna(default, inplace=True)
     
     def _evaluate_rules(self) -> pd.DataFrame:
         """Evaluates all configured rules against the entire DataFrame using vectorized operations."""
@@ -62,8 +64,9 @@ class BaseAlertGenerator:
                 triggered_mask = series < threshold
             elif rule['condition'] == 'greater_than_or_equal':
                 triggered_mask = series >= threshold
-            elif rule['condition'] == 'between' and isinstance(threshold, tuple):
-                triggered_mask = series.between(threshold[0], threshold[1], inclusive='left')
+            elif rule['condition'] == 'between' and isinstance(threshold, tuple) and len(threshold) == 2:
+                # Inclusive on the lower bound, exclusive on the upper, e.g., [low, high)
+                triggered_mask = series.between(threshold[0], threshold[1], inclusive='left') 
             else:
                 continue
                 
@@ -95,6 +98,7 @@ class CHWAlertGenerator(BaseAlertGenerator):
             'min_spo2_pct': np.nan, 'vital_signs_temperature_celsius': np.nan,
             'max_skin_temp_celsius': np.nan, 'fall_detected_today': 0,
         })
+        # Standardize temperature into a single column
         self.df['temperature'] = self.df['vital_signs_temperature_celsius'].fillna(self.df.get('max_skin_temp_celsius'))
         
         spo2_crit = self._get_setting('ALERT_SPO2_CRITICAL_LOW_PCT', 90.0)
@@ -140,19 +144,22 @@ class ClinicPatientAlertGenerator(BaseAlertGenerator):
         self.df['temperature'] = self.df['vital_signs_temperature_celsius'].fillna(self.df.get('max_skin_temp_celsius'))
         
         self.ALERT_RULES = [
-             {"metric": "ai_risk_score", "condition": "greater_than_or_equal", "threshold": self._get_setting('RISK_SCORE_MODERATE_THRESHOLD', 60), "alert_details": {"alert_level": "INFO", "primary_reason": "High AI Risk"}, "priority_calculator": lambda v, t: v},
-             {"metric": "min_spo2_pct", "condition": "less_than", "threshold": self._get_setting('ALERT_SPO2_CRITICAL_LOW_PCT', 90), "alert_details": {"alert_level": "CRITICAL", "primary_reason": "Critical SpO2"}, "priority_calculator": lambda v, t: 95.0 + (t-v)},
-             {"metric": "temperature", "condition": "greater_than_or_equal", "threshold": self._get_setting('ALERT_BODY_TEMP_HIGH_FEVER_C', 39.0), "alert_details": {"alert_level": "CRITICAL", "primary_reason": "High Fever"}, "priority_calculator": lambda v, t: 90.0 + (v-t)},
+             {"metric": "ai_risk_score", "condition": "greater_than_or_equal", "threshold": self._get_setting('RISK_SCORE_MODERATE_THRESHOLD', 60), "alert_details": {"alert_level": "INFO", "primary_reason": "High AI Risk"}, "priority_calculator": lambda v, t: v, "details_formatter": lambda r: f"Score: {r.get('ai_risk_score', 0):.0f}"},
+             {"metric": "min_spo2_pct", "condition": "less_than", "threshold": self._get_setting('ALERT_SPO2_CRITICAL_LOW_PCT', 90), "alert_details": {"alert_level": "CRITICAL", "primary_reason": "Critical SpO2"}, "priority_calculator": lambda v, t: 95.0 + (t-v), "details_formatter": lambda r: f"SpO2: {r.get('min_spo2_pct', 0):.0f}%"},
+             {"metric": "temperature", "condition": "greater_than_or_equal", "threshold": self._get_setting('ALERT_BODY_TEMP_HIGH_FEVER_C', 39.0), "alert_details": {"alert_level": "CRITICAL", "primary_reason": "High Fever"}, "priority_calculator": lambda v, t: 90.0 + (v-t), "details_formatter": lambda r: f"Temp: {r.get('temperature', 0):.1f}°C"},
         ]
     
     def _format_output_df(self, df: pd.DataFrame) -> pd.DataFrame:
         if df.empty: return pd.DataFrame()
+        
         df['Alert Reason'] = df.apply(lambda row: f"{row['primary_reason']} ({row.get('triggering_value', 'N/A')})", axis=1)
         df['Priority Score'] = df['raw_priority_score'].round(1)
+        
         output_cols = ['patient_id', 'encounter_date', 'condition', 'Alert Reason', 'Priority Score', 'ai_risk_score', 'age', 'gender', 'zone_id']
         return df.reindex(columns=output_cols)
 
     def generate(self) -> pd.DataFrame:
+        """Main method to generate the formatted DataFrame for the clinic dashboard."""
         all_alerts_df = self._evaluate_rules()
         unique_alerts_df = self._deduplicate_alerts(all_alerts_df)
         return self._format_output_df(unique_alerts_df)
@@ -160,15 +167,18 @@ class ClinicPatientAlertGenerator(BaseAlertGenerator):
 
 # --- Public Factory Functions ---
 
-def generate_chw_patient_alerts(patient_encounter_df: pd.DataFrame, for_date: Union[str, date_type], max_alerts: int = 15) -> List[Dict[str, Any]]:
+def generate_chw_patient_alerts(patient_encounter_data_df: pd.DataFrame, for_date: Union[str, date_type], **kwargs) -> List[Dict[str, Any]]:
     """Factory function to generate prioritized alerts for a CHW on a specific date."""
-    if not isinstance(patient_encounter_df, pd.DataFrame) or patient_encounter_df.empty: return []
+    if not isinstance(patient_encounter_data_df, pd.DataFrame) or patient_encounter_data_df.empty: return []
+    
     try: processing_date = pd.to_datetime(for_date).date()
     except (AttributeError, ValueError): processing_date = datetime.now().date()
+        
     df_today = patient_encounter_data_df[pd.to_datetime(patient_encounter_data_df['encounter_date']).dt.date == processing_date]
     if df_today.empty: return []
+    
     generator = CHWAlertGenerator(df_today)
-    return generator.generate(max_alerts=max_alerts)
+    return generator.generate(**kwargs)
 
 def get_patient_alerts_for_clinic(health_df_period: pd.DataFrame) -> pd.DataFrame:
     """Factory function to generate a list of flagged patients for clinic review."""
