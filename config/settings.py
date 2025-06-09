@@ -4,7 +4,6 @@
 # bug fixes and robustness enhancements.
 
 import os
-import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -58,6 +57,11 @@ IOT_ENV_RECORDS_PATH = str(validate_path(DATA_SOURCES_DIR / "iot_clinic_environm
 
 
 # --- II. Health & Operational Thresholds ---
+# --- II. Health & Operational Thresholds ---
+TARGET_TEST_TURNAROUND_DAYS = 2.0
+CRITICAL_SUPPLY_DAYS_REMAINING = 7
+LOW_SUPPLY_DAYS_REMAINING = 14
+RISK_SCORE_MODERATE_THRESHOLD = 60
 ALERT_SPO2_CRITICAL_LOW_PCT = 90
 ALERT_SPO2_WARNING_LOW_PCT = 94
 ALERT_BODY_TEMP_FEVER_C = 38.0
@@ -118,16 +122,15 @@ NODE_REPORTING_INTERVAL_HOURS = 24
 
 
 # --- V. Data Semantics & Categories ---
+KEY_DRUG_SUBSTRINGS_SUPPLY = ['Paracetamol', 'Amoxicillin', 'ORS Packet', 'Metformin', 'Lisinopril']
 KEY_TEST_TYPES_FOR_ANALYSIS = {
-    "Sputum-AFB": {"disease_group": "TB", "target_tat_days": 2, "critical": True, "display_name": "TB Sputum (AFB)"},
-    "Sputum-GeneXpert": {"disease_group": "TB", "target_tat_days": 1, "critical": True, "display_name": "TB GeneXpert"},
-    "RDT-Malaria": {"disease_group": "Malaria", "target_tat_days": 0.5, "critical": True, "display_name": "Malaria RDT"},
-    "HIV-Rapid": {"disease_group": "HIV", "target_tat_days": 0.25, "critical": True, "display_name": "HIV Rapid Test"},
-    "HIV-ViralLoad": {"disease_group": "HIV", "target_tat_days": 7, "critical": True, "display_name": "HIV Viral Load"},
-    "BP Check": {"disease_group": "Hypertension", "target_tat_days": 0, "critical": False, "display_name": "BP Check"},
-    "PulseOx": {"disease_group": "Vitals", "target_tat_days": 0, "critical": False, "display_name": "Pulse Oximetry"},
+    "Malaria RDT": {"disease_group": "Malaria", "target_tat_days": 0.5, "critical": True, "display_name": "Malaria RDT"},
+    "CBC": {"disease_group": "General", "target_tat_days": 1, "critical": True, "display_name": "CBC"},
+    "Blood Pressure": {"disease_group": "NCD", "target_tat_days": 0.1, "critical": False, "display_name": "Blood Pressure"},
+    "Stool Test": {"disease_group": "Diarrheal", "target_tat_days": 2, "critical": False, "display_name": "Stool Test"},
+    "Blood Glucose": {"disease_group": "NCD", "target_tat_days": 0.1, "critical": False, "display_name": "Blood Glucose"},
+    "COVID-19 Ag": {"disease_group": "Respiratory", "target_tat_days": 0.25, "critical": True, "display_name": "COVID-19 Ag"},
 }
-# This derived list makes it easy to filter for critical tests elsewhere in the application.
 CRITICAL_TESTS = [k for k, v in KEY_TEST_TYPES_FOR_ANALYSIS.items() if v.get("critical", False)]
 TARGET_TEST_TURNAROUND_DAYS = 2.0
 TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY = 85.0
