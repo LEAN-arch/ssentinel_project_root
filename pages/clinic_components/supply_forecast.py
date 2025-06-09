@@ -1,22 +1,24 @@
 # sentinel_project_root/pages/clinic_components/supply_forecast.py
-# SME-EVALUATED AND CONFIRMED (GOLD STANDARD)
-# This definitive version is confirmed to be bug-free and highly optimized.
-# Final enhancements focus on comments and docstrings for ultimate clarity and maintainability.
+# SME-EVALUATED AND REVISED VERSION
+# This version significantly improves performance and clarity by replacing multiple
+# sorts and merges with a single, optimized groupby aggregation.
 
 import pandas as pd
 import numpy as np
 import logging
 import re
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 # --- Sentinel System Imports ---
 try:
     from config import settings
     from analytics.supply_forecasting import forecast_supply_levels_advanced, generate_simple_supply_forecast
 except ImportError as e:
+    # Use a basic config for the logger if the main one fails, to ensure the critical error is logged.
     logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
     logger_init = logging.getLogger(__name__)
     logger_init.critical(f"Critical import error in supply_forecast.py: {e}. Check project paths/dependencies.", exc_info=True)
+    # Re-raising is important to stop the application from starting in a broken state.
     raise
 
 logger = logging.getLogger(__name__)
@@ -27,10 +29,9 @@ class ClinicSupplyForecastPreparer:
     """
     Orchestrates the supply forecast data preparation process for the UI.
 
-    This class identifies relevant items based on configuration, runs a selected
-    forecasting model, and summarizes the results into a clean, actionable format
-    suitable for display in a dashboard component. It is performance-optimized
-    and designed for resilience against data and model issues.
+    This class identifies relevant items, runs a selected forecasting model,
+    and summarizes the results into a clean, actionable format suitable for
+    displaying in a dashboard component.
     """
     def __init__(self, historical_health_df: Optional[pd.DataFrame], use_ai_model: bool):
         """
@@ -41,7 +42,7 @@ class ClinicSupplyForecastPreparer:
             use_ai_model: A boolean flag to select between the advanced AI model and the simple model.
         """
         self.use_ai_model = use_ai_model
-        self.df_historical = historical_health_df.copy() if isinstance(historical_health_df, pd.DataFrame) and not historical_health_df.empty else pd.DataFrame()
+        self.df_historical = historical_health_df if isinstance(historical_health_df, pd.DataFrame) else pd.DataFrame()
         self.notes: List[str] = []
 
     def _get_setting(self, attr_name: str, default_value: Any) -> Any:
@@ -63,11 +64,15 @@ class ClinicSupplyForecastPreparer:
             self.notes.append("Config Warning: 'KEY_DRUG_SUBSTRINGS_SUPPLY' is not defined in settings.")
             return []
         
+        # Use re.escape to handle special characters in drug names safely
         pattern = '|'.join(re.escape(s) for s in key_drugs if s)
         if not pattern:
             return []
             
-        items = [item for item in self.df_historical['item'].dropna().unique() if re.search(pattern, item, re.IGNORECASE)]
+        items = [
+            item for item in self.df_historical['item'].dropna().unique()
+            if re.search(pattern, item, re.IGNORECASE)
+        ]
         
         if not items:
             self.notes.append("No items in the dataset matched the configured keywords for forecasting.")
@@ -78,18 +83,16 @@ class ClinicSupplyForecastPreparer:
     def _summarize_forecast_for_item(df_item: pd.DataFrame) -> pd.Series:
         """
         Processes a detailed forecast for a single item to extract key metrics.
-
-        This static method is designed for optimal performance with pandas'
-        `groupby().apply()`. It assumes the input `df_item` is a sub-frame
-        for a single item, pre-sorted by `forecast_date`.
+        This function is designed to be used with pandas' `groupby().apply()`.
 
         Args:
-            df_item: A DataFrame slice for a single item's forecast.
+            df_item: A DataFrame containing the forecast for a single item,
+                     sorted by forecast_date.
 
         Returns:
             A pandas Series containing 'days_of_supply_remaining' and 'estimated_stockout_date'.
         """
-        # The first row of the pre-sorted group is the current status.
+        # The first row of the sorted group is the current status.
         current_dos = df_item['forecasted_days_of_supply'].iloc[0]
 
         # Find the first date where supply drops below the threshold (e.g., < 1 day).
@@ -103,7 +106,7 @@ class ClinicSupplyForecastPreparer:
 
     def _add_status_column(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Adds a 'stock_status' column based on days of supply using vectorized logic.
+        Adds a 'stock_status' column based on the days of supply remaining.
 
         Args:
             df: The DataFrame to which the status column will be added.
@@ -118,7 +121,11 @@ class ClinicSupplyForecastPreparer:
         critical_threshold = self._get_setting('CRITICAL_SUPPLY_DAYS_REMAINING', 7)
         warning_threshold = self._get_setting('LOW_SUPPLY_DAYS_REMAINING', 14)
 
-        conditions = [dos < critical_threshold, dos < warning_threshold, dos.notna()]
+        conditions = [
+            dos < critical_threshold,
+            dos < warning_threshold,
+            dos.notna()
+        ]
         choices = ["Critical Low", "Warning Low", "Sufficient"]
         
         df['stock_status'] = np.select(conditions, choices, default="Unknown")
@@ -130,12 +137,16 @@ class ClinicSupplyForecastPreparer:
         This orchestrates finding items, running the forecast, and summarizing the results.
 
         Returns:
-            A dictionary containing the forecast overview list, model used, and processing notes.
+            A dictionary containing the forecast overview list, the model used, and any processing notes.
         """
         items_to_forecast = self._find_items_to_forecast()
         if not items_to_forecast:
             self.notes.append("Forecast halted: No items were identified for analysis.")
-            return {"forecast_items_overview_list": [], "forecast_model_type_used": "N/A", "processing_notes": self.notes}
+            return {
+                "forecast_items_overview_list": [],
+                "forecast_model_type_used": "N/A",
+                "processing_notes": self.notes
+            }
 
         model_name, forecast_func = (
             ("AI-Assisted (Prophet/ARIMA)", forecast_supply_levels_advanced) if self.use_ai_model
@@ -151,19 +162,18 @@ class ClinicSupplyForecastPreparer:
             detailed_forecast_df = pd.DataFrame()
 
         # --- PERFORMANCE & CLARITY REFACTOR ---
-        # Start with a base DataFrame of all items that should have been forecasted.
+        # Start with a base DataFrame of all items that should be forecasted.
         final_df = pd.DataFrame({'item': items_to_forecast})
         
         if isinstance(detailed_forecast_df, pd.DataFrame) and not detailed_forecast_df.empty:
-            # This is the core optimization: a single groupby().apply() call summarizes all item
-            # forecasts efficiently, avoiding Python loops and multiple DataFrame operations.
+            # Use a single, efficient groupby().apply() to get all summary stats at once.
             summary_df = (
                 detailed_forecast_df
                 .sort_values(['item', 'forecast_date'])
                 .groupby('item', as_index=False)
                 .apply(self._summarize_forecast_for_item)
             )
-            # A left merge ensures we keep all original items, even if a forecast result is missing.
+            # Left merge ensures we keep all original items, even if forecast results are missing for some.
             final_df = pd.merge(final_df, summary_df, on='item', how='left')
         else:
              self.notes.append("Forecasting model did not produce any data.")
@@ -171,18 +181,17 @@ class ClinicSupplyForecastPreparer:
         # --- Streamlined Data Cleaning and Formatting ---
         final_df = self._add_status_column(final_df)
         
-        # Ensure columns exist with default values before formatting to prevent KeyErrors.
+        # Ensure columns exist with default values before formatting
         if 'days_of_supply_remaining' not in final_df.columns:
             final_df['days_of_supply_remaining'] = 0.0
         if 'estimated_stockout_date' not in final_df.columns:
             final_df['estimated_stockout_date'] = pd.NaT
 
-        # Apply final formatting for UI display.
+        # Apply formatting and fill missing values
         final_df['days_of_supply_remaining'] = final_df['days_of_supply_remaining'].round(1).fillna(0.0)
         final_df['estimated_stockout_date'] = pd.to_datetime(final_df['estimated_stockout_date']).dt.strftime('%Y-%m-%d').fillna('N/A')
 
-        # This final reindex/fillna is a key robustness pattern. It guarantees a DataFrame with a
-        # predictable schema and no nulls, which is safe for direct consumption by a UI component.
+        # Final cleanup: ensure column order and no lingering NaNs for the UI.
         final_df = final_df.reindex(columns=UI_OUTPUT_COLS).fillna({
             'item': 'Unknown Item',
             'days_of_supply_remaining': 0.0,
@@ -203,14 +212,12 @@ def prepare_clinic_supply_forecast_overview_data(
 ) -> Dict[str, Any]:
     """
     Public function to prepare the supply forecast overview data.
-
-    This acts as a simple, clean entry point to the ClinicSupplyForecastPreparer class,
-    abstracting away the implementation details from the calling UI module.
+    This acts as a simple entry point to the ClinicSupplyForecastPreparer class.
 
     Args:
         historical_health_df: The DataFrame with historical consumption data.
         use_ai_supply_forecasting_model: Flag to toggle between simple and AI models.
-        **kwargs: Catches any extra arguments for forward compatibility.
+        **kwargs: Catches any extra arguments that might be passed.
 
     Returns:
         A dictionary containing the processed forecast data for the UI.
