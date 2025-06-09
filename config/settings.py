@@ -1,7 +1,7 @@
-# sentinel_project_root/config/settings.py
-# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD V2 - DEFINITIVE FIX)
-# This definitive version corrects the health records path to point to the
-# 'health_records_expanded.csv' file, resolving the critical startup error.
+# ssentinel_project_root/config/settings.py
+# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD V3 - SEMANTIC FIX)
+# This definitive version corrects the semantically incorrect KEY_CONDITIONS_FOR_ACTION
+# variable to KEY_DIAGNOSES_FOR_ACTION to align with the current data schema.
 
 import os
 import logging
@@ -49,10 +49,7 @@ STYLE_CSS_PATH_WEB = str(validate_path(ASSETS_DIR / "style_web_reports.css", "Gl
 ESCALATION_PROTOCOLS_JSON_PATH = str(validate_path(ASSETS_DIR / "escalation_protocols.json", "Escalation protocols JSON"))
 PICTOGRAM_MAP_JSON_PATH = str(validate_path(ASSETS_DIR / "pictogram_map.json", "Pictogram map JSON"))
 HAPTIC_PATTERNS_JSON_PATH = str(validate_path(ASSETS_DIR / "haptic_patterns.json", "Haptic patterns JSON"))
-
-# <<< SME REVISION >>> This is the critical fix. The path now points to the correct, expanded data file.
 HEALTH_RECORDS_PATH = str(validate_path(DATA_SOURCES_DIR / "health_records_expanded.csv", "Health records CSV"))
-
 ZONE_ATTRIBUTES_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_attributes.csv", "Zone attributes CSV"))
 ZONE_GEOMETRIES_PATH = str(validate_path(DATA_SOURCES_DIR / "zone_geometries.geojson", "Zone geometries GeoJSON"))
 IOT_ENV_RECORDS_PATH = str(validate_path(DATA_SOURCES_DIR / "iot_clinic_environment.csv", "IoT clinic environment CSV"))
@@ -133,7 +130,10 @@ KEY_TEST_TYPES_FOR_ANALYSIS = {
 }
 CRITICAL_TESTS = [k for k, v in KEY_TEST_TYPES_FOR_ANALYSIS.items() if v.get("critical", False)]
 OVERDUE_TEST_BUFFER_DAYS = 2
-KEY_CONDITIONS_FOR_ACTION = ['Malaria', 'Pneumonia', 'Diarrhea', 'Hypertension', 'Diabetes', 'URI', 'Bacterial Infection']
+# <<< SME REVISION >>> Renamed variable to align with the 'diagnosis' column in the data source.
+# This prevents KeyErrors and makes the configuration semantically correct.
+# IMPORTANT: All other files using this variable must be updated to use the new name.
+KEY_DIAGNOSES_FOR_ACTION = ['Malaria', 'Pneumonia', 'Diarrhea', 'Hypertension', 'Diabetes', 'URI', 'Bacterial Infection']
 KEY_DRUG_SUBSTRINGS_SUPPLY = ['Paracetamol', 'Amoxicillin', 'ORS Packet', 'Metformin', 'Lisinopril']
 NON_INFORMATIVE_SYMPTOMS = ['none', 'n/a', 'asymptomatic', '']
 TESTING_TOP_N_REJECTION_REASONS = 5
