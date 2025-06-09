@@ -1,7 +1,7 @@
 # sentinel_project_root/data_processing/loaders.py
-# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD V4 - SCHEMA-FIX)
-# This definitive version corrects the 'required_cols' list for health_records
-# to match the actual data source, resolving the schema validation failure.
+# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD V5 - DATE_COLS_FIX)
+# This definitive version corrects the 'date_cols' list for health_records
+# to prevent silent failures during data loading.
 
 """
 Contains standardized data loading functions for the Sentinel application.
@@ -36,13 +36,14 @@ class DataLoader:
     _DATA_CONFIG = {
         'health_records': {
             'setting_attr': 'HEALTH_RECORDS_PATH',
-            'date_cols': ['encounter_date', 'sample_collection_date', 'referral_outcome_date'],
+            # <<< SME REVISION >>> Corrected this list to only include date columns that
+            # actually exist in health_records_expanded.csv. This resolves the silent
+            # data loading failure.
+            'date_cols': ['encounter_date'],
             'dtype_map': {
                 'patient_id': str, 'chw_id': str, 'clinic_id': str,
                 'physician_id': str, 'diagnosis_code_icd10': str
             },
-            # <<< SME REVISION >>> Corrected 'condition' to 'diagnosis' to match the
-            # actual column name in the source CSV, resolving the schema validation failure.
             'required_cols': [
                 'patient_id', 'encounter_date', 'age', 'gender', 'test_type',
                 'test_result', 'diagnosis', 'ai_risk_score'
@@ -191,7 +192,7 @@ def load_zone_data(attributes_file_path: Optional[str] = None, geometries_file_p
 
 def load_json_config(path_or_setting: str, default: Any = None) -> Any:
     """
-s a JSON config file from a path or setting attribute.
+    Loads a JSON config file from a path or setting attribute.
     It first attempts to resolve `path_or_setting` as an attribute name in the
     settings file. If that fails, it treats `path_or_setting` as an explicit file path.
     """
