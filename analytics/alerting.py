@@ -42,9 +42,7 @@ class BaseAlertGenerator:
                 self.df[col] = default
             # `convert_to_numeric` should handle filling NaNs if the whole series is convertible
             self.df[col] = convert_to_numeric(self.df[col])
-            # Ensure default value is applied after conversion if NaNs remain
-            if self.df[col].isnull().any():
-                self.df[col].fillna(default, inplace=True)
+            self.df[col].fillna(default, inplace=True)
     
     def _evaluate_rules(self) -> pd.DataFrame:
         """Evaluates all configured rules against the entire DataFrame using vectorized operations."""
@@ -151,10 +149,8 @@ class ClinicPatientAlertGenerator(BaseAlertGenerator):
     
     def _format_output_df(self, df: pd.DataFrame) -> pd.DataFrame:
         if df.empty: return pd.DataFrame()
-        
         df['Alert Reason'] = df.apply(lambda row: f"{row['primary_reason']} ({row.get('triggering_value', 'N/A')})", axis=1)
         df['Priority Score'] = df['raw_priority_score'].round(1)
-        
         output_cols = ['patient_id', 'encounter_date', 'condition', 'Alert Reason', 'Priority Score', 'ai_risk_score', 'age', 'gender', 'zone_id']
         return df.reindex(columns=output_cols)
 
@@ -170,13 +166,10 @@ class ClinicPatientAlertGenerator(BaseAlertGenerator):
 def generate_chw_patient_alerts(patient_encounter_data_df: pd.DataFrame, for_date: Union[str, date_type], **kwargs) -> List[Dict[str, Any]]:
     """Factory function to generate prioritized alerts for a CHW on a specific date."""
     if not isinstance(patient_encounter_data_df, pd.DataFrame) or patient_encounter_data_df.empty: return []
-    
     try: processing_date = pd.to_datetime(for_date).date()
     except (AttributeError, ValueError): processing_date = datetime.now().date()
-        
     df_today = patient_encounter_data_df[pd.to_datetime(patient_encounter_data_df['encounter_date']).dt.date == processing_date]
     if df_today.empty: return []
-    
     generator = CHWAlertGenerator(df_today)
     return generator.generate(**kwargs)
 
