@@ -1,28 +1,16 @@
-encounter_id,patient_id,encounter_date,zone_id,age,gender,diagnosis,test_type,test_result,patient_reported_symptoms,item,item_stock_agg_zone,consumption_rate_per_day,test_turnaround_days,test_turnaround_conclusive_days,sample_status,rejection_reason,is_critical_and_pending,is_stockout,ai_risk_score
-EID001,PID001,2023-11-01T10:00:00,Zone-A,34,Female,Malaria,Malaria RDT,Positive,"Fever;Headache",Paracetamol 500mg Tablets,15000,120,1,1,Completed,N/A,0,0,78
-EID002,PID002,2023-11-01T11:30:00,Zone-B,25,Male,Pneumonia,CBC,Pending,"Cough;Fever;Difficulty Breathing",Amoxicillin 250mg Capsules,1500,80,N/A,N/A,Pending,N/A,1,0,85
-EID003,PID003,2023-11-02T09:00:00,Zone-A,45,Male,Hypertension,Blood Pressure,N/A,"Dizziness",Gloves (Box),50,5,N/A,N/A,N/A,N/A,0,0,45
-EID004,PID001,2023-11-05T14:00:00,Zone-A,34,Female,Malaria,Malaria RDT,Completed,"Fever",Paracetamol 500mg Tablets,14400,125,1,1,Completed,N/A,0,0,75
-EID005,PID004,2023-11-06T10:00:00,Zone-C,5,Female,Diarrhea,Stool Test,Pending,"Watery Stools",Zinc Sulfate 20mg Tablets,5000,40,N/A,N/A,Pending,N/A,1,0,65
-EID006,PID005,2023-11-08T11:00:00,Zone-B,60,Male,Malaria,Malaria RDT,Positive,"Fever;Chills",Artemether-Lumefantrine 20/120mg,8000,60,1,1,Completed,N/A,0,0,88
-EID007,PID002,2023-11-09T16:00:00,Zone-B,25,Male,Pneumonia,CBC,Completed,"Cough;Fever",Amoxicillin 250mg Capsules,1200,85,2,2,Completed,N/A,0,0,82
-EID008,PID006,2023-11-12T09:30:00,Zone-A,28,Female,URI,N/A,N/A,"Sore Throat;Cough",Paracetamol 500mg Tablets,13900,118,N/A,N/A,N/A,N/A,0,0,33
-EID009,PID007,2023-11-15T13:00:00,Zone-C,2,Male,Diarrhea,Stool Test,Completed,"Dehydration",Zinc Sulfate 20mg Tablets,4750,42,3,3,Completed,N/A,0,0,71
-EID010,PID008,2023-11-18T10:00:00,Zone-B,33,Female,Malaria,Malaria RDT,Positive,"Fever",Artemether-Lumefantrine 20/120mg,7400,65,1,1,Completed,N/A,0,0,79
-EID011,PID009,2023-11-20T11:45:00,Zone-A,41,Male,Bacterial Infection,CBC,Pending,"Fever;Pain",Amoxicillin 250mg Capsules,850,90,N/A,N/A,Pending,N/A,1,0,76
-EID012,PID010,2023-11-22T15:00:00,Zone-B,19,Female,Headache,N/A,N/A,"Headache",Paracetamol 500mg Tablets,13200,122,N/A,N/A,N/A,N/A,0,0,25
-EID013,PID011,2023-11-25T09:00:00,Zone-C,7,Female,Diarrhea,Stool Test,Pending,"Vomiting",Zinc Sulfate 20mg Tablets,4500,45,N/A,N/A,Pending,N/A,1,0,68
-EID014,PID012,2023-11-28T12:00:00,Zone-A,55,Male,Malaria,Malaria RDT,Negative,"Fever",Artemether-Lumefantrine 20/120mg,7000,60,1,1,Completed,N/A,0,0,58
-EID015,PID009,2023-12-01T14:30:00,Zone-A,41,Male,Bacterial Infection,CBC,Completed,"Fever",Amoxicillin 250mg Capsules,500,95,3,3,Rejected by Lab,Improper Labeling,0,0,74
-EID016,PID013,2023-12-03T10:00:00,Zone-B,29,Female,Migraine,N/A,N/A,"Headache;Nausea",Paracetamol 500mg Tablets,12600,120,N/A,N/A,N/A,N/A,0,0,40
-EID017,PID014,2023-12-06T11:00:00,Zone-C,3,Male,Diarrhea,Stool Test,Completed,"",Zinc Sulfate 20mg Tablets,4200,48,2,2,Completed,N/A,0,0,66
-EID018,PID015,2023-12-10T13:00:00,Zone-B,48,Male,Malaria,Malaria RDT,Positive,"Fever;Joint Pain",Artemether-Lumefantrine 20/120mg,6500,62,1,1,Completed,N/A,0,0,81
-EID019,PID016,2023-12-14T09:00:00,Zone-A,37,Female,Otitis Media,N/A,N/A,"Ear Pain",Amoxicillin 250mg Capsules,200,100,N/A,N/A,N/A,N/A,1,0,64
-EID020,PID017,2023-12-18T16:00:00,Zone-A,68,Male,Arthritis,N/A,N/A,"Joint Pain",Paracetamol 500mg Tablets,12000,115,N/A,N/A,N/A,N/A,0,0,55
-EID021,PID018,2023-12-22T10:30:00,Zone-C,4,Female,Diarrhea,Stool Test,Pending,"",Zinc Sulfate 20mg Tablets,3800,50,N/A,N/A,Pending,N/A,1,0,69
-EID022,PID019,2023-12-26T11:00:00,Zone-B,52,Female,Malaria,Malaria RDT,Negative,"",Artemether-Lumefantrine 20/120mg,6000,58,1,1,Completed,N/A,0,0,51
-EID023,PID020,2023-12-30T14:00:00,Zone-A,22,Male,Sinusitis,N/A,N/A,"Headache;Congestion",Amoxicillin 250mg Capsules,100,110,N/A,N/A,N/A,N/A,1,0,59
-EID024,PID021,2024-01-02T09:00:00,Zone-B,31,Female,Fever of Unknown Origin,CBC,Pending,"Fever",Paracetamol 500mg Tablets,11500,125,N/A,N/A,Pending,N/A,1,0,70
-EID025,PID022,2024-01-05T13:15:00,Zone-C,6,Male,Diarrhea,Stool Test,Completed,"",Zinc Sulfate 20mg Tablets,3400,52,3,3,Completed,N/A,0,0,67
-EID026,PID023,2024-01-08T10:00:00,Zone-A,46,Male,Malaria,Malaria RDT,Positive,"Fever",Artemether-Lumefantrine 20/120mg,5600,65,1,1,Completed,N/A,0,0,83
-EID027,PID024,2024-01-12T11:30:00,Zone-B,27,Female,UTI,Urinalysis,Pending,"Painful Urination",Amoxicillin 250mg Capsules,50,120,N/A,N/A,Pending,N/A,1,1,72
+encounter_id,patient_id,encounter_date,zone_id,age,gender,diagnosis,test_type,test_result,patient_reported_symptoms,item,item_stock_agg_zone,consumption_rate_per_day,test_turnaround_days,sample_status,rejection_reason,min_spo2_pct,vital_signs_temperature_celsius,fall_detected_today,days_task_overdue,referral_status,medication_adherence_self_report,chronic_condition_flag
+EID001,PID001,2023-11-01T10:00:00Z,Zone-A,34,Female,Malaria,Malaria RDT,Positive,"Fever;Headache",Paracetamol,15000,120,1,Completed,NA,98,38.5,0,0,Completed,Good,0
+EID002,PID002,2023-11-01T11:30:00Z,Zone-B,25,Male,Pneumonia,CBC,Pending,"Cough;Fever;Difficulty Breathing",Amoxicillin,1500,80,,Pending,NA,94,39.1,0,0,Pending,Fair,0
+EID003,PID003,2023-11-02T09:00:00Z,Zone-A,45,Male,Hypertension,Blood Pressure,NA,Dizziness,Gloves,50,5,,NA,NA,99,37.0,0,2,Completed,Good,1
+EID004,PID001,2023-11-05T14:00:00Z,Zone-A,34,Female,Malaria,Malaria RDT,Negative,"Fever",Paracetamol,14400,125,1,Completed,NA,97,37.5,0,0,Completed,Good,0
+EID005,PID004,2023-11-06T10:00:00Z,Zone-C,5,Female,Diarrhea,Stool Test,Pending,"Diarrhea;Vomiting;Sunken Eyes",ORS,5000,40,,Pending,NA,96,38.8,0,0,Pending,Good,0
+EID006,PID005,2023-11-08T11:00:00Z,Zone-B,60,Male,Malaria,Malaria RDT,Positive,"Fever;Chills",Metformin,8000,60,1,Completed,NA,92,39.8,0,5,Completed,Poor,1
+EID007,PID002,2023-11-09T16:00:00Z,Zone-B,25,Male,Pneumonia,CBC,Negative,"Cough;Fever",Amoxicillin,1200,85,2,Completed,NA,96,37.8,0,0,Completed,Good,0
+EID008,PID006,2023-11-12T09:30:00Z,Zone-A,28,Female,URI,NA,NA,"Sore Throat;Cough",Paracetamol,13900,118,,NA,NA,98,37.2,0,0,Completed,Good,0
+EID009,PID007,2023-11-15T13:00:00Z,Zone-C,2,Male,Diarrhea,Stool Test,Positive,"Dehydration",ORS,4750,42,3,Completed,NA,95,38.2,1,0,Pending,Good,0
+EID010,PID008,2023-11-18T10:00:00Z,Zone-B,33,Female,Malaria,Malaria RDT,Positive,Fever,Metformin,7400,65,1,Completed,NA,99,39.0,0,0,Completed,Good,0
+EID011,PID009,2023-11-20T11:45:00Z,Zone-A,41,Male,Tuberculosis,CBC,Pending,"Fever;Cough",Amoxicillin,850,90,,Pending,NA,93,38.1,0,3,Pending,Fair,1
+EID015,PID009,2023-12-01T14:30:00Z,Zone-A,41,Male,Tuberculosis,CBC,Rejected,"Fever",Amoxicillin,500,95,3,Rejected by Lab,Improper Labeling,94,37.9,0,0,Pending,Poor,1
+EID019,PID016,2023-12-14T09:00:00Z,Zone-A,37,Female,Pneumonia,NA,NA,"Ear Pain;Rapid Breathing",Amoxicillin,200,100,,NA,NA,91,39.5,0,0,Completed,Good,0
+EID023,PID020,2023-12-30T14:00:00Z,Zone-A,22,Male,Sinusitis,NA,NA,"Headache;Congestion",Amoxicillin,100,110,,NA,NA,99,37.0,0,0,Completed,Good,0
+EID027,PID024,2024-01-12T11:30:00Z,Zone-B,27,Female,UTI,Urinalysis,Pending,Painful Urination,Amoxicillin,50,120,,Pending,NA,98,37.5,0,1,Pending,Good,0
