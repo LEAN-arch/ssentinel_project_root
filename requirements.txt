@@ -5,7 +5,8 @@
 streamlit==1.35.0
 pandas==2.2.2
 numpy==1.26.4
-
+pydantic
+pydantic_settings==2.0
 # Plotting and Visualization
 plotly==5.22.0
 kaleido==0.2.1
