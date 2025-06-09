@@ -1,0 +1,28 @@
+# sentinel_project_root/scripts/packages.txt
+# A list of system-level dependencies that may be required by the Python
+# packages in requirements.txt, particularly for geospatial or image processing.
+# This file is for guidance; the setup.sh script will print installation
+# commands based on the detected OS.
+
+# --- For Building Python ---
+# build-essential
+# zlib1g-dev
+# libncurses5-dev
+# libgdbm-dev
+# libnss3-dev
+# libssl-dev
+# libreadline-dev
+# libffi-dev
+# libsqlite3-dev
+# wget
+# libbz2-dev
+
+# --- For specific Python Packages ---
+# Example: For potential future image processing libraries like Pillow or OpenCV
+# libjpeg-dev
+# zlib1g-dev
+
+# Example: For potential geospatial libraries (Note: these are NOT currently
+# required by the refactored Sentinel project, but are kept as examples)
+# libgeos-dev
+# libproj-dev
