@@ -1,60 +1,57 @@
 # sentinel_project_root/analytics/__init__.py
-# SME PLATINUM STANDARD (V3 - FINAL INTEGRATED VERSION)
-# This definitive version correctly exposes all high-level analytics functions,
-# including the newly created `generate_kpi_analysis_table` for the refactored
-# clinic dashboard, ensuring seamless system integration.
-
 """
-Initializes the analytics package, making key functions and classes
-available at the top level for easier importing.
+Initializes the analytics package, defining its public API.
 
-This __init__.py defines the public API for the package.
+This package contains all business logic for AI/ML models, alerting,
+forecasting, and complex KPI calculations.
 """
 
-# From orchestrator.py
+# --- Core AI/ML Model Orchestration ---
 from .orchestrator import apply_ai_models
 
-# From risk_prediction.py
+# --- Specific Model Logic (exposed for potential granular use) ---
 from .risk_prediction import calculate_risk_score
-
-# From followup_prioritization.py
 from .followup_prioritization import calculate_followup_priority
 
-# From alerting.py
-from .alerting import generate_chw_patient_alerts, get_patient_alerts_for_clinic
+# --- Alerting Engine ---
+from .alerting import (
+    generate_chw_alerts,
+    generate_clinic_patient_alerts
+)
 
-# From supply_forecasting.py
-from .supply_forecasting import generate_simple_supply_forecast, forecast_supply_levels_advanced
+# --- Supply Chain Forecasting ---
+from .supply_forecasting import (
+    generate_linear_forecast,
+    generate_prophet_forecast
+)
 
-# From protocol_executor.py
-from .protocol_executor import execute_escalation_protocols_batch
+# --- Protocol Execution ---
+from .protocol_executor import execute_protocol_for_event
 
-# <<< SME INTEGRATION >>> This is the line that fixes the crash.
-# It makes the new function available to the rest of the application.
-from .clinic_kpis import generate_kpi_analysis_table
+# --- High-Level Dashboard Analytics ---
+from .kpi_analyzer import generate_kpi_analysis_table
 
 
-# --- Define the public API for the analytics package ---
-# This list controls what is imported when a user does `from analytics import *`
-# and is considered the canonical list of public-facing components.
+# --- Define the canonical public API for the package ---
 __all__ = [
-    # Core analytics functions
+    # Orchestration
     "apply_ai_models",
+
+    # Models
     "calculate_risk_score",
     "calculate_followup_priority",
 
-    # Alerting functions
-    "generate_chw_patient_alerts",
-    "get_patient_alerts_for_clinic",
+    # Alerting
+    "generate_chw_alerts",
+    "generate_clinic_patient_alerts",
 
-    # Forecasting functions
-    "generate_simple_supply_forecast",
-    "forecast_supply_levels_advanced",
+    # Forecasting
+    "generate_linear_forecast",
+    "generate_prophet_forecast",
 
-    # Protocol execution
-    "execute_escalation_protocols_batch",
+    # Protocols
+    "execute_protocol_for_event",
 
-    # <<< SME INTEGRATION >>> Add the new function to the public API.
-    # High-level Dashboard Analytics
+    # KPI Analysis
     "generate_kpi_analysis_table",
 ]
