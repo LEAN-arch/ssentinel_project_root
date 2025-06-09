@@ -1,8 +1,8 @@
 # sentinel_project_root/analytics/__init__.py
-# SME PLATINUM STANDARD (V2 - ARCHITECTURAL ALIGNMENT)
-# This version updates the public API to reflect the batch-processing
-# architecture introduced in the submodules, promoting a more performant
-# and consistent usage pattern.
+# SME PLATINUM STANDARD (V3 - FINAL INTEGRATED VERSION)
+# This definitive version correctly exposes all high-level analytics functions,
+# including the newly created `generate_kpi_analysis_table` for the refactored
+# clinic dashboard, ensuring seamless system integration.
 
 """
 Initializes the analytics package, making key functions and classes
@@ -26,11 +26,12 @@ from .alerting import generate_chw_patient_alerts, get_patient_alerts_for_clinic
 # From supply_forecasting.py
 from .supply_forecasting import generate_simple_supply_forecast, forecast_supply_levels_advanced
 
-# <<< SME REVISION >>> Expose the batch function to align with modern architecture.
 # From protocol_executor.py
 from .protocol_executor import execute_escalation_protocols_batch
-# NOTE: The single-item `execute_escalation_protocol` is no longer part of the
-# primary public API to encourage more performant, batch-oriented workflows.
+
+# <<< SME INTEGRATION >>> Import the new high-level KPI function from its dedicated module.
+from .clinic_kpis import generate_kpi_analysis_table
+
 
 # --- Define the public API for the analytics package ---
 # This list controls what is imported when a user does `from analytics import *`
@@ -49,7 +50,10 @@ __all__ = [
     "generate_simple_supply_forecast",
     "forecast_supply_levels_advanced",
 
-    # <<< SME REVISION >>> Advertise the performant batch function.
     # Protocol execution
     "execute_escalation_protocols_batch",
+
+    # <<< SME INTEGRATION >>> Add the new function to the public API.
+    # High-level Dashboard Analytics
+    "generate_kpi_analysis_table",
 ]
