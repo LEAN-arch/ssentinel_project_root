@@ -1,7 +1,7 @@
 # sentinel_project_root/data_processing/loaders.py
-# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD V3 - SCHEMA-AWARE)
-# This definitive version adds proactive schema validation to prevent downstream errors
-# by checking for required columns at load time.
+# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD V4 - SCHEMA-FIX)
+# This definitive version corrects the 'required_cols' list for health_records
+# to match the actual data source, resolving the schema validation failure.
 
 """
 Contains standardized data loading functions for the Sentinel application.
@@ -33,7 +33,6 @@ class DataLoader:
     It follows a strict "timezone-naive" policy for all datetime columns and enforces
     data types and the presence of required columns for robustness.
     """
-    # <<< SME REVISION >>> Added 'required_cols' for schema validation.
     _DATA_CONFIG = {
         'health_records': {
             'setting_attr': 'HEALTH_RECORDS_PATH',
@@ -42,9 +41,11 @@ class DataLoader:
                 'patient_id': str, 'chw_id': str, 'clinic_id': str,
                 'physician_id': str, 'diagnosis_code_icd10': str
             },
+            # <<< SME REVISION >>> Corrected 'condition' to 'diagnosis' to match the
+            # actual column name in the source CSV, resolving the schema validation failure.
             'required_cols': [
                 'patient_id', 'encounter_date', 'age', 'gender', 'test_type',
-                'test_result', 'condition', 'ai_risk_score' # Example required columns
+                'test_result', 'diagnosis', 'ai_risk_score'
             ],
             'read_csv_options': {'engine': 'c', 'low_memory': False}
         },
@@ -62,7 +63,6 @@ class DataLoader:
             'required_cols': ['zone_id', 'zone_name'],
             'read_csv_options': {}
         },
-        # <<< SME REVISION >>> Added GeoJSON path to the central config for consistency.
         'zone_geometries': {
             'setting_attr': 'ZONE_GEOMETRIES_PATH'
         }
@@ -89,7 +89,7 @@ class DataLoader:
     def _validate_schema(self, df: pd.DataFrame, required_cols: List[str], config_key: str) -> bool:
         """Checks if all required columns are present in the DataFrame."""
         if not required_cols:
-            return True # No validation needed if no columns are required.
+            return True
         
         missing_cols = set(required_cols) - set(df.columns)
         if missing_cols:
@@ -122,9 +122,8 @@ class DataLoader:
 
             df = data_cleaner.clean_column_names(df)
             
-            # <<< SME REVISION >>> Perform schema validation immediately after cleaning column names.
             if not self._validate_schema(df, config.get('required_cols', []), config_key):
-                return pd.DataFrame() # Return empty if validation fails.
+                return pd.DataFrame()
 
             df = convert_date_columns(df, config.get('date_cols', []))
 
@@ -139,7 +138,6 @@ class DataLoader:
         attributes_df = self._load_and_process_csv('zone_attributes', attributes_path)
 
         geometries_list = []
-        # <<< SME REVISION >>> Use the new centralized config for geometries.
         geom_config = self._DATA_CONFIG.get('zone_geometries', {})
         geom_path = self._resolve_path(geometries_path, geom_config.get('setting_attr', ''))
 
@@ -193,7 +191,7 @@ def load_zone_data(attributes_file_path: Optional[str] = None, geometries_file_p
 
 def load_json_config(path_or_setting: str, default: Any = None) -> Any:
     """
-    Loads a JSON config file from a path or setting attribute.
+s a JSON config file from a path or setting attribute.
     It first attempts to resolve `path_or_setting` as an attribute name in the
     settings file. If that fails, it treats `path_or_setting` as an explicit file path.
     """
