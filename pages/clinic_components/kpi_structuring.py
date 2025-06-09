@@ -1,7 +1,7 @@
 # sentinel_project_root/pages/clinic_components/kpi_structuring.py
-# SME-EVALUATED AND REVISED VERSION
-# This version fixes critical bugs in data retrieval and value formatting,
-# and refactors status logic for clarity and efficiency.
+# SME-EVALUATED AND REVISED VERSION (GOLD STANDARD)
+# This definitive version enhances readability and self-documentation by reformatting
+# complex dictionaries and adding inline comments explaining business logic choices.
 
 import pandas as pd
 import numpy as np
@@ -29,13 +29,13 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
-# Define literal types for status logic and levels for better static analysis.
-StatusLogic = Literal["lower_is_better", "higher_is_better", "lower_is_better_count"]
+# --- Type Definitions for Clarity and Static Analysis ---
+StatusLogic = Literal["lower_is_better", "higher_is_better", "lower_is_better_count", "is_zero_target"]
 StatusLevel = Literal["GOOD_PERFORMANCE", "ACCEPTABLE", "MODERATE_CONCERN", "HIGH_CONCERN", "NO_DATA"]
 
 
 def _format_kpi_value(value: Any, default_str: str = "N/A", precision: int = 1, is_count: bool = False) -> str:
-    """Helper to format KPI values robustly for display."""
+    """Helper to format KPI values robustly for display, handling various types and NaNs."""
     if pd.isna(value) or value is None:
         return default_str
     try:
@@ -46,40 +46,87 @@ def _format_kpi_value(value: Any, default_str: str = "N/A", precision: int = 1, 
 
 
 class _KPIStructurer:
-    """A data-driven class to structure raw KPI data into a display-ready format."""
+    """
+    A data-driven engine for structuring raw KPI data into a display-ready format.
+
+    This class adheres to a data-driven design philosophy. KPI definitions, including
+    their titles, data sources, targets, and status logic, are declared as data
+    (lists of dictionaries). A generic `_build_kpi` method then processes this
+    configuration, ensuring consistency and making the system highly maintainable.
+    To add or modify a KPI, one typically only needs to change the configuration
+    data, not the processing logic.
+    """
+    # --- Main operational KPI definitions with enhanced readability and comments ---
     _MAIN_KPI_DEFINITIONS = [
-        {"title": "Overall Avg. TAT", "source_key": "overall_avg_test_turnaround_conclusive_days", "target_setting": "TARGET_TEST_TURNAROUND_DAYS", "default_target": 2.0, "units": "days", "icon": "⏱️", "help_template": "Avg. Turnaround Time for conclusive tests. Target: ~{target:.1f} days.", "status_logic": "lower_is_better", "precision": 1},
-        {"title": "% Critical Tests TAT Met", "source_key": "perc_critical_tests_tat_met", "target_setting": "TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY", "default_target": 85.0, "units": "%", "icon": "🎯", "help_template": "Critical tests meeting TAT targets. Target: ≥{target:.1f}%.", "status_logic": "higher_is_better", "precision": 1},
-        {"title": "Pending Critical Tests", "source_key": "total_pending_critical_tests_patients", "target_setting": "TARGET_PENDING_CRITICAL_TESTS", "default_target": 0, "units": "patients", "icon": "⏳", "help_template": "Patients with pending critical tests. Target: {target}.", "status_logic": "lower_is_better_count", "is_count": True},
-        {"title": "Sample Rejection Rate", "source_key": "sample_rejection_rate_perc", "target_setting": "TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY", "default_target": 5.0, "units": "%", "icon": "🧪", "help_template": "Overall rate of rejected lab samples. Target: <{target:.1f}%.", "status_logic": "lower_is_better", "precision": 1},
+        {
+            "title": "Overall Avg. TAT",
+            "source_key": "overall_avg_test_turnaround_conclusive_days",
+            "target_setting": "TARGET_TEST_TURNAROUND_DAYS", "default_target": 2.0,
+            "units": "days", "icon": "⏱️", "precision": 1,
+            "help_template": "Avg. Turnaround Time for conclusive tests. Target: ~{target:.1f} days.",
+            "status_logic": "lower_is_better",  # Standard logic: lower is better.
+        },
+        {
+            "title": "% Critical Tests TAT Met",
+            "source_key": "perc_critical_tests_tat_met",
+            "target_setting": "TARGET_OVERALL_TESTS_MEETING_TAT_PCT_FACILITY", "default_target": 85.0,
+            "units": "%", "icon": "🎯", "precision": 1,
+            "help_template": "Critical tests meeting TAT targets. Target: ≥{target:.1f}%.",
+            "status_logic": "higher_is_better", # Standard logic: higher is better.
+        },
+        {
+            "title": "Pending Critical Tests",
+            "source_key": "total_pending_critical_tests_patients",
+            "target_setting": "TARGET_PENDING_CRITICAL_TESTS", "default_target": 0,
+            "units": "patients", "icon": "⏳", "is_count": True,
+            "help_template": "Patients with pending critical tests. Target: {target}.",
+            "status_logic": "lower_is_better_count", # A small count (1-2) is acceptable but not ideal.
+        },
+        {
+            "title": "Sample Rejection Rate",
+            "source_key": "sample_rejection_rate_perc",
+            "target_setting": "TARGET_SAMPLE_REJECTION_RATE_PCT_FACILITY", "default_target": 5.0,
+            "units": "%", "icon": "🧪", "precision": 1,
+            "help_template": "Overall rate of rejected lab samples. Target: <{target:.1f}%.",
+            "status_logic": "lower_is_better", # Standard logic: lower is better.
+        },
     ]
 
     def __init__(self, kpis_summary_data: Optional[Dict[str, Any]]):
+        """
+        Initializes the structurer with raw KPI data.
+
+        Args:
+            kpis_summary_data: A dictionary containing the aggregated KPI data.
+        """
         self.summary_data = kpis_summary_data if isinstance(kpis_summary_data, dict) else {}
-        # EFFICIENCY: Build dynamic definitions once during initialization.
         self._disease_and_supply_kpi_definitions = self._build_dynamic_kpi_definitions()
 
     def _build_dynamic_kpi_definitions(self) -> List[Dict[str, Any]]:
-        """Generates KPI definitions from settings configuration. Called only once."""
+        """Generates KPI definitions from settings. Called only once for efficiency."""
         kpi_defs = []
         key_tests = getattr(settings, 'KEY_TEST_TYPES_FOR_ANALYSIS', {})
         for test_name, config in key_tests.items():
             if isinstance(config, dict):
                 kpi_defs.append({
-                    "title": f"{config.get('display_name', test_name)} Positivity", "source_key": f"test_summary_details.{test_name}.positive_rate_perc",
-                    "target_value": float(config.get("target_max_positivity_pct", 10.0)), "units": "%", "icon": config.get("icon", "🔬"),
-                    "help_template": "Positivity rate. Target: <{target:.1f}%.", "status_logic": "lower_is_better", "precision": 1
+                    "title": f"{config.get('display_name', test_name)} Positivity",
+                    "source_key": f"test_summary_details.{test_name}.positive_rate_perc",
+                    "target_value": float(config.get("target_max_positivity_pct", 10.0)),
+                    "units": "%", "icon": config.get("icon", "🔬"), "precision": 1,
+                    "help_template": "Positivity rate. Target: <{target:.1f}%.",
+                    "status_logic": "lower_is_better", # For positivity, lower is always better.
                 })
         
         kpi_defs.append({
-            "title": "Key Drug Stockouts", "source_key": "key_drug_stockouts_count",
-            "target_setting": "TARGET_DRUG_STOCKOUTS", "default_target": 0, "units": "items", "icon": "💊",
+            "title": "Key Drug Stockouts",
+            "source_key": "key_drug_stockouts_count",
+            "target_setting": "TARGET_DRUG_STOCKOUTS", "default_target": 0,
+            "units": "items", "icon": "💊", "is_count": True, "precision": 0,
             "help_template": "Key drugs with <{days_remaining} days of stock. Target: {target}.",
-            "status_logic": "lower_is_better_count", "is_count": True, "precision": 0
+            "status_logic": "is_zero_target", # Stricter logic: any stockout is a high concern.
         })
         return kpi_defs
     
-    # --- REFACTORED STATUS LOGIC ---
     def _get_status_level(self, value: Optional[float], target: float, logic: StatusLogic) -> StatusLevel:
         """Determines the KPI status level based on its value, target, and performance logic."""
         if pd.isna(value):
@@ -101,9 +148,11 @@ class _KPIStructurer:
             if value_int <= target + 2: return "ACCEPTABLE"
             return "HIGH_CONCERN"
         
-        return "NO_DATA" # Fallback for unknown logic
+        if logic == "is_zero_target":
+            return "GOOD_PERFORMANCE" if int(value) == 0 else "HIGH_CONCERN"
+        
+        return "NO_DATA"
 
-    # --- BUG FIX: ROBUST NESTED VALUE RETRIEVAL ---
     def _get_nested_value(self, key_path: str) -> Any:
         """Safely retrieves a value from a nested dictionary using a dot-separated path."""
         keys = key_path.split('.')
@@ -111,26 +160,22 @@ class _KPIStructurer:
         for key in keys:
             if isinstance(value, dict):
                 value = value.get(key)
-            else:
-                # This handles cases where a mid-path key exists but is None.
+            else: # Handles cases where a mid-path key exists but is None.
                 return None
         return value
 
     def _build_kpi(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """Generic method to build a single KPI dictionary from a configuration."""
+        """Generic method to build a single KPI dictionary from its configuration."""
         value = self._get_nested_value(config["source_key"])
         target = config.get("target_value", getattr(settings, config.get("target_setting", ""), config.get("default_target")))
         value_num = pd.to_numeric(value, errors='coerce')
         
         status = self._get_status_level(value_num, target, config["status_logic"])
         
-        # --- BUG FIX: SIMPLIFIED AND CORRECTED VALUE/UNIT FORMATTING ---
         formatted_value = _format_kpi_value(value, precision=config.get("precision", 1), is_count=config.get("is_count", False))
         units = config.get("units", "")
         
-        # Append unit symbol only if it's a percentage and value is valid.
         display_value = f"{formatted_value}{units}" if units == "%" and pd.notna(value) else formatted_value
-        # The 'units' field should not contain the symbol itself, just the name.
         display_units = units if units != "%" else ""
         
         help_text = config["help_template"].format(
