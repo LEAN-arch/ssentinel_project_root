@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V5 - DEFINITIVE FIX)
+# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V5 - DEFINITIVE DATA PIPELINE FIX)
 
 import logging
 from datetime import date, timedelta
@@ -48,13 +48,11 @@ def get_summary_kpis(df: pd.DataFrame) -> dict:
     if df.empty:
         return {"visits": 0, "high_prio": 0, "crit_spo2": 0, "high_fever": 0}
     
-    # Coalesce temperature columns for robust calculation
     df['temperature'] = df.get('vital_signs_temperature_celsius', pd.Series(dtype=float)).fillna(
         df.get('max_skin_temp_celsius', pd.Series(dtype=float))
     )
     
-    # SME FIX: Use defensive .get() calls for each column before calculation.
-    # This prevents KeyErrors if the data pipeline has an upstream failure.
+    # SME FIX: Use defensive .get() calls to prevent KeyErrors.
     kpis = {
         "visits": df['patient_id'].nunique() if 'patient_id' in df.columns else 0,
         "high_prio": (df.get('ai_followup_priority_score', pd.Series(dtype=float)) >= 80).sum(),
