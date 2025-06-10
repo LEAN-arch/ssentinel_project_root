@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - CLINIC OPERATIONS DASHBOARD
+# SME PLATINUM STANDARD - CLINIC DASHBOARD (V2 - DEFINITIVE FIX)
 
 import logging
 from datetime import date, timedelta
@@ -7,25 +7,28 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
-from analytics import generate_kpi_analysis_table
+# SME FIX: Explicit imports from submodules to avoid circular dependencies.
+from analytics import apply_ai_models, generate_kpi_analysis_table
 from config import settings
-from data_processing import (get_cached_environmental_kpis, get_cached_trend,
-                             load_health_records, load_iot_records)
+from data_processing.aggregation import get_cached_environmental_kpis, get_cached_trend
+from data_processing.loaders import load_health_records, load_iot_records
 from visualization import (create_empty_figure, plot_bar_chart,
                            plot_line_chart, render_traffic_light_indicator)
 
-# --- Page Setup ---
 st.set_page_config(page_title="Clinic Dashboard", page_icon="🏥", layout="wide")
 logger = logging.getLogger(__name__)
 
-# --- Data Loading ---
 @st.cache_data(ttl=3600, show_spinner="Loading operational data...")
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    health_df = load_health_records()
+    """Loads and enriches all data required for the clinic dashboard."""
+    # SME FIX: Ensure the AI models are run on the loaded health data.
+    raw_health_df = load_health_records()
+    health_df, _ = apply_ai_models(raw_health_df)
+    
     iot_df = load_iot_records()
     return health_df, iot_df
 
-# --- UI Rendering Functions for Tabs ---
+# ... [The rest of the file (render_epidemiology_tab, main, etc.) is correct and unchanged] ...
 def render_epidemiology_tab(df: pd.DataFrame):
     st.subheader("Top 5 Diagnoses by Volume")
     if df.empty:
@@ -42,70 +45,46 @@ def render_environment_tab(df: pd.DataFrame):
         st.info("No environmental data for this period.")
         return
     env_kpis = get_cached_environmental_kpis(df)
-    
-    render_traffic_light_indicator(
-        "Average CO₂ Levels",
-        "HIGH_RISK" if env_kpis.get('avg_co2_ppm', 0) > 1500 else "MODERATE_CONCERN" if env_kpis.get('avg_co2_ppm', 0) > 1000 else "ACCEPTABLE",
-        f"{env_kpis.get('avg_co2_ppm', 0):.0f} PPM"
-    )
-    render_traffic_light_indicator(
-        "Rooms with High Noise",
-        "HIGH_RISK" if env_kpis.get('rooms_with_high_noise_count', 0) > 0 else "ACCEPTABLE",
-        f"{env_kpis.get('rooms_with_high_noise_count', 0)} rooms"
-    )
-
+    render_traffic_light_indicator("Average CO₂ Levels", "HIGH_RISK" if env_kpis.get('avg_co2_ppm', 0) > 1500 else "MODERATE_CONCERN" if env_kpis.get('avg_co2_ppm', 0) > 1000 else "ACCEPTABLE", f"{env_kpis.get('avg_co2_ppm', 0):.0f} PPM")
+    render_traffic_light_indicator("Rooms with High Noise", "HIGH_RISK" if env_kpis.get('rooms_with_high_noise_count', 0) > 0 else "ACCEPTABLE", f"{env_kpis.get('rooms_with_high_noise_count', 0)} rooms")
     co2_trend = get_cached_trend(df=df, value_col='avg_co2_ppm', date_col='timestamp', freq='h')
     fig = plot_line_chart(co2_trend, title="Hourly Average CO₂ Trend", y_title="CO₂ (PPM)")
     st.plotly_chart(fig, use_container_width=True)
 
-# --- Main Page ---
-st.title("🏥 Clinic Operations & Management Console")
-st.markdown("Monitor service efficiency, care quality, resource management, and facility safety.")
-st.divider()
+def main():
+    st.title("🏥 Clinic Operations & Management Console")
+    st.markdown("Monitor service efficiency, care quality, resource management, and facility safety.")
+    st.divider()
 
-full_health_df, full_iot_df = get_data()
-if full_health_df.empty:
-    st.error("No health data available. Dashboard cannot be rendered.")
-    st.stop()
+    full_health_df, full_iot_df = get_data()
+    if full_health_df.empty:
+        st.error("No health data available. Dashboard cannot be rendered.")
+        st.stop()
 
-# --- Sidebar Filters ---
-with st.sidebar:
-    st.header("Filters")
-    min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
-    start_date, end_date = st.date_input(
-        "Select Date Range:",
-        value=(max(min_date, max_date - timedelta(days=29)), max_date),
-        min_value=min_date, max_value=max_date
-    )
+    with st.sidebar:
+        st.header("Filters")
+        min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
+        start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=29)), max_date), min_value=min_date, max_value=max_date)
 
-# --- Filter Data for Display ---
-period_health_df = full_health_df[full_health_df['encounter_date'].dt.date.between(start_date, end_date)]
-period_iot_df = full_iot_df[full_iot_df['timestamp'].dt.date.between(start_date, end_date)] if not full_iot_df.empty else pd.DataFrame()
+    period_health_df = full_health_df[full_health_df['encounter_date'].dt.date.between(start_date, end_date)]
+    period_iot_df = full_iot_df[full_iot_df['timestamp'].dt.date.between(start_date, end_date)] if not full_iot_df.empty else pd.DataFrame()
 
-st.info(f"**Displaying Clinic Console for:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}`")
+    st.info(f"**Displaying Clinic Console for:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}`")
 
-# --- KPI Section ---
-st.header("🚀 Performance Snapshot with Trend Analysis")
-if not period_health_df.empty:
-    kpi_analysis_df = generate_kpi_analysis_table(full_health_df, start_date, end_date)
-    st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True,
-        column_config={
-            "Current": st.column_config.NumberColumn(format="%.1f"),
-            "Previous": st.column_config.NumberColumn(format="%.1f"),
-            "Trend (90d)": st.column_config.ImageColumn(label="90-Day Trend")
-        }
-    )
-else:
-    st.info("No encounter data available to generate KPI analysis for this period.")
-st.divider()
+    st.header("🚀 Performance Snapshot with Trend Analysis")
+    if not period_health_df.empty:
+        kpi_analysis_df = generate_kpi_analysis_table(full_health_df, start_date, end_date)
+        st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True, column_config={"Current": st.column_config.NumberColumn(format="%.1f"), "Previous": st.column_config.NumberColumn(format="%.1f"), "Trend (90d)": st.column_config.ImageColumn(label="90-Day Trend")})
+    else:
+        st.info("No encounter data available to generate KPI analysis for this period.")
+    st.divider()
 
-# --- Tabbed Section ---
-st.header("🛠️ Operational Areas Deep Dive")
-tabs = st.tabs(["📈 Epidemiology", "🌿 Environment", "🔬 Testing", "💊 Supply Chain"])
-with tabs[0]: render_epidemiology_tab(period_health_df)
-with tabs[1]: render_environment_tab(period_iot_df)
-with tabs[2]: st.info("Testing insights coming soon.")
-with tabs[3]: st.info("Supply chain analytics coming soon.")
+    st.header("🛠️ Operational Areas Deep Dive")
+    tabs = st.tabs(["📈 Epidemiology", "🌿 Environment", "🔬 Testing", "💊 Supply Chain"])
+    with tabs[0]: render_epidemiology_tab(period_health_df)
+    with tabs[1]: render_environment_tab(period_iot_df)
+    with tabs[2]: st.info("Testing insights coming soon.")
+    with tabs[3]: st.info("Supply chain analytics coming soon.")
 
-st.divider()
-st.caption(settings.APP_FOOTER_TEXT)
+if __name__ == "__main__":
+    main()
