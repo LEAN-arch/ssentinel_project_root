@@ -1,23 +1,18 @@
-# sentinel_project_root/data_processing/aggregation.py
-# SME PLATINUM STANDARD - DECISION-GRADE AGGREGATIONS (V7 - DEFINITIVE CACHE FIX)
+# sentinel_project_root/data_processing/logic.py
+# SME PLATINUM STANDARD - PURE BACKEND AGGREGATION LOGIC
 
 import logging
 from typing import Any, Callable, Dict, Optional, Union
 
 import numpy as np
 import pandas as pd
-import streamlit as st
 
 from config import settings
-from .helpers import convert_to_numeric, hash_dataframe
+from .helpers import convert_to_numeric
 
 logger = logging.getLogger(__name__)
 
-CACHE_TTL_SECONDS = 3600
-
-# --- Core, Non-Cached Calculation Functions ---
-def _calculate_clinic_kpis(df: pd.DataFrame) -> Dict[str, Any]:
-    # ... [This function is correct and remains unchanged] ...
+def calculate_clinic_kpis(df: pd.DataFrame) -> Dict[str, Any]:
     if not isinstance(df, pd.DataFrame) or df.empty: return {}
     kpis: Dict[str, Any] = {}
     conclusive_tests = df[df['sample_status'].str.lower().isin(['completed', 'rejected by lab'])]
@@ -41,8 +36,16 @@ def _calculate_clinic_kpis(df: pd.DataFrame) -> Dict[str, Any]:
     kpis['positivity_rates'] = positivity_breakdown
     return kpis
 
-def _calculate_trend(df: Optional[pd.DataFrame], value_col: str, date_col: str, freq: str = 'D', agg_func: Union[str, Callable] = 'mean') -> pd.Series:
-    # ... [This function is correct and remains unchanged] ...
+def calculate_environmental_kpis(iot_df: pd.DataFrame) -> Dict[str, Any]:
+    if not isinstance(iot_df, pd.DataFrame) or iot_df.empty: return {}
+    kpis = {'avg_co2_ppm': iot_df['avg_co2_ppm'].mean(), 'avg_pm25_ugm3': iot_df['avg_pm25'].mean(), 'avg_waiting_room_occupancy': iot_df['waiting_room_occupancy'].mean()}
+    if 'timestamp' in iot_df.columns and 'room_name' in iot_df.columns and 'avg_noise_db' in iot_df.columns:
+        latest_readings = iot_df.sort_values('timestamp').drop_duplicates('room_name', keep='last')
+        kpis['rooms_with_high_noise_count'] = (latest_readings['avg_noise_db'] > settings.ANALYTICS.noise_high_threshold_db).sum()
+    else: kpis['rooms_with_high_noise_count'] = 0
+    return kpis
+
+def calculate_trend(df: Optional[pd.DataFrame], value_col: str, date_col: str, freq: str = 'D', agg_func: Union[str, Callable] = 'mean') -> pd.Series:
     if not isinstance(df, pd.DataFrame) or df.empty or date_col not in df.columns or value_col not in df.columns: return pd.Series(dtype=np.float64)
     df_trend = df[[date_col, value_col]].copy()
     df_trend[date_col] = pd.to_datetime(df_trend[date_col], errors='coerce')
@@ -56,30 +59,3 @@ def _calculate_trend(df: Optional[pd.DataFrame], value_col: str, date_col: str, 
         return trend_series
     except Exception as e:
         logger.error(f"Error generating trend for '{value_col}': {e}", exc_info=True); return pd.Series(dtype=np.float64)
-
-# --- Streamlit-Cached Wrapper Functions for UI ---
-@st.cache_data(ttl=CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
-def get_cached_clinic_kpis(df: Optional[pd.DataFrame]) -> Dict[str, Any]:
-    return _calculate_clinic_kpis(df)
-
-# SME FIX: The cached trend function now only accepts hashable string arguments for `agg_func`.
-# The non-cached `_calculate_trend` remains available for custom, unhashable aggregations.
-@st.cache_data(ttl=CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
-def get_cached_trend(
-    df: Optional[pd.DataFrame],
-    value_col: str,
-    date_col: str,
-    freq: str = 'D',
-    agg_func: str = 'mean'
-) -> pd.Series:
-    """
-    Cached wrapper for calculating trends. Only accepts hashable (string)
-    aggregation function names.
-    """
-    if not isinstance(agg_func, str):
-        raise ValueError(
-            "get_cached_trend only accepts string values for agg_func "
-            "(e.g., 'mean', 'sum', 'nunique'). For custom callables, "
-            "use the non-cached '_calculate_trend' function."
-        )
-    return _calculate_trend(df, value_col, date_col, freq, agg_func)
