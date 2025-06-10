@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V17 - ADVANCED DEMOGRAPHICS)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V18 - FINAL)
 
 import logging
 from datetime import date, timedelta
@@ -46,14 +46,15 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
 # --- UI Rendering Components for Tabs ---
 
 def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
-    # ... [This function is correct and remains unchanged] ...
     program_name = program_config['name']
     st.header(f"{program_config['icon']} {program_name} Program Analysis")
     st.markdown(f"Analyze the screening-to-treatment cascade for **{program_name}** to identify bottlenecks and improve patient outcomes.")
+    
     symptomatic = df[df['patient_reported_symptoms'].str.contains(program_config['symptom'], case=False, na=False)]
     tested = symptomatic[symptomatic['test_type'] == program_config['test']]
     positive = tested[tested['test_result'] == 'Positive']
     linked = positive[positive['referral_status'] == 'Completed']
+    
     col1, col2 = st.columns([1, 1.5])
     with col1:
         st.subheader("Screening Funnel Metrics")
@@ -61,13 +62,20 @@ def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
         st.metric("Patients Tested", f"{len(tested):,}")
         st.metric("Positive Cases Detected", f"{len(positive):,}")
         st.metric("Successfully Linked to Care", f"{len(linked):,}")
+
     with col2:
-        funnel_data = pd.DataFrame([dict(stage="Symptomatic/At-Risk", count=len(symptomatic)), dict(stage="Tested", count=len(tested)), dict(stage="Positive", count=len(positive)), dict(stage="Linked to Care", count=len(linked))])
+        funnel_data = pd.DataFrame([
+            dict(stage="Symptomatic/At-Risk", count=len(symptomatic)),
+            dict(stage="Tested", count=len(tested)),
+            dict(stage="Positive", count=len(positive)),
+            dict(stage="Linked to Care", count=len(linked)),
+        ])
         if funnel_data['count'].sum() > 0:
             fig = px.funnel(funnel_data, x='count', y='stage', title=f"Screening & Linkage Funnel: {program_name}")
             fig.update_yaxes(categoryorder="array", categoryarray=["Symptomatic/At-Risk", "Tested", "Positive", "Linked to Care"])
             st.plotly_chart(fig, use_container_width=True)
-        else: st.info(f"No activity recorded for the {program_name} screening program in this period.")
+        else:
+            st.info(f"No activity recorded for the {program_name} screening program in this period.")
 
 def render_demographics_tab(df: pd.DataFrame):
     """Renders a comprehensive, multi-plot patient demographics analysis tab."""
@@ -77,19 +85,18 @@ def render_demographics_tab(df: pd.DataFrame):
         st.info("No patient data available for demographic analysis."); return
 
     df_unique = df.drop_duplicates(subset=['patient_id']).copy()
-    df_unique['gender'] = df_unique['gender'].fillna('Unknown').astype(str)
     
-    # --- Data Preparation for Binning ---
+    # --- Definitive Data Sanitization ---
+    df_unique['gender'] = df_unique['gender'].fillna('Unknown').astype(str)
     age_bins = [0, 5, 15, 25, 50, 150]
     age_labels = ['0-4', '5-14', '15-24', '25-49', '50+']
-    df_unique['age_group'] = pd.cut(df_unique['age'], bins=age_bins, labels=age_labels, right=False).astype(str).replace('nan', 'Not Recorded')
+    df_unique['age_group'] = pd.cut(df_unique['age'], bins=age_bins, labels=age_labels, right=False)
+    df_unique['age_group'] = df_unique['age_group'].astype(str).replace('nan', 'Not Recorded')
 
     # --- Visualization Layout ---
-    st.divider()
     col1, col2 = st.columns(2)
     with col1:
-        # --- Plot 1: Patient Volume by Age and Gender ---
-        st.subheader("Patient Volume")
+        st.subheader("Patient Volume by Demographics")
         demo_counts = df_unique.groupby(['age_group', 'gender']).size().reset_index(name='count')
         if not demo_counts.empty:
             fig_vol = plot_bar_chart(
@@ -102,8 +109,7 @@ def render_demographics_tab(df: pd.DataFrame):
             st.info("No data for volume analysis.")
 
     with col2:
-        # --- Plot 2: High-Risk Patient Distribution by Zone ---
-        st.subheader("High-Risk Patient Source")
+        st.subheader("High-Risk Patient Distribution")
         risk_threshold = settings.ANALYTICS.risk_score_moderate_threshold
         high_risk_df = df_unique[df_unique['ai_risk_score'] >= risk_threshold]
         risk_by_zone = high_risk_df['zone_id'].value_counts().nlargest(10).reset_index()
@@ -112,7 +118,7 @@ def render_demographics_tab(df: pd.DataFrame):
         if not risk_by_zone.empty:
             fig_zone = plot_bar_chart(
                 risk_by_zone, y_col='zone_id', x_col='count', orientation='h',
-                title=f"Top Zones for High-Risk Patients (Score ≥ {risk_threshold})",
+                title=f"Top Zones for High-Risk Patients",
                 y_title="Zone", x_title="Number of High-Risk Patients"
             )
             st.plotly_chart(fig_zone, use_container_width=True)
@@ -121,7 +127,6 @@ def render_demographics_tab(df: pd.DataFrame):
     
     st.divider()
     
-    # --- Plot 3: Average Risk Score by Age and Gender ---
     st.subheader("Risk Profile Analysis")
     risk_by_demo_df = df_unique.groupby(['age_group', 'gender'])['ai_risk_score'].mean().reset_index()
     if not risk_by_demo_df.empty:
@@ -141,8 +146,7 @@ def render_forecasting_tab(df: pd.DataFrame):
     forecast_days = st.slider("Days to Forecast Ahead:", 7, 90, 30, 7, key="clinic_forecast_days")
     encounters_hist = df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
     avg_risk_hist = df.set_index('encounter_date')['ai_risk_score'].resample('D').mean().reset_index().rename(columns={'encounter_date': 'ds', 'ai_risk_score': 'y'})
-    encounter_fc = generate_prophet_forecast(encounters_hist, forecast_days=forecast_days)
-    risk_fc = generate_prophet_forecast(avg_risk_hist, forecast_days=forecast_days)
+    encounter_fc = generate_prophet_forecast(encounters_hist, forecast_days=forecast_days); risk_fc = generate_prophet_forecast(avg_risk_hist, forecast_days=forecast_days)
     col1, col2 = st.columns(2)
     with col1: st.plotly_chart(plot_forecast_chart(encounter_fc, "Forecasted Daily Patient Load", "Patient Encounters"), use_container_width=True)
     with col2: st.plotly_chart(plot_forecast_chart(risk_fc, "Forecasted Community Risk Index", "Average Patient Risk Score"), use_container_width=True)
@@ -157,6 +161,7 @@ def render_environment_tab(iot_df: pd.DataFrame):
     from data_processing.cached import get_cached_trend
     co2_trend = get_cached_trend(df=iot_df, value_col='avg_co2_ppm', date_col='timestamp', freq='h', agg_func='mean')
     st.plotly_chart(plot_line_chart(co2_trend, "Hourly Average CO₂ Trend", y_title="CO₂ (PPM)"), use_container_width=True)
+
 
 # --- Main Page Execution ---
 def main():
@@ -177,13 +182,12 @@ def main():
 
     st.info(f"**Displaying Clinic Data For:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}`")
 
-    tab_keys = ["Snapshot"] + list(PROGRAM_DEFINITIONS.keys()) + ["Demographics", "Forecasting", "Environment"]
+    tab_keys = ["🚀 Snapshot"] + list(PROGRAM_DEFINITIONS.keys()) + ["🧑‍🤝‍🧑 Demographics", "🔮 Forecasting", "🌿 Environment"]
     tab_icons = ["🚀"] + [p['icon'] for p in PROGRAM_DEFINITIONS.values()] + ["🧑‍🤝‍🧑", "🔮", "🌿"]
     tabs = st.tabs([f"{icon} {key}" for icon, key in zip(tab_icons, tab_keys)])
 
     with tabs[0]:
         st.header("Operational Performance Snapshot")
-        st.markdown("Period-over-period analysis of key testing and supply chain metrics.")
         kpi_analysis_df = generate_kpi_analysis_table(full_health_df, start_date, end_date)
         st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True, column_config={"Current": st.column_config.NumberColumn(format="%.1f"), "Previous": st.column_config.NumberColumn(format="%.1f"), "Trend (90d)": st.column_config.ImageColumn(label="90-Day Trend")})
 
