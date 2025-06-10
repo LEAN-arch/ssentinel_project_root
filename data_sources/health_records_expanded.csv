@@ -1,16 +1,7 @@
-encounter_id,patient_id,encounter_date,zone_id,age,gender,diagnosis,test_type,test_result,patient_reported_symptoms,item,item_stock_agg_zone,consumption_rate_per_day,test_turnaround_days,sample_status,rejection_reason,min_spo2_pct,vital_signs_temperature_celsius,fall_detected_today,days_task_overdue,referral_status,medication_adherence_self_report,chronic_condition_flag
-EID001,PID001,2023-11-01T10:00:00Z,Zone-A,34,Female,Malaria,Malaria RDT,Positive,"Fever;Headache",Paracetamol,15000,120,1,Completed,NA,98,38.5,0,0,Completed,Good,0
-EID002,PID002,2023-11-01T11:30:00Z,Zone-B,25,Male,Pneumonia,CBC,Pending,"Cough;Fever;Difficulty Breathing",Amoxicillin,1500,80,,Pending,NA,94,39.1,0,0,Pending,Fair,0
-EID003,PID003,2023-11-02T09:00:00Z,Zone-A,45,Male,Hypertension,Blood Pressure,NA,Dizziness,Gloves,50,5,,NA,NA,99,37.0,0,2,Completed,Good,1
-EID004,PID001,2023-11-05T14:00:00Z,Zone-A,34,Female,Malaria,Malaria RDT,Negative,"Fever",Paracetamol,14400,125,1,Completed,NA,97,37.5,0,0,Completed,Good,0
-EID005,PID004,2023-11-06T10:00:00Z,Zone-C,5,Female,Diarrhea,Stool Test,Pending,"Diarrhea;Vomiting;Sunken Eyes",ORS,5000,40,,Pending,NA,96,38.8,0,0,Pending,Good,0
-EID006,PID005,2023-11-08T11:00:00Z,Zone-B,60,Male,Malaria,Malaria RDT,Positive,"Fever;Chills",Metformin,8000,60,1,Completed,NA,92,39.8,0,5,Completed,Poor,1
-EID007,PID002,2023-11-09T16:00:00Z,Zone-B,25,Male,Pneumonia,CBC,Negative,"Cough;Fever",Amoxicillin,1200,85,2,Completed,NA,96,37.8,0,0,Completed,Good,0
-EID008,PID006,2023-11-12T09:30:00Z,Zone-A,28,Female,URI,NA,NA,"Sore Throat;Cough",Paracetamol,13900,118,,NA,NA,98,37.2,0,0,Completed,Good,0
-EID009,PID007,2023-11-15T13:00:00Z,Zone-C,2,Male,Diarrhea,Stool Test,Positive,"Dehydration",ORS,4750,42,3,Completed,NA,95,38.2,1,0,Pending,Good,0
-EID010,PID008,2023-11-18T10:00:00Z,Zone-B,33,Female,Malaria,Malaria RDT,Positive,Fever,Metformin,7400,65,1,Completed,NA,99,39.0,0,0,Completed,Good,0
-EID011,PID009,2023-11-20T11:45:00Z,Zone-A,41,Male,Tuberculosis,CBC,Pending,"Fever;Cough",Amoxicillin,850,90,,Pending,NA,93,38.1,0,3,Pending,Fair,1
-EID015,PID009,2023-12-01T14:30:00Z,Zone-A,41,Male,Tuberculosis,CBC,Rejected,"Fever",Amoxicillin,500,95,3,Rejected by Lab,Improper Labeling,94,37.9,0,0,Pending,Poor,1
-EID019,PID016,2023-12-14T09:00:00Z,Zone-A,37,Female,Pneumonia,NA,NA,"Ear Pain;Rapid Breathing",Amoxicillin,200,100,,NA,NA,91,39.5,0,0,Completed,Good,0
-EID023,PID020,2023-12-30T14:00:00Z,Zone-A,22,Male,Sinusitis,NA,NA,"Headache;Congestion",Amoxicillin,100,110,,NA,NA,99,37.0,0,0,Completed,Good,0
-EID027,PID024,2024-01-12T11:30:00Z,Zone-B,27,Female,UTI,Urinalysis,Pending,Painful Urination,Amoxicillin,50,120,,Pending,NA,98,37.5,0,1,Pending,Good,0
+encounter_id,patient_id,encounter_date,zone_id,age,gender,diagnosis,test_type,test_result,patient_reported_symptoms,item,item_stock_agg_zone,consumption_rate_per_day,test_turnaround_days,sample_status,rejection_reason,min_spo2_pct,vital_signs_temperature_celsius,fall_detected_:00:00Z,,CHW004,,,NA,NA,NA,27.5,70,NA,NA,75,Zone-A
+2023-11-19T10:05:00Z,ClinicC,,Waiting Room,Sensor_WR_C,1250,1600,25.5,26.8,68,72,12,,Zone-C
+2023-11-19T10:00:00Z,,CHW003,,,NA,NA,NA,29.1,78,NA,NA,45,Zone-C
+2023-11-19T14:30:00Z,,CHW001,,,NA,NA,NA,32.0,85,NA,NA,58,Zone-A
+2023-11-18T11:00:00Z,,CHW002,,,NA,NA,NA,29.8,77,NA,NA,65,Zone-B
+2023-11-17T16:05:00Z,ClinicB,,Lab,Sensor_LAB_B,750,900,12.1,22.5,55,68,2,,Zone-B
+2023-11-17T16:00:00Z,,CHW002,,,NA,NA,NA,30.1,79,NA,NA,33,Zone-B
