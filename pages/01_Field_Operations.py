@@ -18,7 +18,7 @@ st.set_page_config(page_title="Field Operations", page_icon="🧑‍⚕️", lay
 logger = logging.getLogger(__name__)
 
 # --- Data Loading ---
-@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS)
+@st.cache_data(ttl=3600)
 def get_data() -> pd.DataFrame:
     """Loads and caches the base health records for the dashboard."""
     return load_health_records()
