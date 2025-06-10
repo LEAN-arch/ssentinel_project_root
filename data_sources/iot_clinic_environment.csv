@@ -1,65 +1,12 @@
-timestamp,clinic_id,room_name,sensor_id,avg_co2_ppm,max_co2_ppm,avg_pm25,voc_index,avg_temp_celsius,avg_humidity_rh,avg_noise_db,waiting_room_occupancy,zone_id
-2023-11-01T09:05:00Z,ClinicA,Waiting Room,Sensor_WR_A,850,950,15.2,120,24.5,60,65,8,Zone-A
-2023-11-02T11:30:00Z,ClinicB,Waiting Room,Sensor_WR_B,1650,2100,22.5,180,26.2,65,75,18,Zone-B
-2023-11-03T14:00:00Z,ClinicC,Waiting Room,Sensor_WR_C,1200,1400,38.1,250,28.0,70,80,15,Zone-C
-2023-11-04T10:00:00Z,ClinicA,Waiting Room,Sensor_WR_A,920,1050,14.8,118,24.1,58,64,7,Zone-A
-2023-11-05T11:45:00Z,ClinicB,Waiting Room,Sensor_WR_B,1800,2300,28.2,195,26.8,67,78,21,Zone-B
-2023-11-06T16:00:00Z,ClinicC,Waiting Room,Sensor_WR_C,900,1100,19.5,150,26.5,62,69,6,Zone-C
-2023-11-07T10:20:00Z,ClinicA,Waiting Room,Sensor_WR_A,1250,1550,20.1,140,25.2,64,8 iot_df.empty:
-        st.info("No IoT or wearable data available for this period."); return
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        clinic_iot = iot_df.dropna(subset=['avg_co2_ppm'])
-        co2_trend = clinic_iot.set_index('timestamp')['avg_co2_ppm'].resample('D').mean()
-        fig_co2 = plot_line_chart(co2_trend, "Average Clinic CO₂ (Ventilation Proxy)", "CO₂ PPM")
-        st.plotly_chart(fig_co2, use_container_width=True, config={'displayModeBar': False})
-    with col2:
-        wearable_iot = iot_df.dropna(subset=['chw_stress_score'])
-        if chw_id != "All CHWs":
-            wearable_iot = wearable_iot[wearable_iot['chw_id'] == chw_id]
-        
-        stress_trend = wearable_iot.set_index('timestamp')['chw_stress_score'].resample('D').mean()
-        fig_stress = plot_line_chart(stress_trend, "Average Team Stress Index", "Stress Index (0-100)")
-        st.plotly_chart(fig_stress, use_container_width=True, config={'displayModeBar': False})
-
-# --- Main Page Execution ---
-def main():
-    st.title("📡 Field Operations Command Center")
-    st.markdown("An integrated dashboard for supervising team activity, patient risk, environmental factors, and future trends.")
-    
-    health_df, iot_df = get_data()
-    if health_df.empty: st.error("No health data available. Dashboard cannot be rendered."); st.stop()
-
-    with st.sidebar:
-        st.header("Dashboard Controls")
-        zone_options = ["All Zones"] + sorted(health_df['zone_id'].dropna().unique())
-        selected_zone = st.selectbox("Filter by Zone:", options=zone_options)
-        
-        chw_options = ["All CHWs"] + sorted(health_df['chw_id'].dropna().unique())
-        selected_chw = st.selectbox("Filter by CHW:", options=chw_options)
-        
-        today = health_df['encounter_date'].max().date()
-        selected_date = st.date_input("Select Date:", value=today, min_value=health_df['encounter_date'].min().date(), max_value=today)
-        
-        forecast_days = st.slider("Forecast Horizon (Days):", 7, 90, 14, 7)
-
-    # --- Data Filtering ---
-    daily_df = health_df[health_df['encounter_date'].dt.date == selected_date]
-    forecast_source_df = health_df.copy()
-    if selected_zone != "All Zones":
-        daily_df = daily_df[daily_df['zone_id'] == selected_zone]
-        forecast_source_df = forecast_source_df[forecast_source_df['zone_id'] == selected_zone]
-    if selected_chw != "All CHWs":
-        daily_df = daily_df[daily_df['chw_id'] == selected_chw]
-        forecast_source_df = forecast_source_df[forecast_source_df['chw_id'] == selected_chw]
-
-    # --- UI Rendering ---
-    st.divider()
-    
-    # New "Situation Report" Header
-    st.subheader(f"Situation Report: {selected_date:%A, %d %b %Y}")
-    sit_rep_cols = st.columns(4)
-    sit_rep_cols[0].metric5,16,Zone-A
-2023-11-08T13:00:00Z,ClinicB,Waiting Room,Sensor_WR_B,1550,1800,24.0,175,26.5,66,88,20,Zone-B
-2023-11-09T12:00:00Z,ClinicC,Waiting Room,Sensor_WR_C,1400,1700,21.5,165,27.1,66,76,19,Zone-C
+timestamp,clinic_id,chw_id,room_name,sensor_id,avg_co2_ppm,max_co2_ppm,avg_pm25,avg_temp_celsius,avg_humidity_rh,avg_noise_db,waiting_room_occupancy,chw_stress_score,zone_id
+2023-11-20T09:05:00Z,ClinicA,,Waiting Room,Sensor_WR_A,850,950,15.2,24.5,60,65,8,,Zone-A
+2023-11-20T10:00:00Z,,CHW001,Field,Wearable_1,NA,NA,NA,28.1,75,NA,NA,22,Zone-A
+2023-11-20T11:30:00Z,,CHW002,Field,Wearable_2,NA,NA,NA,30.5,80,NA,NA,35,Zone-B
+2023-11-20T14:00:00Z,,CHW002,Field,Wearable_2,NA,NA,NA,31.2,82,NA,NA,41,Zone-B
+2023-11-20T08:00:00Z,,CHW004,Field,Wearable_4,NA,NA,NA,27.5,70,NA,NA,75,Zone-A
+2023-11-19T10:05:00Z,ClinicC,,Waiting Room,Sensor_WR_C,1250,1600,25.5,26.8,68,72,12,,Zone-C
+2023-11-19T10:00:00Z,,CHW003,Field,Wearable_3,NA,NA,NA,29.1,78,NA,NA,45,Zone-C
+2023-11-19T14:30:00Z,,CHW001,Field,Wearable_1,NA,NA,NA,32.0,85,NA,NA,58,Zone-A
+2023-11-18T11:00:00Z,,CHW002,Field,Wearable_2,NA,NA,NA,29.8,77,NA,NA,65,Zone-B
+2023-11-17T16:05:00Z,ClinicB,,Lab,Sensor_LAB_B,750,900,12.1,22.5,55,68,2,,Zone-B
+2023-11-17T16:00:00Z,,CHW002,Field,Wearable_2,NA,NA,NA,30.1,79,NA,NA,33,Zone-B
