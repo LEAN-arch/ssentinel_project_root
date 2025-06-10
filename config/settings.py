@@ -1,5 +1,5 @@
 # sentinel_project_root/config/settings.py
-# SME PLATINUM STANDARD - CENTRALIZED CONFIGURATION HUB (V2 - FINAL)
+# SME PLATINUM STANDARD - CENTRALIZED CONFIGURATION HUB (V3 - FINAL)
 
 import logging
 from datetime import datetime
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix='SENTINEL_', case_sensitive=False, env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
     PROJECT_ROOT_DIR: DirectoryPath = Path(__file__).resolve().parent.parent
-    APP_NAME: str = "Sentinel Health Co-Pilot"; APP_VERSION: str = "5.1.0"
+    APP_NAME: str = "Sentinel Health Co-Pilot"; APP_VERSION: str = "5.2.0"
     ORGANIZATION_NAME: str = "Resilient Health Systems Initiative"; SUPPORT_CONTACT_INFO: str = "support@rhsc.org"
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -98,7 +98,7 @@ class Settings(BaseSettings):
 
 try:
     settings = Settings()
-    settings_logger.info(f"Sentinel settings loaded successfully. App: {settings.APP_NAME} v{settings.APP_VERSION}")
+    settings_logger.info(f"Sentinel settings instance created. App: {settings.APP_NAME} v{settings.APP_VERSION}")
 except Exception as e:
     settings_logger.critical(f"FATAL: Could not initialize Pydantic settings. Error: {e}", exc_info=True)
     raise
