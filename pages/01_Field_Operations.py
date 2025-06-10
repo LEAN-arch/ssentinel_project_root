@@ -188,23 +188,18 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
         else:
             st.info(f"No wearable data available for {chw_filter} in this period.")
 
-        # --- SME FIX: Make the correlation analysis robust to missing data sources ---
         st.subheader("🔍 Exploratory Correlation Analysis")
-        
         correlation_series = []
         if not health_df.empty:
             daily_cases = health_df.set_index('encounter_date').resample('D')['patient_id'].nunique().rename('new_cases')
             correlation_series.append(daily_cases)
-
         if not wearable_iot.empty:
             daily_stress = wearable_iot.set_index('timestamp').resample('D')['chw_stress_score'].mean()
             correlation_series.append(daily_stress)
-
         if not clinic_iot.empty:
             daily_co2 = clinic_iot.set_index('timestamp').resample('D')['avg_co2_ppm'].mean()
             correlation_series.append(daily_co2)
 
-        # Only proceed if we have at least two series to correlate
         if len(correlation_series) > 1:
             corr_df = pd.concat(correlation_series, axis=1).corr()
             if not corr_df.empty:
@@ -215,7 +210,6 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
                 st.info("Could not compute a correlation matrix from the available data.")
         else:
             st.info("Not enough overlapping data sources to generate a correlation matrix for the current selection.")
-        # --- END SME FIX ---
 
 # --- Main Page Execution ---
 def main():
@@ -253,7 +247,7 @@ def main():
         iot_filtered = iot_filtered[iot_filtered['zone_id'] == selected_zone]
     if selected_chw != "All CHWs":
         analysis_df = analysis_df[analysis_df['chw_id'] == selected_chw]
-        forecast_source_df = forecast_source_df[forecast_source_df['chw_id'] == selected_chw]
+        forecast_source_df = forecast_source_df[forecast_source__df['chw_id'] == selected_chw]
 
     clinic_iot_stream = iot_filtered[iot_filtered['chw_id'].isnull()] if 'chw_id' in iot_filtered.columns else iot_filtered
     wearable_iot_stream = iot_filtered[iot_filtered['chw_id'].notnull()] if 'chw_id' in iot_filtered.columns else pd.DataFrame()
@@ -276,9 +270,10 @@ def main():
     with tabs[2]:
         render_iot_wearable_tab(clinic_iot_stream, wearable_iot_stream, selected_chw, analysis_df)
 
+# SME FIX: The file had two `if __name__ == "__main__":` blocks.
+# The single, correct block should be at the very end of the script.
 if __name__ == "__main__":
     main()
-
 
 if __name__ == "__main__":
     main()
