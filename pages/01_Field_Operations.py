@@ -72,7 +72,6 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     return enriched_df, iot_df
 
 # --- UI Rendering Components ---
-# SME FIX: Added `key_prefix` to the function signature to guarantee unique widget keys.
 def render_program_cascade(df: pd.DataFrame, config: Dict, key_prefix: str):
     """
     Renders a visual funnel and KPIs for a specific screening program.
@@ -100,24 +99,14 @@ def render_program_cascade(df: pd.DataFrame, config: Dict, key_prefix: str):
             fig_risk = go.Figure()
             for risk_level, color in RISK_COLOR_MAP.items():
                 fig_risk.add_trace(go.Bar(
-                    x=[risk_distribution.get(risk_level, 0)],
-                    y=['Symptomatic'],
-                    name=risk_level,
-                    orientation='h',
-                    marker_color=color
+                    x=[risk_distribution.get(risk_level, 0)], y=['Symptomatic'], name=risk_level,
+                    orientation='h', marker_color=color
                 ))
             fig_risk.update_layout(
-                barmode='stack',
-                title_text="Actionability: Focus testing on high-risk individuals",
-                title_x=0.5,
-                xaxis_title="Patient Count",
-                yaxis_title="",
-                legend_title="AI Risk Level",
-                template=PLOTLY_TEMPLATE,
-                height=200,
-                margin=dict(t=40, b=10, l=10, r=10)
+                barmode='stack', title_text="Actionability: Focus testing on high-risk individuals", title_x=0.5,
+                xaxis_title="Patient Count", yaxis_title="", legend_title="AI Risk Level",
+                template=PLOTLY_TEMPLATE, height=200, margin=dict(t=40, b=10, l=10, r=10)
             )
-            # SME FIX: The `key` parameter makes the chart unique within the loop.
             st.plotly_chart(fig_risk, use_container_width=True, key=f"risk_profile_chart_{key_prefix}")
 
     with col2:
@@ -128,12 +117,8 @@ def render_program_cascade(df: pd.DataFrame, config: Dict, key_prefix: str):
             dict(stage="Linked to Care", count=len(linked)),
         ])
         if funnel_data['count'].sum() > 0:
-            fig = px.funnel(
-                funnel_data, x='count', y='stage', title=f"Screening & Linkage Funnel: {config['name']}",
-                template=PLOTLY_TEMPLATE
-            )
+            fig = px.funnel(funnel_data, x='count', y='stage', title=f"Screening & Linkage Funnel: {config['name']}", template=PLOTLY_TEMPLATE)
             fig.update_yaxes(categoryorder="array", categoryarray=["Symptomatic/At-Risk", "Tested", "Positive", "Linked to Care"])
-            # SME FIX: Also added a unique key to the funnel chart for robustness.
             st.plotly_chart(fig, use_container_width=True, key=f"funnel_chart_{key_prefix}")
         else:
             st.info(f"No activity recorded for the {config['name']} program in this period.")
@@ -142,6 +127,7 @@ def render_program_cascade(df: pd.DataFrame, config: Dict, key_prefix: str):
 def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataFrame):
     """
     Renders the AI-powered decision support tab.
+    SME FIX: Added a safety check to ensure the forecast DataFrame is valid before use.
     """
     st.header("🎯 AI Predictive Analytics Hub")
     st.markdown("""
@@ -158,7 +144,7 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
         alerts = generate_chw_alerts(patient_df=analysis_df)
         if not alerts:
             st.success("✅ No high-priority patient alerts for this selection.")
-        for i, alert in enumerate(alerts): # Use enumerate for unique keys if alerts could be identical
+        for i, alert in enumerate(alerts):
             level, icon = ("CRITICAL", "🔴") if alert.get('alert_level') == 'CRITICAL' else (("WARNING", "🟠") if alert.get('alert_level') == 'WARNING' else ("INFO", "ℹ️"))
             with st.container(border=True, key=f"alert_container_{i}"):
                 st.markdown(f"**{icon} {alert.get('reason')} for Pt. {alert.get('patient_id')}**")
@@ -193,31 +179,38 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
     with col2:
         with st.container(border=True):
             st.subheader("🔮 Patient Load Forecast")
-            # SME FIX: Added explicit keys to interactive widgets to prevent any potential conflicts.
             forecast_days = st.slider("Forecast Horizon (Days):", 7, 30, 14, 7, key="forecast_slider")
             if len(forecast_df) < 10:
                 st.warning("Not enough historical data for the selected filters to generate a forecast.")
             else:
                 encounters_hist = forecast_df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
                 forecast = generate_prophet_forecast(encounters_hist, forecast_days)
-                fig_forecast = plot_forecast_chart(forecast, title="Forecasted Daily Patient Encounters", y_title="Patient Encounters")
-                fig_forecast.update_layout(template=PLOTLY_TEMPLATE)
-                st.plotly_chart(fig_forecast, use_container_width=True)
+                
+                # --- SME FIX: Check if the forecast was successful before trying to use it ---
+                if not forecast.empty and 'yhat' in forecast.columns:
+                    fig_forecast = plot_forecast_chart(forecast, title="Forecasted Daily Patient Encounters", y_title="Patient Encounters")
+                    fig_forecast.update_layout(template=PLOTLY_TEMPLATE)
+                    st.plotly_chart(fig_forecast, use_container_width=True)
 
-                st.subheader("📦 Predictive Supply Chain")
-                avg_tests_per_encounter = 0.6
-                current_stock = st.number_input("Current Test Kit Inventory:", min_value=0, value=5000, step=100, key="stock_input")
-                
-                predicted_encounters = forecast['yhat'][-forecast_days:].sum()
-                predicted_tests_needed = int(predicted_encounters * avg_tests_per_encounter)
-                
-                if predicted_tests_needed > 0:
-                    days_of_supply = current_stock / (predicted_tests_needed / forecast_days)
-                    st.metric(label=f"Predicted Test Demand ({forecast_days} days)", value=f"{predicted_tests_needed:,} kits")
-                    st.metric(label="Projected Days of Supply Remaining", value=f"{days_of_supply:.1f} days", delta=f"{days_of_supply - 14:.1f} vs. 14-day safety stock", delta_color="inverse")
-                    if days_of_supply < 7: st.error("🔴 CRITICAL: Urgent re-supply needed. Projected stock-out in less than one week.")
-                    elif days_of_supply < 14: st.warning("🟠 WARNING: Re-supply recommended. Projected to fall below 2-week safety stock.")
-                    else: st.success("✅ HEALTHY: Inventory levels are sufficient for the forecast period.")
+                    st.subheader("📦 Predictive Supply Chain")
+                    avg_tests_per_encounter = 0.6
+                    current_stock = st.number_input("Current Test Kit Inventory:", min_value=0, value=5000, step=100, key="stock_input")
+                    
+                    predicted_encounters = forecast['yhat'][-forecast_days:].sum()
+                    
+                    if predicted_encounters > 0:
+                        predicted_tests_needed = int(predicted_encounters * avg_tests_per_encounter)
+                        days_of_supply = current_stock / (predicted_tests_needed / forecast_days)
+                        
+                        st.metric(label=f"Predicted Test Demand ({forecast_days} days)", value=f"{predicted_tests_needed:,} kits")
+                        st.metric(label="Projected Days of Supply Remaining", value=f"{days_of_supply:.1f} days", delta=f"{days_of_supply - 14:.1f} vs. 14-day safety stock", delta_color="inverse")
+                        
+                        if days_of_supply < 7: st.error("🔴 CRITICAL: Urgent re-supply needed. Projected stock-out in less than one week.")
+                        elif days_of_supply < 14: st.warning("🟠 WARNING: Re-supply recommended. Projected to fall below 2-week safety stock.")
+                        else: st.success("✅ HEALTHY: Inventory levels are sufficient for the forecast period.")
+                else:
+                    # --- SME FIX: Handle the case where the forecast model failed ---
+                    st.error("Forecast generation failed. The model may not have converged due to the selected data filters. Try a different date range or zone.")
 
 
 def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame, chw_filter: str, health_df: pd.DataFrame):
@@ -244,13 +237,14 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
             chw_burnout_df = pd.merge(chw_metrics, stress_metrics, on='chw_id', how='left').fillna(0)
             
             w_load, w_risk, w_stress = 0.3, 0.4, 0.3
-            chw_burnout_df['burnout_risk'] = (w_load * chw_burnout_df['patient_load'] / chw_burnout_df['patient_load'].max().clip(1) + w_risk * chw_burnout_df['high_risk_cases'] / chw_burnout_df['high_risk_cases'].max().clip(1) + w_stress * chw_burnout_df['avg_stress'] / 100) * 100
-            chw_burnout_df = chw_burnout_df.sort_values('burnout_risk', ascending=False).head(10)
-            
-            fig_burnout = px.bar(chw_burnout_df, x='burnout_risk', y='chw_id', orientation='h', title="Top 10 CHWs by Predicted Burnout Risk", labels={'burnout_risk': 'Burnout Risk Index (0-100)', 'chw_id': 'CHW ID'}, template=PLOTLY_TEMPLATE, color='burnout_risk', color_continuous_scale=px.colors.sequential.Reds)
-            fig_burnout.update_layout(yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_burnout, use_container_width=True)
-            st.caption("Actionability: Consider workload adjustments or wellness checks for high-risk CHWs.")
+            if not chw_burnout_df.empty: # Add check to avoid division by zero
+                chw_burnout_df['burnout_risk'] = (w_load * chw_burnout_df['patient_load'] / chw_burnout_df['patient_load'].max().clip(1) + w_risk * chw_burnout_df['high_risk_cases'] / chw_burnout_df['high_risk_cases'].max().clip(1) + w_stress * chw_burnout_df['avg_stress'] / 100) * 100
+                chw_burnout_df = chw_burnout_df.sort_values('burnout_risk', ascending=False).head(10)
+                
+                fig_burnout = px.bar(chw_burnout_df, x='burnout_risk', y='chw_id', orientation='h', title="Top 10 CHWs by Predicted Burnout Risk", labels={'burnout_risk': 'Burnout Risk Index (0-100)', 'chw_id': 'CHW ID'}, template=PLOTLY_TEMPLATE, color='burnout_risk', color_continuous_scale=px.colors.sequential.Reds)
+                fig_burnout.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig_burnout, use_container_width=True)
+                st.caption("Actionability: Consider workload adjustments or wellness checks for high-risk CHWs.")
         elif chw_filter != "All CHWs": st.info(f"Burnout risk analysis is available when viewing 'All CHWs'.")
         else: st.info(f"Not enough data to calculate CHW burnout risk.")
 
@@ -274,7 +268,7 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
         
         corr_df = pd.concat([daily_cases, daily_stress, daily_co2], axis=1).corr()
         
-        if not corr_df.empty:
+        if not corr_df.empty and len(corr_df) > 1:
             fig_corr = px.imshow(corr_df, text_auto=True, aspect="auto", color_continuous_scale='RdBu_r', range_color=[-1, 1], title="Correlations: Environment, Stress & Cases", template=PLOTLY_TEMPLATE)
             st.plotly_chart(fig_corr, use_container_width=True)
             st.caption("Identifies potential relationships for further investigation (e.g., does high stress correlate with fewer new cases found?).")
@@ -342,7 +336,6 @@ def main():
         program_sub_tabs = st.tabs(program_tab_list)
         for i, (program_name, config) in enumerate(PROGRAM_DEFINITIONS.items()):
             with program_sub_tabs[i]:
-                # SME FIX: Pass the unique program_name to the render function to use as a key prefix.
                 render_program_cascade(analysis_df, {**config, "name": program_name}, key_prefix=program_name)
 
     with tabs[1]:
@@ -350,6 +343,10 @@ def main():
 
     with tabs[2]:
         render_iot_wearable_tab(clinic_iot_stream, wearable_iot_stream, selected_chw, analysis_df)
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
