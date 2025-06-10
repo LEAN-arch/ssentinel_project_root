@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V25 - FINAL AND COMPLETE)
+# FINAL CLEANED VERSION
 
 import logging
 from datetime import date, timedelta
@@ -32,7 +32,7 @@ PROGRAM_DEFINITIONS = {
     "Anemia & NTDs": {"icon": "🩸", "symptom": "fatigue|weakness", "test": "CBC"},
 }
 
-# --- SME EXPANSION: AI/ML & Visualization Constants ---
+# --- AI/ML & Visualization Constants ---
 PLOTLY_TEMPLATE = "plotly_white"
 RISK_BINS = [-np.inf, 0.4, 0.7, np.inf]
 RISK_LABELS = ["Low Risk", "Medium Risk", "High Risk"]
@@ -123,26 +123,20 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
             st.subheader("🔮 Patient Load Forecast")
             forecast_days = st.slider("Forecast Horizon (Days):", 7, 30, 14, 7, key="forecast_slider")
             
-            # --- SME ENHANCEMENT: Advanced Pre-flight Checks ---
             st.markdown("##### Forecast Pre-flight Check")
             encounters_hist = forecast_df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
-            
             distinct_days_with_data = len(encounters_hist[encounters_hist['y'] > 0])
             std_dev = encounters_hist['y'].std()
 
-            # Create an expander to show the data being used, which is helpful for debugging any scenario.
             with st.expander("Show Raw Daily Encounter Data for Forecast Model"):
                 st.caption("This is the daily count of encounters used as input for the model. A forecast requires at least two different days with data and variation in the daily counts.")
                 st.bar_chart(encounters_hist.rename(columns={'ds': 'Date', 'y': 'Encounters'}).set_index('Date'))
                 st.dataframe(encounters_hist)
 
-            # Check for insufficient data points
             if distinct_days_with_data < 2:
                 st.warning(f"⚠️ **Cannot Forecast:** Model requires at least 2 days with data, but found only **{distinct_days_with_data}** for the current filters.")
-            # Check for zero variance (flat line)
             elif std_dev == 0:
                 st.warning(f"⚠️ **Cannot Forecast:** All data points have the same value (the data is a 'flat line'). The model cannot learn trends from data with zero variation.")
-            # If all checks pass, proceed
             else:
                 st.success(f"✅ **Ready to Forecast:** Found data for **{distinct_days_with_data}** distinct days with sufficient variation (Std Dev: {std_dev:.2f}).")
                 forecast = generate_prophet_forecast(encounters_hist, forecast_days)
@@ -160,17 +154,14 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
                     if predicted_encounters > 0:
                         daily_rate = predicted_encounters / forecast_days if forecast_days > 0 else 0
                         days_of_supply = current_stock / daily_rate if daily_rate > 0 else float('inf')
-
                         predicted_tests_needed = int(predicted_encounters * avg_tests_per_encounter)
                         st.metric(label=f"Predicted Test Demand ({forecast_days} days)", value=f"{predicted_tests_needed:,} kits")
                         st.metric(label="Projected Days of Supply Remaining", value=f"{days_of_supply:.1f}" if days_of_supply != float('inf') else "∞", delta=f"{days_of_supply - 14:.1f} vs. 14-day safety stock" if days_of_supply != float('inf') else None, delta_color="inverse")
-                        
                         if days_of_supply < 7: st.error("🔴 CRITICAL: Urgent re-supply needed.")
                         elif days_of_supply < 14: st.warning("🟠 WARNING: Re-supply recommended.")
                         else: st.success("✅ HEALTHY: Inventory levels are sufficient.")
                 else:
                     st.error("Forecast generation failed. The model did not converge with the current data. This can happen with unusual data patterns even if pre-flight checks pass. Try adjusting filters.")
-
 
 def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame, chw_filter: str, health_df: pd.DataFrame):
     st.header("🛰️ Environmental & Team Factors")
