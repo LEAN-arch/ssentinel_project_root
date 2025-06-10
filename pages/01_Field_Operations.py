@@ -1,9 +1,9 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V19 - FINAL)
+# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V20 - FINAL)
 
 import logging
 from datetime import date, timedelta
-from typing import Dict
+from typing import Dict, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -63,29 +63,23 @@ def generate_forecasts(df: pd.DataFrame, forecast_days: int) -> Dict[str, pd.Dat
     avg_risk_hist = df.set_index('encounter_date')['ai_risk_score'].resample('D').mean().reset_index().rename(columns={'encounter_date': 'ds', 'ai_risk_score': 'y'})
     return {"Patient Load": generate_prophet_forecast(encounters_hist, forecast_days=forecast_days), "Community Risk Index": generate_prophet_forecast(avg_risk_hist, forecast_days=forecast_days)}
 
-def render_iot_wearable_tab(iot_df: pd.DataFrame, chw_id_filter: str):
-    """Renders the IoT and Wearable data visualization tab."""
+def render_iot_wearable_tab(clinic_iot_df: pd.DataFrame, wearable_iot_df: pd.DataFrame, chw_id_filter: str):
+    """Renders the IoT and Wearable data visualization tab from separate data streams."""
     st.header("🛰️ Environmental & Team Factors")
-    if iot_df.empty:
-        st.info("No IoT or wearable data available for this period."); return
     
     col1, col2 = st.columns(2)
     with col1:
-        clinic_iot = iot_df.dropna(subset=['avg_co2_ppm'])
-        if not clinic_iot.empty:
-            co2_trend = clinic_iot.set_index('timestamp')['avg_co2_ppm'].resample('D').mean()
+        st.subheader("Clinic Environment")
+        if not clinic_iot_df.empty:
+            co2_trend = clinic_iot_df.set_index('timestamp')['avg_co2_ppm'].resample('D').mean()
             fig_co2 = plot_line_chart(co2_trend, "Average Clinic CO₂ (Ventilation Proxy)", "CO₂ PPM")
             st.plotly_chart(fig_co2, use_container_width=True)
         else:
             st.info("No clinic environmental sensor data for this period.")
     with col2:
-        wearable_iot = iot_df.dropna(subset=['chw_stress_score'])
-        # Apply the CHW filter *only* to the wearable data
-        if chw_id_filter != "All CHWs":
-            wearable_iot = wearable_iot[wearable_iot['chw_id'] == chw_id_filter]
-        
-        if not wearable_iot.empty:
-            stress_trend = wearable_iot.set_index('timestamp')['chw_stress_score'].resample('D').mean()
+        st.subheader("Team Wearable Data")
+        if not wearable_iot_df.empty:
+            stress_trend = wearable_iot_df.set_index('timestamp')['chw_stress_score'].resample('D').mean()
             fig_stress = plot_line_chart(stress_trend, f"Average Stress Index for {chw_id_filter}", "Stress Index (0-100)")
             st.plotly_chart(fig_stress, use_container_width=True)
         else:
@@ -113,25 +107,28 @@ def main():
     # --- Data Filtering ---
     analysis_df = health_df[health_df['encounter_date'].dt.date.between(start_date, end_date)]
     forecast_source_df = health_df[(health_df['encounter_date'].dt.date <= end_date)]
-    iot_filtered = iot_df[iot_df['timestamp'].dt.date.between(start_date, end_date)] if not iot_df.empty else pd.DataFrame()
-
-    # Apply Zone filter to all dataframes
+    
+    # SME FIX: Create two separate, correctly filtered streams for IoT data
+    base_iot_filtered = iot_df[iot_df['timestamp'].dt.date.between(start_date, end_date)] if not iot_df.empty else pd.DataFrame()
+    
+    # Filter all dataframes by zone if selected
     if selected_zone != "All Zones":
         analysis_df = analysis_df[analysis_df['zone_id'] == selected_zone]
         forecast_source_df = forecast_source_df[forecast_source_df['zone_id'] == selected_zone]
-        iot_filtered = iot_filtered[iot_filtered['zone_id'] == selected_zone]
+        base_iot_filtered = base_iot_filtered[base_iot_filtered['zone_id'] == selected_zone]
     
-    # Apply CHW filter only to relevant dataframes
+    # Apply CHW filter only to dataframes that contain CHW-specific data
     if selected_chw != "All CHWs":
         analysis_df = analysis_df[analysis_df['chw_id'] == selected_chw]
         forecast_source_df = forecast_source_df[forecast_source_df['chw_id'] == selected_chw]
-        # SME FIX: The CHW filter is NOT applied to the main iot_filtered df,
-        # as that would remove the clinic-level data. It is passed as a parameter instead.
+    
+    # Create the final IoT streams for the rendering function
+    clinic_iot_stream = base_iot_filtered[base_iot_filtered['chw_id'].isnull()]
+    wearable_iot_stream = base_iot_filtered[base_iot_filtered['chw_id'].notnull()]
 
     st.info(f"**Displaying Data For:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}` | **Zone:** `{selected_zone}` | **CHW:** `{selected_chw}`")
     st.divider()
 
-    # --- Situation Report Header ---
     st.header("Situation Report")
     kpis_current = get_kpis_for_period(analysis_df)
     prev_start = start_date - (end_date - start_date + timedelta(days=1))
@@ -143,7 +140,6 @@ def main():
     with sit_rep_cols[2]: st.metric("TB Linkage to Care", f"{kpis_current.get('TB Linkage to Care', 0):.1f}%", f"{kpis_current.get('TB Linkage to Care', 0) - kpis_previous.get('TB Linkage to Care', 0):+.1f} pts")
     st.divider()
 
-    # --- Main Content Area ---
     tab1, tab2, tab3 = st.tabs(["**🚨 Daily Alerts**", "**🔮 AI Forecasts**", "**🛰️ IoT & Wearables**"])
 
     with tab1:
@@ -159,8 +155,7 @@ def main():
             with fc_col1: st.plotly_chart(plot_forecast_chart(forecasts['Patient Load'], title="Forecasted Patient Load", y_title="Daily Encounters"), use_container_width=True)
             with fc_col2: st.plotly_chart(plot_forecast_chart(forecasts['Community Risk Index'], title="Forecasted Community Risk", y_title="Average AI Risk Score"), use_container_width=True)
     with tab3:
-        # Pass the CHW filter as a parameter to the rendering function
-        render_iot_wearable_tab(iot_filtered, selected_chw)
+        render_iot_wearable_tab(clinic_iot_stream, wearable_iot_stream, selected_chw)
 
 if __name__ == "__main__":
     main()
