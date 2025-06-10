@@ -1,5 +1,5 @@
 # sentinel_project_root/app.py
-# SME PLATINUM STANDARD - APPLICATION ENTRY POINT (V3)
+# SME PLATINUM STANDARD - APPLICATION ENTRY POINT (V4)
 
 import logging
 import sys
@@ -13,7 +13,7 @@ try:
 
     import streamlit as st
     # SME FIX: This import now correctly pulls the `settings` INSTANCE
-    # because config/__init__.py is present and correct.
+    # because config/__init__.py exists and exposes it.
     from config import settings
     from visualization import load_and_inject_css, set_plotly_theme
     
@@ -25,7 +25,7 @@ except ImportError as e:
     sys.exit(1)
 
 # --- Global Configuration ---
-# This block will now work correctly.
+# This block will now work correctly as `settings` is the Pydantic instance.
 logging.basicConfig(
     level=settings.LOG_LEVEL, format=settings.LOG_FORMAT,
     datefmt=settings.LOG_DATE_FORMAT, handlers=[logging.StreamHandler(sys.stdout)],
