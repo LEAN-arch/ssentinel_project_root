@@ -1,5 +1,5 @@
 # sentinel_project_root/data_processing/aggregation.py
-# SME PLATINUM STANDARD - DECISION-GRADE AGGREGATIONS (V5 - DEFINITIVE FIX)
+# SME PLATINUM STANDARD - DECISION-GRADE AGGREGATIONS (V6 - DEFINITIVE FIX)
 
 import logging
 from typing import Any, Callable, Dict, Optional, Union
@@ -47,7 +47,7 @@ def _calculate_clinic_kpis(df: pd.DataFrame) -> Dict[str, Any]:
     kpis['positivity_rates'] = positivity_breakdown
     return kpis
 
-# ... [The rest of the file (_calculate_environmental_kpis, etc.) is correct and unchanged] ...
+# ... [The rest of the file is correct and unchanged] ...
 def _calculate_environmental_kpis(iot_df: pd.DataFrame) -> Dict[str, Any]:
     if not isinstance(iot_df, pd.DataFrame) or iot_df.empty: return {}
     kpis = {'avg_co2_ppm': iot_df['avg_co2_ppm'].mean(), 'avg_pm25_ugm3': iot_df['avg_pm25'].mean(), 'avg_waiting_room_occupancy': iot_df['waiting_room_occupancy'].mean()}
@@ -56,7 +56,6 @@ def _calculate_environmental_kpis(iot_df: pd.DataFrame) -> Dict[str, Any]:
         kpis['rooms_with_high_noise_count'] = (latest_readings['avg_noise_db'] > settings.ANALYTICS.noise_high_threshold_db).sum()
     else: kpis['rooms_with_high_noise_count'] = 0
     return kpis
-
 def _calculate_district_kpis(enriched_zone_df: pd.DataFrame) -> Dict[str, Any]:
     if not isinstance(enriched_zone_df, pd.DataFrame) or enriched_zone_df.empty: return {}
     kpis = {}
@@ -70,7 +69,6 @@ def _calculate_district_kpis(enriched_zone_df: pd.DataFrame) -> Dict[str, Any]:
         disease_name = col.replace('active_cases_', '').replace('_', ' ').title()
         kpis[f'total_{disease_name.lower().replace(" ", "_")}_cases'] = int(enriched_zone_df[col].sum())
     return kpis
-
 def _calculate_trend(df: Optional[pd.DataFrame], value_col: str, date_col: str, freq: str = 'D', agg_func: Union[str, Callable] = 'mean') -> pd.Series:
     if not isinstance(df, pd.DataFrame) or df.empty or date_col not in df.columns or value_col not in df.columns: return pd.Series(dtype=np.float64)
     df_trend = df[[date_col, value_col]].copy()
@@ -85,19 +83,15 @@ def _calculate_trend(df: Optional[pd.DataFrame], value_col: str, date_col: str, 
         return trend_series
     except Exception as e:
         logger.error(f"Error generating trend for '{value_col}': {e}", exc_info=True); return pd.Series(dtype=np.float64)
-
 @st.cache_data(ttl=CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
 def get_cached_clinic_kpis(df: Optional[pd.DataFrame], _source_context: str = "") -> Dict[str, Any]:
     return _calculate_clinic_kpis(df)
-
 @st.cache_data(ttl=CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
 def get_cached_environmental_kpis(iot_df: Optional[pd.DataFrame], _source_context: str = "") -> Dict[str, Any]:
     return _calculate_environmental_kpis(iot_df)
-
 @st.cache_data(ttl=CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
 def get_cached_district_kpis(enriched_zone_df: Optional[pd.DataFrame], _source_context: str = "") -> Dict[str, Any]:
     return _calculate_district_kpis(enriched_zone_df)
-
 @st.cache_data(ttl=CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
 def get_cached_trend(df: Optional[pd.DataFrame], **kwargs) -> pd.Series:
     return _calculate_trend(df, **kwargs)
