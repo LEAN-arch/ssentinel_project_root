@@ -41,12 +41,13 @@ st.set_page_config(
     }
 )
 
-# SME FIX: These function calls are correctly placed after all imports,
-# ensuring the settings object is available before they are executed.
+# SME NOTE: These function calls are correctly placed after all imports,
+# ensuring the settings object is available before the functions are executed.
 load_and_inject_css(settings.STYLE_CSS_PATH)
 set_plotly_theme()
 
-# --- Application Header ---
+# --- Application Header and Body (Unchanged) ---
+# ... [rest of app.py code] ...
 header_cols = st.columns([0.1, 0.9])
 with header_cols[0]:
     st.image(str(settings.APP_LOGO_LARGE_PATH), width=110)
@@ -55,7 +56,6 @@ with header_cols[1]:
     st.subheader("Actionable Intelligence for Resilient Health Systems")
 st.divider()
 
-# --- Welcome & System Description ---
 st.markdown(f"""
 ### Welcome to the {html.escape(settings.APP_NAME)}
 This application demonstrates an **edge-first health intelligence system** designed for **maximum clinical and 
@@ -69,7 +69,6 @@ The primary interface for frontline workers (e.g., CHWs) is a separate, dedicate
 """, icon="ℹ️")
 st.divider()
 
-# --- Dynamic Page Navigation Links ---
 st.header("Explore Simulated Role-Specific Dashboards")
 
 pages_dir = _project_root / "pages"
@@ -79,7 +78,7 @@ if pages_dir.is_dir():
     nav_cols = st.columns(min(len(page_files), 3))
     col_idx = 0
     for page_path in page_files:
-        page_name = page_path.stem[3:].replace("_", " ") # e.g., "01_Field_Operations" -> "Field Operations"
+        page_name = page_path.stem[3:].replace("_", " ")
         with nav_cols[col_idx % len(nav_cols)]:
             with st.container(border=True):
                 st.subheader(page_name)
@@ -90,7 +89,6 @@ else:
 
 st.divider()
 
-# --- Sidebar ---
 with st.sidebar:
     st.header(f"{settings.APP_NAME}")
     st.caption(f"v{settings.APP_VERSION}")
