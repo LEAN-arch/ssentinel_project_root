@@ -1,5 +1,5 @@
 # sentinel_project_root/visualization/plots.py
-# SME PLATINUM STANDARD - CENTRALIZED PLOTTING FACTORY (V3 - INITIALIZATION FIX)
+# SME PLATINUM STANDARD - CENTRALIZED PLOTTING FACTORY (V4 - DEFINITIVE INITIALIZATION FIX)
 
 import logging
 from typing import Any, Dict, Optional
@@ -19,11 +19,9 @@ logger = logging.getLogger(__name__)
 def set_plotly_theme():
     """
     Sets the custom Sentinel theme as the default for all Plotly charts.
-    The layout dictionary is defined here to ensure settings are loaded first.
+    The layout dictionary is defined here to ensure settings are loaded first,
+    resolving the startup AttributeError.
     """
-    # SME FIX: The layout dictionary is now defined inside this function,
-    # deferring access to the `settings` object until it is fully initialized.
-    # This resolves the AttributeError on startup.
     base_layout = {
         'font': {'family': "sans-serif", 'size': 12, 'color': settings.COLOR_TEXT_PRIMARY},
         'title': {'x': 0.5, 'xanchor': 'center', 'font': {'size': 18, 'color': settings.COLOR_TEXT_HEADINGS}},
@@ -47,7 +45,6 @@ def set_plotly_theme():
 # --- Factory Functions for Standardized Charts ---
 
 def create_empty_figure(title: str, message: str = "No data available.") -> go.Figure:
-    """Creates a standardized empty plot with a message."""
     fig = go.Figure()
     fig.update_layout(
         title_text=f"<b>{html.escape(title)}</b>",
@@ -166,3 +163,4 @@ def plot_forecast_chart(forecast_df: pd.DataFrame, title: str, y_title: str) -> 
     ))
     fig.update_layout(title_text=f"<b>{html.escape(title)}</b>", yaxis_title=y_title, xaxis_title="Date", showlegend=True)
     return fig
+
