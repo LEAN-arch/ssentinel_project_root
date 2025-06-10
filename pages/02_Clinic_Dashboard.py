@@ -19,7 +19,7 @@ st.set_page_config(page_title="Clinic Dashboard", page_icon="🏥", layout="wide
 logger = logging.getLogger(__name__)
 
 # --- Data Loading ---
-@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, show_spinner="Loading operational data...")
+@st.cache_data(ttl=3600, show_spinner="Loading operational data...")
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     health_df = load_health_records()
     iot_df = load_iot_records()
