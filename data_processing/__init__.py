@@ -1,63 +1,23 @@
 # sentinel_project_root/data_processing/__init__.py
+# SME PLATINUM STANDARD - SIMPLIFIED & ROBUST PACKAGE API (V2)
+
 """
-Initializes the data_processing package, defining its public API.
+Initializes the data_processing package.
 
-This package provides a suite of robust, high-performance tools for loading,
-cleaning, enriching, and aggregating health data for the Sentinel application.
-The primary entry points are the loader functions and the `DataPipeline` class.
+This __init__ file intentionally exposes only the most fundamental and
+widely used components to prevent circular import issues. Other modules
+should import directly from the specific submodules (e.g., `aggregation`, `loaders`)
+for the functions they need.
 """
 
-# --- Core Data Pipeline & Utilities from helpers.py ---
-from .helpers import (
-    DataPipeline,
-    convert_to_numeric,
-    robust_json_load,
-    hash_dataframe
-)
+# Expose the core data pipeline tool and the primary data loader.
+from .helpers import DataPipeline
+from .loaders import load_health_records, load_iot_records, load_zone_data, load_json_asset
 
-# --- Data Loading from loaders.py ---
-from .loaders import (
-    load_health_records,
-    load_iot_records,
-    load_zone_data,
-    load_json_asset
-)
-
-# --- Data Enrichment from enrichment.py ---
-from .enrichment import (
-    enrich_health_records_with_kpis,
-    enrich_zone_data_with_aggregates
-)
-
-# --- Data Aggregation from aggregation.py ---
-from .aggregation import (
-    get_cached_clinic_kpis,
-    get_cached_environmental_kpis,
-    get_cached_district_kpis,
-    get_cached_trend,
-)
-
-# --- Define the canonical public API for the package ---
 __all__ = [
-    # helpers.py
     "DataPipeline",
-    "convert_to_numeric",
-    "robust_json_load",
-    "hash_dataframe",
-
-    # loaders.py
     "load_health_records",
     "load_iot_records",
     "load_zone_data",
     "load_json_asset",
-
-    # enrichment.py
-    "enrich_health_records_with_kpis",
-    "enrich_zone_data_with_aggregates",
-
-    # aggregation.py
-    "get_cached_clinic_kpis",
-    "get_cached_environmental_kpis",
-    "get_cached_district_kpis",
-    "get_cached_trend",
 ]
