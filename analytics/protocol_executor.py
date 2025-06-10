@@ -1,5 +1,5 @@
 # sentinel_project_root/analytics/protocol_executor.py
-# SME PLATINUM STANDARD - BATCH-ENABLED PROTOCOL ENGINE
+# SME PLATINUM STANDARD - BATCH-ENABLED PROTOCOL ENGINE (V3 - DEFINITIVE LOGIC FIX)
 
 import logging
 import re
@@ -71,13 +71,20 @@ def execute_protocol_for_event(event_code: str, context_data: Dict[str, Any]) ->
 
     for step in steps:
         action_code = step.get("action_code", "UNKNOWN")
+        description = step.get("description", "N/A")
         
-        if "NOTIFY" in action_code:
+        # --- SME FIX: Definitive check for guidance steps ---
+        # A step is a "guidance" step if the action code contains "GUIDE"
+        # OR if the step explicitly has a 'guidance_pictogram_code' key.
+        is_guidance_step = "GUIDE" in action_code.upper() or 'guidance_pictogram_code' in step
+
+        if "NOTIFY" in action_code.upper():
             template = step.get("message_template_code")
             message = _format_message(template, context_data) if template else "No message template."
             details = f"Simulated notification to {step.get('escalation_target_role', 'N/A')}. Message: '{message}'"
-        elif "GUIDE" in action_code:
-            details = f"Simulated display of guidance '{step.get('guidance_pictogram_code', 'N/A')}'."
+        elif is_guidance_step:
+            pictogram_code = step.get('guidance_pictogram_code', 'INFO_ICON_DEFAULT')
+            details = f"Simulated display of guidance '{pictogram_code}'."
         else:
             details = f"Simulated execution of action '{action_code}'."
         
@@ -89,7 +96,6 @@ def execute_protocol_for_event(event_code: str, context_data: Dict[str, Any]) ->
 def execute_protocols_for_alerts(alerts_df: pd.DataFrame) -> Dict[str, Any]:
     """
     Batch-processes a DataFrame of alerts, executing protocols for each.
-    This is the primary entry point for the alerting engine.
     """
     alerts_with_protocols = alerts_df.dropna(subset=['protocol_id'])
     if alerts_with_protocols.empty:
