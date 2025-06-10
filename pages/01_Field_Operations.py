@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V18 - FINAL)
+# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V19 - FINAL)
 
 import logging
 from datetime import date, timedelta
@@ -80,6 +80,7 @@ def render_iot_wearable_tab(iot_df: pd.DataFrame, chw_id_filter: str):
             st.info("No clinic environmental sensor data for this period.")
     with col2:
         wearable_iot = iot_df.dropna(subset=['chw_stress_score'])
+        # Apply the CHW filter *only* to the wearable data
         if chw_id_filter != "All CHWs":
             wearable_iot = wearable_iot[wearable_iot['chw_id'] == chw_id_filter]
         
@@ -103,13 +104,10 @@ def main():
         st.header("Dashboard Controls")
         zone_options = ["All Zones"] + sorted(health_df['zone_id'].dropna().unique())
         selected_zone = st.selectbox("Filter by Zone:", options=zone_options)
-        
         chw_options = ["All CHWs"] + sorted(health_df['chw_id'].dropna().unique())
         selected_chw = st.selectbox("Filter by CHW:", options=chw_options)
-        
         today = health_df['encounter_date'].max().date()
         start_date, end_date = st.date_input("Select Date Range:", value=(max(today - timedelta(days=29), health_df['encounter_date'].min().date()), today), min_value=health_df['encounter_date'].min().date(), max_value=today)
-        
         forecast_days = st.slider("Forecast Horizon (Days):", 7, 90, 14, 7)
 
     # --- Data Filtering ---
@@ -117,16 +115,18 @@ def main():
     forecast_source_df = health_df[(health_df['encounter_date'].dt.date <= end_date)]
     iot_filtered = iot_df[iot_df['timestamp'].dt.date.between(start_date, end_date)] if not iot_df.empty else pd.DataFrame()
 
-    # Apply CHW and Zone filters to all relevant dataframes
+    # Apply Zone filter to all dataframes
     if selected_zone != "All Zones":
         analysis_df = analysis_df[analysis_df['zone_id'] == selected_zone]
         forecast_source_df = forecast_source_df[forecast_source_df['zone_id'] == selected_zone]
         iot_filtered = iot_filtered[iot_filtered['zone_id'] == selected_zone]
+    
+    # Apply CHW filter only to relevant dataframes
     if selected_chw != "All CHWs":
         analysis_df = analysis_df[analysis_df['chw_id'] == selected_chw]
         forecast_source_df = forecast_source_df[forecast_source_df['chw_id'] == selected_chw]
-        # SME FIX: The CHW filter must also be applied to the IoT/Wearable data.
-        iot_filtered = iot_filtered[iot_filtered['chw_id'] == selected_chw]
+        # SME FIX: The CHW filter is NOT applied to the main iot_filtered df,
+        # as that would remove the clinic-level data. It is passed as a parameter instead.
 
     st.info(f"**Displaying Data For:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}` | **Zone:** `{selected_zone}` | **CHW:** `{selected_chw}`")
     st.divider()
@@ -159,6 +159,7 @@ def main():
             with fc_col1: st.plotly_chart(plot_forecast_chart(forecasts['Patient Load'], title="Forecasted Patient Load", y_title="Daily Encounters"), use_container_width=True)
             with fc_col2: st.plotly_chart(plot_forecast_chart(forecasts['Community Risk Index'], title="Forecasted Community Risk", y_title="Average AI Risk Score"), use_container_width=True)
     with tab3:
+        # Pass the CHW filter as a parameter to the rendering function
         render_iot_wearable_tab(iot_filtered, selected_chw)
 
 if __name__ == "__main__":
