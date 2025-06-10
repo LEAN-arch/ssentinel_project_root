@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V3 - DEFINITIVE KEYERROR FIX)
+# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V4 - DEFINITIVE DATA PIPELINE FIX)
 
 import logging
 from datetime import date, timedelta
@@ -55,18 +55,17 @@ def get_summary_kpis(df: pd.DataFrame) -> dict:
         df.get('max_skin_temp_celsius', pd.Series(dtype=float))
     )
     
-    # SME FIX: Use defensive checks for each column before calculation.
-    # This prevents KeyErrors if the data pipeline fails upstream.
+    # SME FIX: Use defensive checks with .get(column, 0) for each calculation.
+    # This prevents KeyErrors if the data pipeline has an upstream failure.
     kpis = {
         "visits": df['patient_id'].nunique() if 'patient_id' in df.columns else 0,
-        "high_prio": (df['ai_followup_priority_score'] >= 80).sum() if 'ai_followup_priority_score' in df.columns else 0,
-        "crit_spo2": (df['min_spo2_pct'] < settings.ANALYTICS.spo2_critical_threshold_pct).sum() if 'min_spo2_pct' in df.columns else 0,
-        "high_fever": (df['temperature'] >= settings.ANALYTICS.temp_high_fever_threshold_c).sum() if 'temperature' in df.columns else 0,
+        "high_prio": (df.get('ai_followup_priority_score', pd.Series(dtype=float)) >= 80).sum(),
+        "crit_spo2": (df.get('min_spo2_pct', pd.Series(dtype=float)) < settings.ANALYTICS.spo2_critical_threshold_pct).sum(),
+        "high_fever": (df.get('temperature', pd.Series(dtype=float)) >= settings.ANALYTICS.temp_high_fever_threshold_c).sum(),
     }
     return kpis
 
 def display_alerts(alerts: list):
-    """Renders a list of patient alerts in a structured format."""
     st.subheader("🚨 Priority Patient Alerts")
     if not alerts:
         st.success("✅ No significant patient alerts for this selection.")
@@ -81,9 +80,9 @@ def display_alerts(alerts: list):
             st.markdown(f"**Context:** {alert.get('context', 'N/A')}")
             st.markdown(f"**Priority Score:** {alert.get('priority', 0):.0f}")
 
-
-# --- Main Page ---
+# --- Main Page Execution ---
 def main():
+    # ... [The rest of the main function is correct and remains unchanged] ...
     st.title("🧑‍⚕️ Field Operations Dashboard")
     st.markdown("Monitor zone-level performance, patient risk signals, and field activity.")
     st.divider()
@@ -94,19 +93,14 @@ def main():
         st.error("No health data available. Dashboard cannot be rendered.")
         st.stop()
 
-    # --- Sidebar Filters ---
     with st.sidebar:
         st.header("Filters")
         min_date, max_date = full_df['encounter_date'].min().date(), full_df['encounter_date'].max().date()
-        
         zone_options = ["All Zones"] + sorted(full_df['zone_id'].dropna().unique())
         selected_zone = st.selectbox("Filter by Zone:", options=zone_options)
-        
         view_date = st.date_input("View Daily Activity For:", value=max_date, min_value=min_date, max_value=max_date)
-        
         trend_start = st.date_input("Trend Start Date:", value=max(min_date, view_date - timedelta(days=29)))
 
-    # --- Data Filtering ---
     daily_mask = (full_df['encounter_date'].dt.date == view_date)
     trend_mask = (full_df['encounter_date'].dt.date.between(trend_start, view_date))
     if selected_zone != "All Zones":
@@ -117,10 +111,8 @@ def main():
     daily_df = full_df[daily_mask]
     trend_df = full_df[trend_mask]
 
-    # --- UI Rendering ---
     st.info(f"**Viewing:** {view_date:%A, %d %b %Y} | **Zone:** {selected_zone}")
 
-    # 1. Daily Performance Snapshot
     st.header(f"📊 Daily Snapshot for {view_date:%d %b}")
     if daily_df.empty:
         st.markdown("ℹ️ No activity recorded for the selected date and filters.")
@@ -134,7 +126,6 @@ def main():
 
     st.divider()
 
-    # 2. Key Alerts & Trends
     col1, col2 = st.columns([1, 2])
     with col1:
         patient_alerts = generate_chw_alerts(patient_df=daily_df)
