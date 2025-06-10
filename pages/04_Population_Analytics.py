@@ -22,7 +22,7 @@ st.set_page_config(page_title="Population Analytics", page_icon="📊", layout="
 logger = logging.getLogger(__name__)
 
 # --- Data Loading & Caching ---
-@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, show_spinner="Loading population datasets...")
+@st.cache_data(ttl=3600, show_spinner="Loading population datasets...")
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     health_df = load_health_records()
     zone_df = load_zone_data()
