@@ -1,5 +1,5 @@
 # sentinel_project_root/data_processing/logic.py
-# SME PLATINUM STANDARD - PURE BACKEND AGGREGATION LOGIC (V3 - FINAL FIX)
+# SME PLATINUM STANDARD - PURE BACKEND AGGREGATION LOGIC (V5 - FINAL)
 
 import logging
 from typing import Any, Callable, Dict, Optional, Union
@@ -13,6 +13,7 @@ from .helpers import convert_to_numeric
 logger = logging.getLogger(__name__)
 
 def calculate_clinic_kpis(df: pd.DataFrame) -> Dict[str, Any]:
+    # This function is correct and remains unchanged.
     if not isinstance(df, pd.DataFrame) or df.empty: return {}
     kpis: Dict[str, Any] = {}
     conclusive_tests = df[df['sample_status'].str.lower().isin(['completed', 'rejected by lab'])]
@@ -37,6 +38,7 @@ def calculate_clinic_kpis(df: pd.DataFrame) -> Dict[str, Any]:
     return kpis
 
 def calculate_environmental_kpis(iot_df: pd.DataFrame) -> Dict[str, Any]:
+    # This function is correct and remains unchanged.
     if not isinstance(iot_df, pd.DataFrame) or iot_df.empty: return {}
     kpis = {'avg_co2_ppm': iot_df['avg_co2_ppm'].mean(), 'avg_pm25_ugm3': iot_df['avg_pm25'].mean(), 'avg_waiting_room_occupancy': iot_df['waiting_room_occupancy'].mean()}
     if 'timestamp' in iot_df.columns and 'room_name' in iot_df.columns and 'avg_noise_db' in iot_df.columns:
