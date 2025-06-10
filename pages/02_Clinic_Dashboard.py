@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V9 - FINAL)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V10 - FINAL)
 
 import logging
 from datetime import date, timedelta
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 # --- Disease Program Definitions ---
+# This centralized dictionary makes the dashboard easily extensible.
 PROGRAM_DEFINITIONS = {
     "Tuberculosis": {"icon": "🫁", "symptom": "cough", "test": "TB Screen"},
     "Malaria": {"icon": "🦟", "symptom": "fever", "test": "Malaria RDT"},
@@ -43,40 +44,63 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     health_df, _ = apply_ai_models(raw_health_df)
     return health_df, iot_df
 
-# --- UI Rendering Components ---
+# --- UI Rendering Components for Tabs ---
+
 def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
-    """Renders the screening cascade and KPIs for a specific disease program."""
+    """Renders a comprehensive analysis tab for a specific disease program."""
     program_name = program_config['name']
-    st.header(f"{program_config['icon']} {program_name} Program Analysis")
+    st.header(f"{program_config['icon']} {program_name} Program Deep Dive")
+    st.markdown(f"Analyze the screening-to-treatment cascade for **{program_name}** to identify bottlenecks and improve patient outcomes.")
     
-    # Calculate the cascade
+    # --- 1. Calculate the Cascade ---
     symptomatic = df[df['patient_reported_symptoms'].str.contains(program_config['symptom'], case=False, na=False)]
     tested = symptomatic[symptomatic['test_type'] == program_config['test']]
     positive = tested[tested['test_result'] == 'Positive']
+    linked = positive[positive['referral_status'] == 'Completed']
     
-    # Display Funnel Chart
-    funnel_data = pd.DataFrame([
-        dict(stage="Symptomatic/At-Risk", count=len(symptomatic)),
-        dict(stage="Tested", count=len(tested)),
-        dict(stage="Positive", count=len(positive)),
-    ])
-    
-    if funnel_data['count'].sum() > 0:
-        fig = px.funnel(funnel_data, x='count', y='stage', title=f"Screening Funnel: {program_name}")
-        fig.update_yaxes(categoryorder="array", categoryarray=["Symptomatic/At-Risk", "Tested", "Positive"])
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info(f"No activity recorded for the {program_name} screening program in this period.")
+    # --- 2. Display Cascade Metrics & Funnel Chart ---
+    col1, col2 = st.columns([1, 1.5])
+    with col1:
+        st.subheader("Screening Funnel Metrics")
+        st.metric("Symptomatic/At-Risk Cohort", f"{len(symptomatic):,}")
+        st.metric("Patients Tested", f"{len(tested):,}")
+        st.metric("Positive Cases Detected", f"{len(positive):,}")
+        st.metric("Successfully Linked to Care", f"{len(linked):,}")
+
+        screening_rate = (len(tested) / len(symptomatic) * 100) if len(symptomatic) > 0 else 0
+        positivity_rate = (len(positive) / len(tested) * 100) if len(tested) > 0 else 0
+        linkage_rate = (len(linked) / len(positive) * 100) if len(positive) > 0 else 0
+        
+        st.subheader("Key Program Rates")
+        st.progress(int(screening_rate), text=f"Screening Rate: {screening_rate:.1f}%")
+        st.progress(int(positivity_rate), text=f"Positivity Rate: {positivity_rate:.1f}%")
+        st.progress(int(linkage_rate), text=f"Linkage to Care Rate: {linkage_rate:.1f}%")
+
+    with col2:
+        funnel_data = pd.DataFrame([
+            dict(stage="Symptomatic/At-Risk", count=len(symptomatic)),
+            dict(stage="Tested", count=len(tested)),
+            dict(stage="Positive", count=len(positive)),
+            dict(stage="Linked to Care", count=len(linked)),
+        ])
+        
+        if funnel_data['count'].sum() > 0:
+            fig = px.funnel(funnel_data, x='count', y='stage', title=f"Screening & Linkage Funnel: {program_name}")
+            fig.update_yaxes(categoryorder="array", categoryarray=["Symptomatic/At-Risk", "Tested", "Positive", "Linked to Care"])
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info(f"No activity recorded for the {program_name} screening program in this period.")
 
 def render_demographics_tab(df: pd.DataFrame):
-    st.header("🧑‍🤝‍🧑 Patient Demographics")
+    st.header("🧑‍🤝‍🧑 Patient Demographics Analysis")
     if df.empty:
         st.info("No patient data for demographic analysis."); return
 
     df_unique = df.drop_duplicates(subset=['patient_id'])
     age_bins = [0, 5, 15, 25, 50, 150]
-    age_labels = ['0-4', '5-14', '15-24', '25-49', '50+']
+    age_labels = ['0-4 (Child)', '5-14 (Adolescent)', '15-24 (Youth)', '25-49 (Adult)', '50+ (Senior)']
     df_unique['age_group'] = pd.cut(df_unique['age'], bins=age_bins, labels=age_labels, right=False)
+
     demo_counts = df_unique.groupby(['age_group', 'gender'], observed=False).size().reset_index(name='count')
     
     fig = plot_bar_chart(demo_counts, x_col='age_group', y_col='count', color='gender', barmode='group', title="Patient Encounters by Age and Gender", x_title="Age Group", y_title="Number of Unique Patients")
@@ -113,7 +137,7 @@ def main():
     with st.sidebar:
         st.header("Filters")
         min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
-        start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=29)), max_date), min_value=min_date, max_value=max_date)
+        start_date, end_date = st.date_input("Select Date Range for Analysis:", value=(max(min_date, max_date - timedelta(days=29)), max_date), min_value=min_date, max_value=max_date)
 
     period_health_df = full_health_df[full_health_df['encounter_date'].dt.date.between(start_date, end_date)]
     period_iot_df = full_iot_df[full_iot_df['timestamp'].dt.date.between(start_date, end_date)] if not full_iot_df.empty else pd.DataFrame()
@@ -131,7 +155,6 @@ def main():
         kpi_analysis_df = generate_kpi_analysis_table(full_health_df, start_date, end_date)
         st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True, column_config={"Current": st.column_config.NumberColumn(format="%.1f"), "Previous": st.column_config.NumberColumn(format="%.1f"), "Trend (90d)": st.column_config.ImageColumn(label="90-Day Trend")})
 
-    # Dynamically create a tab for each defined program
     for i, (program_name, config) in enumerate(PROGRAM_DEFINITIONS.items()):
         with tabs[i + 1]:
             config['name'] = program_name
