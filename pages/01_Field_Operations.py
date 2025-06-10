@@ -354,7 +354,10 @@ def main():
     if health_df.empty: st.error("No health data available. Dashboard cannot be rendered."); st.stop()
 
     with st.sidebar:
-        st.image(settings.APP_LOGO, width=100) # Assumes you have a logo in config
+        # --- SME FIX: Check if APP_LOGO exists in config before trying to display it. ---
+        if hasattr(settings, 'APP_LOGO'):
+            st.image(settings.APP_LOGO, width=100)
+            
         st.header("Dashboard Controls")
         zone_options = ["All Zones"] + sorted(health_df['zone_id'].dropna().unique())
         selected_zone = st.selectbox("Filter by Zone:", options=zone_options)
