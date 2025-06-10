@@ -1,5 +1,5 @@
 # sentinel_project_root/visualization/plots.py
-# SME PLATINUM STANDARD - CENTRALIZED & DEFINITIVE PLOTTING FACTORY (V9 - FINAL)
+# SME PLATINUM STANDARD - CENTRALIZED & DEFINITIVE PLOTTING FACTORY (V11 - FINAL)
 
 import logging
 from typing import Any, Dict, Optional
@@ -58,34 +58,41 @@ def plot_bar_chart(
     df: pd.DataFrame, x_col: str, y_col: str, title: str,
     x_title: Optional[str] = None, y_title: Optional[str] = None, **px_kwargs: Any
 ) -> go.Figure:
-    """Creates a themed bar chart with correct axis labeling."""
+    """Creates a themed bar chart with correct axis labeling and non-negative count axis."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return create_empty_figure(title)
         
     try:
-        # SME FIX: The `labels` dictionary is the correct way to set axis titles in Plotly Express.
-        # The invalid `x_title` and `y_title` arguments are removed from `**px_kwargs`.
         axis_labels = {
             x_col: x_title or x_col.replace('_', ' ').title(),
             y_col: y_title or y_col.replace('_', ' ').title()
         }
         
-        y_is_int = pd.api.types.is_integer_dtype(df[y_col]) or (df[y_col].dropna() % 1 == 0).all()
-        
         fig = px.bar(
             df, x=x_col, y=y_col, title=f"<b>{html.escape(title)}</b>",
             text_auto=True,
-            labels=axis_labels, # Use the corrected labels argument
+            labels=axis_labels,
             **px_kwargs
         )
         
-        fig.update_traces(
-            texttemplate='%{y:,.0f}' if y_is_int else '%{y:,.2f}',
-            textposition='outside'
-        )
+        # --- SME FIX: Handle axis logic correctly for both orientations ---
+        orientation = px_kwargs.get('orientation', 'v')
+        value_col = x_col if orientation == 'h' else y_col
         
-        if y_is_int:
-            fig.update_yaxes(tickformat='d')
+        is_int = pd.api.types.is_integer_dtype(df[value_col]) or (df[value_col].dropna() % 1 == 0).all()
+        
+        text_template = '%{x:,.0f}' if orientation == 'h' else '%{y:,.0f}'
+        if not is_int:
+            text_template = '%{x:,.2f}' if orientation == 'h' else '%{y:,.2f}'
+            
+        fig.update_traces(texttemplate=text_template, textposition='outside')
+        
+        # Force the value axis to start at 0 for counts
+        if is_int:
+            if orientation == 'h':
+                fig.update_xaxes(tickformat='d', range=[0, None])
+            else:
+                fig.update_yaxes(tickformat='d', range=[0, None])
             
         return fig
     except Exception as e:
