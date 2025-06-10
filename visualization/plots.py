@@ -1,5 +1,5 @@
 # sentinel_project_root/visualization/plots.py
-# SME PLATINUM STANDARD - CENTRALIZED PLOTTING FACTORY (V5 - FINAL INITIALIZATION FIX)
+# SME PLATINUM STANDARD - CENTRALIZED PLOTTING FACTORY (V5 - DEFINITIVE INITIALIZATION FIX)
 
 import logging
 from typing import Any, Dict, Optional
@@ -20,9 +20,8 @@ logger = logging.getLogger(__name__)
 def set_plotly_theme():
     """
     Sets the custom Sentinel theme as the default for all Plotly charts.
-    The layout dictionary is defined locally within this function to ensure
-    the `settings` object is fully initialized before its attributes are accessed.
-    This resolves the startup AttributeError.
+    The layout dictionary is defined here to ensure settings are loaded first,
+    resolving the startup AttributeError.
     """
     base_layout = {
         'font': {'family': "sans-serif", 'size': 12, 'color': settings.COLOR_TEXT_PRIMARY},
@@ -43,8 +42,8 @@ def set_plotly_theme():
     logger.debug("Custom 'sentinel' Plotly theme applied successfully.")
 
 
-# --- Factory Functions for Standardized Charts (Unchanged) ---
-# These functions are safe as they only access `settings` when they are called.
+# --- Factory Functions for Standardized Charts ---
+# These are safe as they only access `settings` when called.
 
 def create_empty_figure(title: str, message: str = "No data available.") -> go.Figure:
     fig = go.Figure()
@@ -65,7 +64,7 @@ def plot_bar_chart(
     if not isinstance(df, pd.DataFrame) or df.empty:
         return create_empty_figure(title)
     try:
-        y_is_int = pd.api.types.is_integer_dtype(df[y_col])
+        y_is_int = pd.api.types.is_integer_dtype(df[y_col]) or (df[y_col].dropna() % 1 == 0).all()
         fig = px.bar(
             df, x=x_col, y=y_col, title=f"<b>{html.escape(title)}</b>",
             labels={x_col: x_title or x_col.replace('_', ' ').title(), y_col: y_title or y_col.replace('_', ' ').title()},
@@ -82,7 +81,6 @@ def plot_bar_chart(
         logger.error(f"Failed to create bar chart '{title}': {e}", exc_info=True)
         return create_empty_figure(title, "Error generating chart.")
 
-# ... [The rest of the plotting functions (plot_donut_chart, etc.) remain exactly the same as the last correct version] ...
 def plot_donut_chart(df: pd.DataFrame, label_col: str, value_col: str, title: str) -> go.Figure:
     if not isinstance(df, pd.DataFrame) or df.empty: return create_empty_figure(title)
     try:
