@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V2 - AI MODEL FIX)
+# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V3 - DEFINITIVE KEYERROR FIX)
 
 import logging
 from datetime import date, timedelta
@@ -22,19 +22,20 @@ logger = logging.getLogger(__name__)
 @st.cache_data(ttl=3600)
 def get_data() -> pd.DataFrame:
     """
-    Loads and caches the base health records for the dashboard, ensuring they
-    are fully enriched with AI-generated scores.
+    Loads and caches the base health records, ensuring they are fully
+    enriched with all required AI-generated scores for this dashboard.
     """
-    # SME FIX: The raw loaded data is now passed through the AI orchestrator
-    # to ensure `ai_risk_score` and `ai_followup_priority_score` columns exist.
+    # 1. Load the raw data
     raw_df = load_health_records()
     if raw_df.empty:
         return pd.DataFrame()
     
+    # 2. SME FIX: Unconditionally apply the AI models to ensure the data contract
+    #    (i.e., presence of 'ai_risk_score', 'ai_followup_priority_score') is met.
     enriched_df, errors = apply_ai_models(raw_df, source_context="FieldOpsDashboard")
     if errors:
         logger.error(f"Errors during AI model application: {errors}")
-        # Return the best available data even if models fail
+        # Return the partially enriched data to prevent a full crash
         return enriched_df
         
     return enriched_df
@@ -42,7 +43,10 @@ def get_data() -> pd.DataFrame:
 
 # --- Helper Functions ---
 def get_summary_kpis(df: pd.DataFrame) -> dict:
-    """Calculates summary KPIs from a daily filtered DataFrame."""
+    """
+    Calculates summary KPIs from a daily filtered DataFrame.
+    This function is now hardened against missing columns.
+    """
     if df.empty:
         return {"visits": 0, "high_prio": 0, "crit_spo2": 0, "high_fever": 0}
     
@@ -51,12 +55,15 @@ def get_summary_kpis(df: pd.DataFrame) -> dict:
         df.get('max_skin_temp_celsius', pd.Series(dtype=float))
     )
     
-    return {
-        "visits": df['patient_id'].nunique(),
-        "high_prio": (df['ai_followup_priority_score'] >= 80).sum() if 'ai_followup_priority_score' in df else 0,
-        "crit_spo2": (df['min_spo2_pct'] < settings.ANALYTICS.spo2_critical_threshold_pct).sum() if 'min_spo2_pct' in df else 0,
-        "high_fever": (df['temperature'] >= settings.ANALYTICS.temp_high_fever_threshold_c).sum() if 'temperature' in df else 0,
+    # SME FIX: Use defensive checks for each column before calculation.
+    # This prevents KeyErrors if the data pipeline fails upstream.
+    kpis = {
+        "visits": df['patient_id'].nunique() if 'patient_id' in df.columns else 0,
+        "high_prio": (df['ai_followup_priority_score'] >= 80).sum() if 'ai_followup_priority_score' in df.columns else 0,
+        "crit_spo2": (df['min_spo2_pct'] < settings.ANALYTICS.spo2_critical_threshold_pct).sum() if 'min_spo2_pct' in df.columns else 0,
+        "high_fever": (df['temperature'] >= settings.ANALYTICS.temp_high_fever_threshold_c).sum() if 'temperature' in df.columns else 0,
     }
+    return kpis
 
 def display_alerts(alerts: list):
     """Renders a list of patient alerts in a structured format."""
