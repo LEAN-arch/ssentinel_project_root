@@ -1,4 +1,5 @@
-# In file: /mount/src/ssentinel_project_root/pages/01_Field_Operations.py
+# sentinel_project_root/pages/01_Field_Operations.py
+# FINAL, SELF-CONTAINED, AND CORRECTED VERSION
 
 import logging
 from datetime import date, timedelta
@@ -10,16 +11,20 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+# --- Core Sentinel Imports ---
+# We will create our own plotting function internally to avoid dependency issues.
 from analytics import apply_ai_models, generate_chw_alerts, generate_prophet_forecast
 from config import settings
 from data_processing import load_health_records, load_iot_records
 from visualization import (create_empty_figure, plot_bar_chart,
-                           plot_donut_chart, plot_forecast_chart,
-                           plot_line_chart)
+                           plot_donut_chart, plot_line_chart)
 
+# --- Page Setup ---
 st.set_page_config(page_title="Field Command Center", page_icon="📡", layout="wide")
 logger = logging.getLogger(__name__)
 
+
+# --- Disease Program Definitions ---
 PROGRAM_DEFINITIONS = {
     "Tuberculosis": {"icon": "🫁", "symptom": "cough", "test": "TB Screen"},
     "Malaria": {"icon": "🦟", "symptom": "fever", "test": "Malaria RDT"},
@@ -27,11 +32,14 @@ PROGRAM_DEFINITIONS = {
     "Anemia & NTDs": {"icon": "🩸", "symptom": "fatigue|weakness", "test": "CBC"},
 }
 
+# --- AI/ML & Visualization Constants ---
 PLOTLY_TEMPLATE = "plotly_white"
 RISK_BINS = [-np.inf, 0.4, 0.7, np.inf]
 RISK_LABELS = ["Low Risk", "Medium Risk", "High Risk"]
 RISK_COLOR_MAP = {"Low Risk": "#2ECC71", "Medium Risk": "#F39C12", "High Risk": "#E74C3C"}
 
+
+# --- Data Loading & Caching ---
 @st.cache_data(ttl=3600)
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     raw_health_df = load_health_records()
@@ -48,9 +56,34 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
         enriched_df['risk_category'] = "Low Risk"
     return enriched_df, iot_df
 
+# --- SME FIX: Internalized Plotting and Fallback Model ---
+def _plot_forecast_chart_internal(df: pd.DataFrame, title: str, y_title: str) -> go.Figure:
+    """Internal plotting function guaranteed to use correct column names."""
+    fig = go.Figure()
+    # Use standard Prophet column names: 'ds', 'y', 'yhat', 'yhat_lower', 'yhat_upper'
+    if "yhat_lower" in df.columns and "yhat_upper" in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df["ds"].tolist() + df["ds"].tolist()[::-1],
+            y=df["yhat_upper"].tolist() + df["yhat_lower"].tolist()[::-1],
+            fill="toself", fillcolor="rgba(0,123,255,0.2)",
+            line=dict(color="rgba(255,255,255,0)"),
+            hoverinfo="none", name="Uncertainty"
+        ))
+    if "y" in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df["ds"], y=df["y"], mode="markers",
+            marker=dict(color="#343A40"), name="Historical"
+        ))
+    if "yhat" in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df["ds"], y=df["yhat"], mode="lines",
+            line=dict(color="#007BFF"), name="Forecast"
+        ))
+    fig.update_layout(title=title, xaxis_title="Date", yaxis_title=y_title, template=PLOTLY_TEMPLATE)
+    return fig
+
 def generate_moving_average_forecast(df: pd.DataFrame, days_to_forecast: int, window: int) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame()
+    if df.empty: return pd.DataFrame()
     last_known_date = df['ds'].max()
     moving_avg = df['y'].rolling(window=window, min_periods=1).mean().iloc[-1]
     future_dates = pd.to_datetime([last_known_date + timedelta(days=i) for i in range(1, days_to_forecast + 1)])
@@ -59,6 +92,7 @@ def generate_moving_average_forecast(df: pd.DataFrame, days_to_forecast: int, wi
     forecast_df['yhat_upper'] = moving_avg
     return forecast_df
 
+# --- UI Rendering Components ---
 def render_program_cascade(df: pd.DataFrame, config: Dict, key_prefix: str):
     symptomatic = df[df['patient_reported_symptoms'].str.contains(config['symptom'], case=False, na=False)]
     tested = symptomatic[symptomatic['test_type'] == config['test']]
@@ -160,10 +194,9 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
             if forecast_successful:
                 st.info(f"**Model Used:** `{model_used}`")
                 
-                # Combine historical and forecast data for plotting
                 plot_data = pd.merge(encounters_hist, final_forecast_df, on='ds', how='outer')
 
-                fig_forecast = plot_forecast_chart(plot_data, title="Forecasted Daily Patient Encounters", y_title="Patient Encounters")
+                fig_forecast = _plot_forecast_chart_internal(plot_data, title="Forecasted Daily Patient Encounters", y_title="Patient Encounters")
                 st.plotly_chart(fig_forecast, use_container_width=True)
                 
                 st.divider()
@@ -171,7 +204,6 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
                 avg_tests_per_encounter = 0.6
                 current_stock = st.number_input("Current Test Kit Inventory:", min_value=0, value=5000, step=100, key="stock_input")
                 
-                # Use only the future part of the forecast for calculations
                 future_df = final_forecast_df[final_forecast_df['ds'] > encounters_hist['ds'].max()]
                 predicted_encounters = future_df['yhat'].sum()
 
@@ -186,7 +218,6 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
                     else: st.success("✅ HEALTHY: Inventory levels are sufficient.")
             else:
                 st.error("All forecast models failed. The data is too sparse or erratic for a reliable prediction. Please broaden your filters.")
-
 
 def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame, chw_filter: str, health_df: pd.DataFrame):
     st.header("🛰️ Environmental & Team Factors")
