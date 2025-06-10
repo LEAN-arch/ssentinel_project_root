@@ -222,15 +222,20 @@ def main():
         if hasattr(settings, 'APP_LOGO'):
             st.image(settings.APP_LOGO, width=100)
         st.header("Dashboard Controls")
+
+        # SME FIX: Added unique `key` arguments to all sidebar widgets to prevent any possibility of a duplicate ID error.
         zone_options = ["All Zones"] + sorted(health_df['zone_id'].dropna().unique())
-        selected_zone = st.selectbox("Filter by Zone:", options=zone_options)
+        selected_zone = st.selectbox("Filter by Zone:", options=zone_options, key="zone_filter")
+
         chw_options = ["All CHWs"] + sorted(health_df['chw_id'].dropna().unique())
-        selected_chw = st.selectbox("Filter by CHW:", options=chw_options)
+        selected_chw = st.selectbox("Filter by CHW:", options=chw_options, key="chw_filter")
+
         today = health_df['encounter_date'].max().date()
         date_range_options = ["Last 30 Days", "Last 90 Days", "Year to Date", "Custom"]
-        selected_range = st.selectbox("Select Date Range:", options=date_range_options)
+        selected_range = st.selectbox("Select Date Range:", options=date_range_options, key="date_range_filter")
+
         if selected_range == "Custom":
-            start_date, end_date = st.date_input("Select Date Range:", value=(today - timedelta(days=29), today), min_value=health_df['encounter_date'].min().date(), max_value=today)
+            start_date, end_date = st.date_input("Select Date Range:", value=(today - timedelta(days=29), today), min_value=health_df['encounter_date'].min().date(), max_value=today, key="custom_date_filter")
         elif selected_range == "Last 30 Days":
             start_date, end_date = today - timedelta(days=29), today
         elif selected_range == "Last 90 Days":
@@ -241,13 +246,15 @@ def main():
     analysis_df = health_df[health_df['encounter_date'].dt.date.between(start_date, end_date)]
     forecast_source_df = health_df[health_df['encounter_date'].dt.date <= end_date]
     iot_filtered = iot_df[iot_df['timestamp'].dt.date.between(start_date, end_date)] if not iot_df.empty else pd.DataFrame()
+
     if selected_zone != "All Zones":
         analysis_df = analysis_df[analysis_df['zone_id'] == selected_zone]
         forecast_source_df = forecast_source_df[forecast_source_df['zone_id'] == selected_zone]
         iot_filtered = iot_filtered[iot_filtered['zone_id'] == selected_zone]
     if selected_chw != "All CHWs":
         analysis_df = analysis_df[analysis_df['chw_id'] == selected_chw]
-        forecast_source_df = forecast_source_df[forecast_source__df['chw_id'] == selected_chw]
+        # SME FIX: Corrected a typo from forecast_source__df to forecast_source_df
+        forecast_source_df = forecast_source_df[forecast_source_df['chw_id'] == selected_chw]
 
     clinic_iot_stream = iot_filtered[iot_filtered['chw_id'].isnull()] if 'chw_id' in iot_filtered.columns else iot_filtered
     wearable_iot_stream = iot_filtered[iot_filtered['chw_id'].notnull()] if 'chw_id' in iot_filtered.columns else pd.DataFrame()
@@ -270,8 +277,8 @@ def main():
     with tabs[2]:
         render_iot_wearable_tab(clinic_iot_stream, wearable_iot_stream, selected_chw, analysis_df)
 
-# SME FIX: The file had two `if __name__ == "__main__":` blocks.
-# The single, correct block should be at the very end of the script.
+# SME FIX: The file had structural errors causing `main()` to be called twice.
+# This single, clean block at the end of the file is the correct way to run the app.
 if __name__ == "__main__":
     main()
 
