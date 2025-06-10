@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V18 - FINAL)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V19 - DEFINITIVE)
 
 import logging
 from datetime import date, timedelta
@@ -10,12 +10,12 @@ import plotly.express as px
 import streamlit as st
 
 # --- Core Sentinel Imports ---
-from analytics import apply_ai_models, generate_kpi_analysis_table, generate_prophet_forecast
+from analytics import apply_ai_models, generate_prophet_forecast
 from config import settings
 from data_processing import load_health_records, load_iot_records
 from data_processing.cached import get_cached_environmental_kpis
 from visualization import (create_empty_figure, plot_bar_chart,
-                           plot_forecast_chart, plot_line_chart,
+                           plot_forecast_chart, plot_heatmap, plot_line_chart,
                            render_traffic_light_indicator)
 
 # --- Page Setup ---
@@ -45,6 +45,35 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 # --- UI Rendering Components for Tabs ---
 
+def render_overview_tab(df: pd.DataFrame, period_str: str):
+    """Renders a high-level overview with key metrics and a trend heatmap."""
+    st.header(f"🚀 Clinic Overview: {period_str}")
+    
+    col1, col2, col3 = st.columns(3)
+    unique_patients = df['patient_id'].nunique()
+    avg_risk = df['ai_risk_score'].mean()
+    high_risk_patients = df[df['ai_risk_score'] >= settings.ANALYTICS.risk_score_moderate_threshold]['patient_id'].nunique()
+
+    col1.metric("Unique Patients Served", f"{unique_patients:,}")
+    col2.metric("Average Patient Risk Score", f"{avg_risk:.1f}")
+    col3.metric("High-Risk Patients", f"{high_risk_patients:,}", f"{high_risk_patients / unique_patients:.1%}" if unique_patients > 0 else "0%", help="Patients with AI Risk Score >= 65")
+
+    st.divider()
+    st.subheader("Weekly Diagnosis Trends")
+    st.markdown("This heatmap shows the number of cases for top diagnoses each week, helping to spot trends and outbreaks.")
+    
+    top_diagnoses = df['diagnosis'].value_counts().nlargest(7).index
+    df_top = df[df['diagnosis'].isin(top_diagnoses)]
+    
+    heatmap_data = df_top.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'diagnosis']).size().unstack(fill_value=0)
+    if not heatmap_data.empty:
+        heatmap_data.index = heatmap_data.index.strftime('%d-%b-%Y')
+        fig = plot_heatmap(heatmap_data, title="Weekly Case Volume by Diagnosis")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Not enough diagnosis data to generate a trend heatmap for this period.")
+
+
 def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
     program_name = program_config['name']
     st.header(f"{program_config['icon']} {program_name} Program Analysis")
@@ -62,86 +91,39 @@ def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
         st.metric("Patients Tested", f"{len(tested):,}")
         st.metric("Positive Cases Detected", f"{len(positive):,}")
         st.metric("Successfully Linked to Care", f"{len(linked):,}")
-
     with col2:
-        funnel_data = pd.DataFrame([
-            dict(stage="Symptomatic/At-Risk", count=len(symptomatic)),
-            dict(stage="Tested", count=len(tested)),
-            dict(stage="Positive", count=len(positive)),
-            dict(stage="Linked to Care", count=len(linked)),
-        ])
+        funnel_data = pd.DataFrame([dict(stage="Symptomatic/At-Risk", count=len(symptomatic)), dict(stage="Tested", count=len(tested)), dict(stage="Positive", count=len(positive)), dict(stage="Linked to Care", count=len(linked))])
         if funnel_data['count'].sum() > 0:
-            fig = px.funnel(funnel_data, x='count', y='stage', title=f"Screening & Linkage Funnel: {program_name}")
-            fig.update_yaxes(categoryorder="array", categoryarray=["Symptomatic/At-Risk", "Tested", "Positive", "Linked to Care"])
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info(f"No activity recorded for the {program_name} screening program in this period.")
+            fig = px.funnel(funnel_data, x='count', y='stage', title=f"Screening & Linkage Funnel: {program_name}"); fig.update_yaxes(categoryorder="array", categoryarray=["Symptomatic/At-Risk", "Tested", "Positive", "Linked to Care"]); st.plotly_chart(fig, use_container_width=True)
+        else: st.info(f"No activity recorded for the {program_name} screening program in this period.")
 
 def render_demographics_tab(df: pd.DataFrame):
-    """Renders a comprehensive, multi-plot patient demographics analysis tab."""
+    """Renders an interactive, multi-plot patient demographics analysis tab."""
     st.header("🧑‍🤝‍🧑 Patient Demographics Deep Dive")
-    st.markdown("Analyze patient distributions by age, gender, and risk to assess program reach and identify high-risk populations.")
-    if df.empty:
-        st.info("No patient data available for demographic analysis."); return
+    if df.empty: st.info("No patient data available for demographic analysis."); return
 
     df_unique = df.drop_duplicates(subset=['patient_id']).copy()
-    
-    # --- Definitive Data Sanitization ---
     df_unique['gender'] = df_unique['gender'].fillna('Unknown').astype(str)
-    age_bins = [0, 5, 15, 25, 50, 150]
-    age_labels = ['0-4', '5-14', '15-24', '25-49', '50+']
-    df_unique['age_group'] = pd.cut(df_unique['age'], bins=age_bins, labels=age_labels, right=False)
-    df_unique['age_group'] = df_unique['age_group'].astype(str).replace('nan', 'Not Recorded')
+    age_bins = [0, 5, 15, 25, 50, 150]; age_labels = ['0-4', '5-14', '15-24', '25-49', '50+']
+    df_unique['age_group'] = pd.cut(df_unique['age'], bins=age_bins, labels=age_labels, right=False).astype(str).replace('nan', 'Not Recorded')
 
-    # --- Visualization Layout ---
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Patient Volume by Demographics")
+    analysis_type = st.radio("Select Demographic Analysis:", ["Patient Volume", "Average Risk Score"], horizontal=True)
+    st.divider()
+
+    if analysis_type == "Patient Volume":
         demo_counts = df_unique.groupby(['age_group', 'gender']).size().reset_index(name='count')
         if not demo_counts.empty:
-            fig_vol = plot_bar_chart(
-                demo_counts, x_col='age_group', y_col='count', color='gender', barmode='group',
-                title="Patient Encounters by Age and Gender", x_title="Age Group", y_title="Number of Unique Patients",
-                category_orders={'age_group': age_labels + ['Not Recorded']}
-            )
-            st.plotly_chart(fig_vol, use_container_width=True)
-        else:
-            st.info("No data for volume analysis.")
-
-    with col2:
-        st.subheader("High-Risk Patient Distribution")
-        risk_threshold = settings.ANALYTICS.risk_score_moderate_threshold
-        high_risk_df = df_unique[df_unique['ai_risk_score'] >= risk_threshold]
-        risk_by_zone = high_risk_df['zone_id'].value_counts().nlargest(10).reset_index()
-        risk_by_zone.columns = ['zone_id', 'count']
-
-        if not risk_by_zone.empty:
-            fig_zone = plot_bar_chart(
-                risk_by_zone, y_col='zone_id', x_col='count', orientation='h',
-                title=f"Top Zones for High-Risk Patients",
-                y_title="Zone", x_title="Number of High-Risk Patients"
-            )
-            st.plotly_chart(fig_zone, use_container_width=True)
-        else:
-            st.info("No high-risk patients identified in this period.")
-    
-    st.divider()
-    
-    st.subheader("Risk Profile Analysis")
-    risk_by_demo_df = df_unique.groupby(['age_group', 'gender'])['ai_risk_score'].mean().reset_index()
-    if not risk_by_demo_df.empty:
-        fig_risk = plot_bar_chart(
-            risk_by_demo_df, x_col='age_group', y_col='ai_risk_score', color='gender', barmode='group',
-            title="Average AI Risk Score by Age and Gender", x_title="Age Group", y_title="Average AI Risk Score",
-            category_orders={'age_group': age_labels + ['Not Recorded']}
-        )
-        fig_risk.update_yaxes(range=[0, 100])
-        st.plotly_chart(fig_risk, use_container_width=True)
-    else:
-        st.info("No data for risk profile analysis.")
+            fig = plot_bar_chart(demo_counts, x_col='age_group', y_col='count', color='gender', barmode='group', title="Patient Volume by Age and Gender", x_title="Age Group", y_title="Number of Unique Patients", category_orders={'age_group': age_labels + ['Not Recorded']})
+            st.plotly_chart(fig, use_container_width=True)
+    else: # Average Risk Score
+        risk_by_demo = df_unique.groupby(['age_group', 'gender'])['ai_risk_score'].mean().reset_index()
+        if not risk_by_demo.empty:
+            fig = plot_bar_chart(risk_by_demo, x_col='age_group', y_col='ai_risk_score', color='gender', barmode='group', title="Average AI Risk Score by Age and Gender", x_title="Age Group", y_title="Average AI Risk Score", category_orders={'age_group': age_labels + ['Not Recorded']})
+            fig.update_yaxes(range=[0, 100])
+            st.plotly_chart(fig, use_container_width=True)
 
 def render_forecasting_tab(df: pd.DataFrame):
-    # ... [This function is correct and remains unchanged] ...
+    # ... [This function remains correct and unchanged] ...
     st.header("🔮 AI-Powered Forecasts"); st.info("These forecasts use historical data to predict future trends, helping with resource and staff planning.")
     forecast_days = st.slider("Days to Forecast Ahead:", 7, 90, 30, 7, key="clinic_forecast_days")
     encounters_hist = df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
@@ -162,7 +144,6 @@ def render_environment_tab(iot_df: pd.DataFrame):
     co2_trend = get_cached_trend(df=iot_df, value_col='avg_co2_ppm', date_col='timestamp', freq='h', agg_func='mean')
     st.plotly_chart(plot_line_chart(co2_trend, "Hourly Average CO₂ Trend", y_title="CO₂ (PPM)"), use_container_width=True)
 
-
 # --- Main Page Execution ---
 def main():
     st.title("🏥 Clinic Command Center")
@@ -182,14 +163,12 @@ def main():
 
     st.info(f"**Displaying Clinic Data For:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}`")
 
-    tab_keys = ["Snapshot"] + list(PROGRAM_DEFINITIONS.keys()) + ["Demographics", "Forecasting", "Environment"]
+    tab_keys = ["🚀 Overview"] + list(PROGRAM_DEFINITIONS.keys()) + ["🧑‍🤝‍🧑 Demographics", "🔮 Forecasting", "🌿 Environment"]
     tab_icons = ["🚀"] + [p['icon'] for p in PROGRAM_DEFINITIONS.values()] + ["🧑‍🤝‍🧑", "🔮", "🌿"]
     tabs = st.tabs([f"{icon} {key}" for icon, key in zip(tab_icons, tab_keys)])
 
     with tabs[0]:
-        st.header("Operational Performance Snapshot")
-        kpi_analysis_df = generate_kpi_analysis_table(full_health_df, start_date, end_date)
-        st.dataframe(kpi_analysis_df, hide_index=True, use_container_width=True, column_config={"Current": st.column_config.NumberColumn(format="%.1f"), "Previous": st.column_config.NumberColumn(format="%.1f"), "Trend (90d)": st.column_config.ImageColumn(label="90-Day Trend")})
+        render_overview_tab(period_health_df, f"{start_date:%d %b} - {end_date:%d %b}")
 
     for i, (program_name, config) in enumerate(PROGRAM_DEFINITIONS.items()):
         with tabs[i + 1]:
