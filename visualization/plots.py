@@ -1,5 +1,5 @@
 # sentinel_project_root/visualization/plots.py
-# SME PLATINUM STANDARD - CENTRALIZED & DEFINITIVE PLOTTING FACTORY
+# SME PLATINUM STANDARD - CENTRALIZED & DEFINITIVE PLOTTING FACTORY (V9 - FINAL)
 
 import logging
 from typing import Any, Dict, Optional
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def _hex_to_rgba(hex_color: str, alpha: float) -> str:
     """Converts a hex color string to an rgba string for Plotly compatibility."""
     hex_color = hex_color.lstrip('#')
-    if len(hex_color) != 6: return 'rgba(0,0,0,0.1)' # Fallback for invalid hex
+    if len(hex_color) != 6: return 'rgba(0,0,0,0.1)'
     try:
         rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
         return f'rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {alpha})'
@@ -54,15 +54,44 @@ def create_empty_figure(title: str, message: str = "No data available.") -> go.F
     )
     return fig
 
-def plot_bar_chart(df: pd.DataFrame, x_col: str, y_col: str, title: str, **px_kwargs: Any) -> go.Figure:
-    if not isinstance(df, pd.DataFrame) or df.empty: return create_empty_figure(title)
+def plot_bar_chart(
+    df: pd.DataFrame, x_col: str, y_col: str, title: str,
+    x_title: Optional[str] = None, y_title: Optional[str] = None, **px_kwargs: Any
+) -> go.Figure:
+    """Creates a themed bar chart with correct axis labeling."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return create_empty_figure(title)
+        
     try:
+        # SME FIX: The `labels` dictionary is the correct way to set axis titles in Plotly Express.
+        # The invalid `x_title` and `y_title` arguments are removed from `**px_kwargs`.
+        axis_labels = {
+            x_col: x_title or x_col.replace('_', ' ').title(),
+            y_col: y_title or y_col.replace('_', ' ').title()
+        }
+        
         y_is_int = pd.api.types.is_integer_dtype(df[y_col]) or (df[y_col].dropna() % 1 == 0).all()
-        fig = px.bar(df, x=x_col, y=y_col, title=f"<b>{html.escape(title)}</b>", text_auto=True, **px_kwargs)
-        fig.update_traces(texttemplate='%{y:,.0f}' if y_is_int else '%{y:,.2f}', textposition='outside')
-        if y_is_int: fig.update_yaxes(tickformat='d')
+        
+        fig = px.bar(
+            df, x=x_col, y=y_col, title=f"<b>{html.escape(title)}</b>",
+            text_auto=True,
+            labels=axis_labels, # Use the corrected labels argument
+            **px_kwargs
+        )
+        
+        fig.update_traces(
+            texttemplate='%{y:,.0f}' if y_is_int else '%{y:,.2f}',
+            textposition='outside'
+        )
+        
+        if y_is_int:
+            fig.update_yaxes(tickformat='d')
+            
         return fig
-    except Exception as e: logger.error(f"Failed to create bar chart '{title}': {e}", exc_info=True); return create_empty_figure(title, "Error generating chart.")
+    except Exception as e:
+        logger.error(f"Failed to create bar chart '{title}': {e}", exc_info=True)
+        return create_empty_figure(title, "Error generating chart.")
+
 
 def plot_donut_chart(df: pd.DataFrame, label_col: str, value_col: str, title: str) -> go.Figure:
     if not isinstance(df, pd.DataFrame) or df.empty: return create_empty_figure(title)
