@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V13 - FINAL DEMOGRAPHICS FIX)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V14 - FINAL FIX)
 
 import logging
 from datetime import date, timedelta
@@ -86,6 +86,10 @@ def render_demographics_tab(df: pd.DataFrame):
 
     df_unique = df.drop_duplicates(subset=['patient_id']).copy()
     
+    # SME FIX: Explicitly sanitize the 'gender' column before any operations.
+    # This prevents errors if the column contains NaNs after filtering.
+    df_unique['gender'] = df_unique['gender'].fillna('Unknown').astype(str)
+    
     age_bins = [0, 5, 15, 25, 50, 150]
     age_labels = ['0-4', '5-14', '15-24', '25-49', '50+']
     df_unique['age_group'] = pd.cut(df_unique['age'], bins=age_bins, labels=age_labels, right=False).astype(str)
@@ -93,13 +97,11 @@ def render_demographics_tab(df: pd.DataFrame):
     demo_counts = df_unique.groupby(['age_group', 'gender'], observed=False).size().reset_index(name='count')
     
     if not demo_counts.empty:
-        # SME FIX: Explicitly pass `category_orders` to ensure correct sorting of the x-axis.
-        # This resolves the internal Plotly error and guarantees the chart renders correctly.
         fig = plot_bar_chart(
             demo_counts, x_col='age_group', y_col='count', color='gender',
             barmode='group', title="Patient Encounters by Age and Gender",
             x_title="Age Group", y_title="Number of Unique Patients",
-            category_orders={'age_group': age_labels}
+            category_orders={'age_group': age_labels} # Ensures correct chronological order
         )
         st.plotly_chart(fig, use_container_width=True)
     else:
