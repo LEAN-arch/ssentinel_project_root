@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V24 - FINAL)
+# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V25 - FINAL COMPLETE)
 
 import logging
 from datetime import date, timedelta
@@ -14,7 +14,8 @@ from analytics import apply_ai_models, generate_chw_alerts, generate_prophet_for
 from config import settings
 from data_processing import load_health_records, load_iot_records
 from visualization import (create_empty_figure, plot_bar_chart,
-                           plot_forecast_chart, plot_line_chart)
+                           plot_donut_chart, plot_forecast_chart,
+                           plot_line_chart)
 
 # --- Page Setup ---
 st.set_page_config(page_title="Field Command Center", page_icon="📡", layout="wide")
@@ -28,6 +29,7 @@ PROGRAM_DEFINITIONS = {
     "HIV & STIs": {"icon": "🎗️", "symptom": "fatigue", "test": "HIV Test"},
     "Anemia & NTDs": {"icon": "🩸", "symptom": "fatigue|weakness", "test": "CBC"},
 }
+
 
 # --- Data Loading & Caching ---
 @st.cache_data(ttl=3600)
@@ -55,55 +57,7 @@ def render_program_cascade(df: pd.DataFrame, config: Dict):
         st.metric("Patients Tested", f"{len(tested):,}")
         st.metric("Positive Cases", f"{len(positive):,}")
         st.metric("Linked to Care", f"{len(linked):,}")
-        screening_rate = (len(tested) / len(symptomatic) * 100) if len(You are absolutely correct. My apologies. In my effort to streamline the dashboard, I removed valuable components, which was a mistake. A supervisor needs a comprehensive view, and excluding the IoT and Wearable data was a step backward.
-
-I will now provide the definitive and final version of the **Field Operations Command Center**. This version re-integrates all the critical components from previous iterations and combines them with the new program-centric views, creating the most powerful and complete dashboard yet.
-
-### Definitive Enhancements in this Final Version:
-
-1.  **Re-instated IoT & Wearables Tab:** The crucial "IoT & Wearables" tab is restored, providing supervisors with real-time insights into environmental risks (like clinic CO₂) and team well-being (via stress scores).
-2.  **Situation Report Header:** The dashboard now leads with a data-dense "Situation Report" header using `st.metric`, giving an immediate, quantifiable summary of the team's performance in the selected period.
-3.  **Comprehensive Tabbed Layout:** The dashboard is now organized into a logical, multi-tab layout that includes:
-    *   **Program Performance:** Dedicated tabs for each key disease with sc_screening_cascade funnels.
-    *   **Team Operations & Alerts:** A tab focused on the daily workload, including priority alerts and an activity breakdown.
-    *   **AI Forecasting:** A dedicated tab for predictive analytics on patient load and community risk.
-    *   **IoT & Wearables:** The restored tab for environmental and team-level data.
-4.  **Robust Data Filtering:** The underlying data filtering logic has been meticulously reviewed to ensure all components and tabs correctly respond to user selections for Zone and CHW.
-
-This version represents the true "platinum standard" by expanding capabilities without sacrificing valuable information, providing a 360-degree view of field operations.
-
----
-
-### **Definitively Re-engineered `pages/01_Field_Operations.py`**
-
-```python
-# sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V24 - FINAL COMPLETE)
-
-import logging
-from datetime import date, timedelta
-from typing import Dict, Tuple
-
-import pandas as pd
-import plotly.express as px
-import streamlit as st
-
-# --- Core Sentinel Imports ---
-from analytics import apply_ai_models, generate_chw_alerts, generate_prophet_forecast
-from config import settings
-from data_processing import load_health_records, load_iot_records
-from data_processing.cached import get_cached_trend
-from visualization import (create_empty_figure, plot_bar_chart,
-                           plot_donut_chart, plot_forecast_chart,
-                           plot_line_chart)
-
-# --- Page Setup ---
-st.set_page_config(page_title="Field Command Center", page_icon="📡", layout="wide")
-logger = logging.getLogger(__name__)
-
-
-# --- Disease Program Definitions ---
-PROGRAM_DEFINsymptomatic) > 0 else 0
+        screening_rate = (len(tested) / len(symptomatic) * 100) if len(symptomatic) > 0 else 0
         linkage_rate = (len(linked) / len(positive) * 100) if len(positive) > 0 else 100
         st.progress(int(screening_rate), text=f"Screening Rate: {screening_rate:.1f}%")
         st.progress(int(linkage_rate), text=f"Linkage to Care Rate: {linkage_rate:.1f}%")
@@ -201,8 +155,7 @@ def main():
     if selected_chw != "All CHWs":
         analysis_df = analysis_df[analysis_df['chw_id'] == selected_chw]
         forecast_source_df = forecast_source_df[forecast_source_df['chw_id'] == selected_chw]
-
-    # Separate IoT data streams after general filtering
+    
     clinic_iot_stream = iot_filtered[iot_filtered['chw_id'].isnull()] if 'chw_id' in iot_filtered.columns else iot_filtered
     wearable_iot_stream = iot_filtered[iot_filtered['chw_id'].notnull()] if 'chw_id' in iot_filtered.columns else pd.DataFrame()
 
@@ -211,16 +164,20 @@ def main():
 
     # --- Main Tabbed Layout ---
     program_tab_list = [f"{p['icon']} {name}" for name, p in PROGRAM_DEFINITIONS.items()]
-    tabs = st.tabs(["**🚨 AI Decision Support**"] + program_tab_list + ["**🛰️ IoT & Wearables**"])
+    tabs = st.tabs(["**📊 Program Performance**", "**🚨 AI Decision Support**", "**🛰️ IoT & Wearables**"])
 
     with tabs[0]:
-        render_decision_support_tab(analysis_df, forecast_source_df)
+        st.header("Screening Program Deep Dive")
+        st.markdown("Use the tabs below to monitor the performance of each key public health screening program.")
+        program_sub_tabs = st.tabs(program_tab_list)
+        for i, (program_name, config) in enumerate(PROGRAM_DEFINITIONS.items()):
+            with program_sub_tabs[i]:
+                render_program_cascade(analysis_df, {**config, "name": program_name})
     
-    for i, (program_name, config) in enumerate(PROGRAM_DEFINITIONS.items()):
-        with tabs[i + 1]:
-            render_program_cascade(analysis_df, {**config, "name": program_name})
+    with tabs[1]:
+        render_decision_support_tab(analysis_df, forecast_source_df)
             
-    with tabs[-1]:
+    with tabs[2]:
         render_iot_wearable_tab(clinic_iot_stream, wearable_iot_stream, selected_chw)
 
 
