@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V7 - DEFINITIVE REDESIGN)
+# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V8 - AI FORECASTING INTEGRATION)
 
 import logging
 from datetime import date, timedelta
@@ -8,24 +8,24 @@ from typing import Dict
 import pandas as pd
 import streamlit as st
 
-from analytics import apply_ai_models, generate_chw_alerts
+# --- Core Sentinel Imports ---
+from analytics import apply_ai_models, generate_chw_alerts, generate_prophet_forecast
 from config import settings
 from data_processing import load_health_records
-from data_processing.cached import get_cached_trend
 from visualization import (create_empty_figure, plot_bar_chart,
-                           plot_donut_chart, plot_line_chart,
-                           render_kpi_card)
+                           plot_forecast_chart, render_kpi_card)
 
 # --- Page Setup ---
 st.set_page_config(page_title="Field Operations", page_icon="🧑‍⚕️", layout="wide")
 logger = logging.getLogger(__name__)
 
-# --- Data Loading ---
+
+# --- Data Loading & Caching ---
 @st.cache_data(ttl=3600)
 def get_data() -> pd.DataFrame:
     """
     Loads and caches the base health records, ensuring they are fully
-    enriched with all required AI-generated scores for this dashboard.
+    enriched with all required AI-generated scores.
     """
     raw_df = load_health_records()
     if raw_df.empty:
@@ -33,101 +33,71 @@ def get_data() -> pd.DataFrame:
     enriched_df, _ = apply_ai_models(raw_df)
     return enriched_df
 
-# --- New, Advanced KPI Calculation Logic ---
+# --- Analytics & KPI Functions ---
 def calculate_field_ops_kpis(df: pd.DataFrame) -> Dict:
     """
-    Calculates a rich set of decision-grade KPIs for field operations,
-    focusing on screening and diagnostic funnels.
+    Calculates a rich set of decision-grade KPIs for field operations.
     """
-    if df.empty:
-        return {}
-
+    if df.empty: return {}
     kpis = {}
-    
-    # Basic Activity
-    kpis['total_encounters'] = len(df)
     kpis['unique_patients_seen'] = df['patient_id'].nunique()
-
-    # --- Malaria Screening Cascade ---
+    
+    # Malaria Screening Cascade
     malaria_symptomatic = df[df['patient_reported_symptoms'].str.contains('fever', case=False, na=False)]
-    kpis['malaria_symptomatic_count'] = len(malaria_symptomatic)
-    
     screened_for_malaria = malaria_symptomatic[malaria_symptomatic['test_type'] == 'Malaria RDT']
-    kpis['malaria_screened_count'] = len(screened_for_malaria)
+    kpis['malaria_screening_rate'] = (len(screened_for_malaria) / len(malaria_symptomatic) * 100) if len(malaria_symptomatic) > 0 else 0
     
-    kpis['malaria_screening_rate'] = (kpis['malaria_screened_count'] / kpis['malaria_symptomatic_count'] * 100) if kpis['malaria_symptomatic_count'] > 0 else 0
-    
-    positive_malaria = screened_for_malaria[screened_for_malaria['test_result'] == 'Positive']
-    kpis['malaria_positive_count'] = len(positive_malaria)
-    
-    kpis['malaria_positivity_rate'] = (kpis['malaria_positive_count'] / kpis['malaria_screened_count'] * 100) if kpis['malaria_screened_count'] > 0 else 0
-
-    # --- Tuberculosis (TB) Screening Cascade ---
-    tb_symptomatic = df[df['patient_reported_symptoms'].str.contains('cough', case=False, na=False)]
-    kpis['tb_symptomatic_count'] = len(tb_symptomatic)
-
-    # Assuming a 'TB Screen' test type exists for this use case
-    screened_for_tb = tb_symptomatic[tb_symptomatic['test_type'] == 'TB Screen']
-    kpis['tb_screened_count'] = len(screened_for_tb)
-    
-    kpis['tb_screening_rate'] = (kpis['tb_screened_count'] / kpis['tb_symptomatic_count'] * 100) if kpis['tb_symptomatic_count'] > 0 else 0
-
-    positive_tb = screened_for_tb[screened_for_tb['test_result'] == 'Positive']
-    kpis['tb_positive_count'] = len(positive_tb)
-
-    # Assuming referral status indicates linkage to care
+    # TB Linkage to Care
+    positive_tb = df[(df['test_type'] == 'TB Screen') & (df['test_result'] == 'Positive')]
     linked_tb = positive_tb[positive_tb['referral_status'] == 'Completed']
-    kpis['tb_linked_to_care_count'] = len(linked_tb)
-
-    kpis['tb_linkage_rate'] = (kpis['tb_linked_to_care_count'] / kpis['tb_positive_count'] * 100) if kpis['tb_positive_count'] > 0 else 0
-
+    kpis['tb_linkage_rate'] = (len(linked_tb) / len(positive_tb) * 100) if len(positive_tb) > 0 else 0
     return kpis
 
-# --- New, Actionable UI Rendering Components ---
-def render_screening_cascade(title: str, icon: str, kpis: dict, prefix: str):
-    """Renders a visual funnel for a screening program."""
-    st.subheader(f"{icon} {title} Screening Cascade")
+@st.cache_data(ttl=3600, show_spinner="Generating disease forecasts...")
+def generate_forecasts(df: pd.DataFrame, forecast_days: int) -> Dict[str, pd.DataFrame]:
+    """
+    Generates Prophet forecasts for multiple metrics.
+    """
+    if df.empty or len(df) < 10:
+        return {}
+
+    # 1. Forecast total daily encounters
+    daily_encounters = df.set_index('encounter_date').resample('D').size().reset_index(name='count')
+    encounters_fc = generate_prophet_forecast(daily_encounters.rename(columns={'encounter_date': 'ds', 'count': 'y'}))
+
+    # 2. Forecast Malaria cases
+    malaria_cases = df[df['diagnosis'] == 'Malaria'].set_index('encounter_date').resample('D').size().reset_index(name='count')
+    malaria_fc = generate_prophet_forecast(malaria_cases.rename(columns={'encounter_date': 'ds', 'count': 'y'}))
     
-    symptomatic = kpis.get(f'{prefix}_symptomatic_count', 0)
-    screened = kpis.get(f'{prefix}_screened_count', 0)
-    positive = kpis.get(f'{prefix}_positive_count', 0)
-    linked = kpis.get(f'{prefix}_linked_to_care_count') # Can be None if not applicable
+    # 3. Forecast average daily risk
+    avg_risk = df.set_index('encounter_date')['ai_risk_score'].resample('D').mean().reset_index()
+    avg_risk_fc = generate_prophet_forecast(avg_risk.rename(columns={'encounter_date': 'ds', 'ai_risk_score': 'y'}))
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Symptomatic Patients", f"{symptomatic:,}")
-    c2.metric(f"Screened (Rate)", f"{screened:,}", f"{kpis.get(f'{prefix}_screening_rate', 0):.1f}% of symptomatic")
-    c3.metric(f"Positive (Rate)", f"{positive:,}", f"{kpis.get(f'{prefix}_positivity_rate', 0):.1f}% of screened")
+    return {
+        "encounters": encounters_fc,
+        "malaria": malaria_fc,
+        "avg_risk": avg_risk_fc
+    }
 
-    if linked is not None:
-        st.metric("Linked to Care (Rate)", f"{linked:,}", f"{kpis.get(f'{prefix}_linkage_rate', 0):.1f}% of positive", help="Patients with a completed referral after a positive test.")
-
-def render_symptom_surveillance(df: pd.DataFrame):
-    """Renders a chart of the most common reported symptoms."""
-    st.subheader("Symptom Surveillance")
-    if 'patient_reported_symptoms' not in df.columns or df['patient_reported_symptoms'].isna().all():
-        st.info("No symptom data available.")
+# --- UI Rendering ---
+def display_alerts(df: pd.DataFrame):
+    st.subheader("🚨 Priority Patient Alerts")
+    alerts = generate_chw_alerts(patient_df=df)
+    if not alerts:
+        st.success("✅ No high-priority patient alerts for this selection.")
         return
-
-    symptoms = df['patient_reported_symptoms'].dropna().str.split(r'[;,]').explode()
-    symptoms = symptoms.str.strip().str.title()
-    symptom_counts = symptoms[symptoms != ''].value_counts().nlargest(7)
     
-    if symptom_counts.empty:
-        st.info("No specific symptoms reported in this period.")
-    else:
-        fig = plot_bar_chart(
-            symptom_counts.reset_index(),
-            y_col='index', x_col='patient_reported_symptoms',
-            title="Top Reported Symptoms",
-            orientation='h',
-            y_title="Symptom", x_title="Number of Reports"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    for alert in alerts:
+        level, icon = ("CRITICAL", "🔴") if alert.get('alert_level') == 'CRITICAL' else (("WARNING", "🟠") if alert.get('alert_level') == 'WARNING' else ("INFO", "ℹ️"))
+        with st.expander(f"{icon} {level}: {alert.get('reason')} for Pt. {alert.get('patient_id')}", expanded=(level == 'CRITICAL')):
+            st.markdown(f"**Details:** {alert.get('details', 'N/A')}")
+            st.markdown(f"**Priority Score:** {alert.get('priority', 0):.0f}")
+
 
 # --- Main Page Execution ---
 def main():
     st.title("🧑‍⚕️ Field Operations Command Center")
-    st.markdown("An actionable overview of team activities, screening program performance, and emerging health signals in the selected zone.")
+    st.markdown("An AI-powered dashboard for supervising field teams, monitoring program effectiveness, and forecasting health trends.")
     st.divider()
 
     full_df = get_data()
@@ -135,48 +105,70 @@ def main():
     if full_df.empty:
         st.error("No health data available. Dashboard cannot be rendered."); st.stop()
 
+    # --- Sidebar Filters ---
     with st.sidebar:
         st.header("Filters")
         min_date, max_date = full_df['encounter_date'].min().date(), full_df['encounter_date'].max().date()
         zone_options = ["All Zones"] + sorted(full_df['zone_id'].dropna().unique())
         selected_zone = st.selectbox("Filter by Zone:", options=zone_options)
-        view_date = st.date_input("View Data For Date:", value=max_date, min_value=min_date, max_value=max_date)
+        
+        # Date range for retrospective analysis
+        st.markdown("---")
+        st.subheader("Retrospective Analysis")
+        start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=6)), max_date), min_value=min_date, max_value=max_date)
+        
+        # Controls for forecasting
+        st.markdown("---")
+        st.subheader("Predictive Analytics")
+        forecast_days = st.slider("Days to Forecast Ahead:", min_value=7, max_value=90, value=30, step=7)
+
 
     # --- Filter Data ---
-    daily_df = full_df[full_df['encounter_date'].dt.date == view_date]
+    analysis_df = full_df[full_df['encounter_date'].dt.date.between(start_date, end_date)]
     if selected_zone != "All Zones":
-        daily_df = daily_df[daily_df['zone_id'] == selected_zone]
+        analysis_df = analysis_df[analysis_df['zone_id'] == selected_zone]
 
-    st.info(f"**Viewing:** {view_date:%A, %d %b %Y} | **Zone:** {selected_zone}")
+    st.info(f"**Viewing Retrospective Data:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}` | **Zone:** {selected_zone}")
 
-    # --- Calculate KPIs from filtered data ---
-    kpis = calculate_field_ops_kpis(daily_df)
-
-    # --- Redesigned Layout ---
+    # --- KPI Section ---
+    kpis = calculate_field_ops_kpis(analysis_df)
+    st.subheader(f"Performance Summary ({start_date:%d %b} to {end_date:%d %b})")
+    cols = st.columns(3)
+    cols[0].render_kpi_card("Patients Seen (Unique)", kpis.get('unique_patients_seen', 0), icon="👥")
+    cols[1].render_kpi_card("Malaria Screening Rate", f"{kpis.get('malaria_screening_rate', 0):.1f}%", icon="🦟", help_text="% of febrile patients tested for Malaria.")
+    cols[2].render_kpi_card("TB Linkage to Care Rate", f"{kpis.get('tb_linkage_rate', 0):.1f}%", icon="🫁", help_text="% of positive TB screens linked to care.")
+    st.divider()
+    
+    # --- Main Layout: Alerts and Forecasting ---
     col1, col2 = st.columns([1, 2], gap="large")
 
     with col1:
-        st.subheader("Key Performance Indicators")
-        render_kpi_card("Patients Seen", kpis.get('unique_patients_seen', 0), icon="👥", help_text="Total unique patients with an encounter on the selected day.")
-        render_kpi_card("Malaria Screening Rate", f"{kpis.get('malaria_screening_rate', 0):.1f}%", icon="🦟", status_level="MODERATE_CONCERN" if kpis.get('malaria_screening_rate', 100) < 80 else "GOOD_PERFORMANCE", help_text="Percentage of patients with fever who received a Malaria RDT.")
-        render_kpi_card("TB Linkage to Care", f"{kpis.get('tb_linkage_rate', 0):.1f}%", icon="🫁", status_level="HIGH_CONCERN" if kpis.get('tb_linkage_rate', 100) < 75 else "GOOD_PERFORMANCE", help_text="Percentage of patients with a positive TB screen who were successfully linked to care.")
-        
-        st.divider()
-        
-        st.subheader("Team Activity Breakdown")
-        if not daily_df.empty and 'encounter_type' in daily_df.columns:
-            activity_counts = daily_df['encounter_type'].value_counts()
-            fig = plot_donut_chart(activity_counts.reset_index(), label_col='encounter_type', value_col='count', title="CHW Activities by Type")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No activity type data available.")
+        # Pass the daily slice of data to the alerts function
+        daily_df = full_df[full_df['encounter_date'].dt.date == end_date]
+        if selected_zone != "All Zones": daily_df = daily_df[daily_df['zone_id'] == selected_zone]
+        display_alerts(daily_df)
 
     with col2:
-        render_screening_cascade("Malaria", "🦟", kpis, "malaria")
-        st.divider()
-        render_screening_cascade("Tuberculosis", "🫁", kpis, "tb")
-        st.divider()
-        render_symptom_surveillance(daily_df)
+        st.header(f"🔮 AI-Powered Forecasts ({forecast_days} Days Ahead)")
+        
+        # Use the full historical dataset for forecasting for accuracy
+        forecast_df = full_df if selected_zone == "All Zones" else full_df[full_df['zone_id'] == selected_zone]
+        forecasts = generate_forecasts(forecast_df, forecast_days)
+
+        if not forecasts:
+            st.warning("Not enough historical data in the selected zone to generate reliable forecasts.")
+        else:
+            fc_type = st.selectbox("Select Forecast:", options=list(forecasts.keys()))
+            
+            if fc_type == "encounters":
+                title, y_axis = "Daily Patient Encounters", "Encounters"
+            elif fc_type == "malaria":
+                title, y_axis = "Daily Malaria Cases", "Positive Cases"
+            else: # avg_risk
+                title, y_axis = "Daily Average Patient Risk", "Avg. Risk Score"
+
+            fig = plot_forecast_chart(forecasts[fc_type], title=title, y_title=y_axis)
+            st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
     main()
