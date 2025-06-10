@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/03_Supply_Chain.py
-# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V6 - FINAL)
+# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V7 - FINAL)
 
 import logging
 
@@ -20,62 +20,69 @@ logger = logging.getLogger(__name__)
 SUPPLY_CATEGORIES = {
     "Medications": {
         "items": settings.KEY_SUPPLY_ITEMS,
+        "source_df": "health_df",
         "data_col": "item",
         "rate_col": "consumption_rate_per_day",
-        "stock_col": "item_stock_agg_zone"
+        "stock_col": "item_stock_agg_zone",
+        "date_col": "encounter_date"
     },
     "Diagnostic Tests": {
         "items": list(settings.KEY_TEST_TYPES.keys()),
+        "source_df": "test_consumption_df", # Use the new, dedicated DataFrame
         "data_col": "test_type",
-        "rate_col": "test_consumption_rate",
-        "stock_col": "test_kit_stock"
-    },
-    "Clinic Supplies": {
-        "items": ["Gloves", "Syringes", "Masks"],
-        "data_col": "item",
-        "rate_col": "consumption_rate_per_day",
-        "stock_col": "item_stock_agg_zone"
+        "rate_col": "daily_tests_conducted",
+        "stock_col": "test_kit_stock",
+        "date_col": "encounter_date"
     }
 }
 
 
 # --- Data Loading & Caching ---
 @st.cache_data(ttl=3600, show_spinner="Loading all operational data...")
-def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Loads and enriches all data for the dashboard."""
+def get_data() -> dict:
+    """Loads and enriches all data for the dashboard, returning a dictionary of DataFrames."""
     health_df = load_health_records()
     iot_df = load_iot_records()
     
-    # Simulate consumption data for tests for demonstration purposes
-    if 'test_type' in health_df.columns:
-        # Calculate daily consumption rate for each test type
-        daily_test_counts = health_df.groupby([health_df['encounter_date'].dt.date, 'test_type']).size().reset_index(name='daily_count')
-        avg_daily_consumption = daily_test_counts.groupby('test_type')['daily_count'].mean()
+    # --- SME FIX: Create a proper time series for test consumption ---
+    test_consumption_df = pd.DataFrame()
+    if not health_df.empty and 'test_type' in health_df.columns:
+        # 1. Count tests per day, per type
+        daily_test_counts = health_df.dropna(subset=['test_type']).groupby([
+            health_df['encounter_date'].dt.date,
+            'test_type'
+        ]).size().reset_index(name='daily_tests_conducted')
+        daily_test_counts['encounter_date'] = pd.to_datetime(daily_test_counts['encounter_date'])
         
-        health_df['test_consumption_rate'] = health_df['test_type'].map(avg_daily_consumption).fillna(0)
-        
-        # SME FIX: Ensure the lambda handles non-string (e.g., NaN) values gracefully.
-        health_df['test_kit_stock'] = health_df['test_type'].map(
-            lambda x: 1000 if isinstance(x, str) and "Malaria" in x else 500
-        ).fillna(500) # Ensure no NaNs in stock column
+        # 2. Reindex to ensure a complete date range for Prophet
+        if not daily_test_counts.empty:
+            test_types = daily_test_counts['test_type'].unique()
+            date_range = pd.date_range(start=daily_test_counts['encounter_date'].min(), end=daily_test_counts['encounter_date'].max(), freq='D')
+            multi_index = pd.MultiIndex.from_product([date_range, test_types], names=['encounter_date', 'test_type'])
+            
+            test_consumption_df = daily_test_counts.set_index(['encounter_date', 'test_type']).reindex(multi_index, fill_value=0).reset_index()
+            test_consumption_df['test_kit_stock'] = test_consumption_df['test_type'].map(lambda x: 1000 if "Malaria" in x else 500)
     
-    return health_df, iot_df
+    return {"health_df": health_df, "iot_df": iot_df, "test_consumption_df": test_consumption_df}
 
 @st.cache_data(ttl=3600, show_spinner="Generating AI-powered forecasts...")
 def get_supply_forecasts(df: pd.DataFrame, category_config: dict, items: list, days: int) -> pd.DataFrame:
     """Loops through selected items and calls the generic prophet forecaster for each."""
     all_forecasts = []
-    data_col, rate_col, stock_col = category_config["data_col"], category_config["rate_col"], category_config["stock_col"]
+    data_col, rate_col, stock_col, date_col = category_config["data_col"], category_config["rate_col"], category_config["stock_col"], category_config["date_col"]
 
     for item in items:
         item_df = df[df[data_col] == item].copy()
         if not item_df.empty and rate_col in item_df.columns:
-            history = item_df[['encounter_date', rate_col]].rename(columns={'encounter_date': 'ds', rate_col: 'y'})
+            history = item_df[[date_col, rate_col]].rename(columns={date_col: 'ds', rate_col: 'y'})
             
             forecast = generate_prophet_forecast(history, forecast_days=days)
             
             if not forecast.empty:
-                latest_stock = item_df.sort_values('encounter_date').iloc[-1][stock_col]
+                # For stock, we need to find the latest recorded value, not just any.
+                latest_entry = item_df.sort_values(date_col).iloc[-1]
+                latest_stock = latest_entry[stock_col]
+                
                 forecast['item'] = item
                 forecast['projected_consumption'] = forecast['predicted_value'].clip(lower=0).cumsum()
                 forecast['forecasted_stock'] = latest_stock - forecast['projected_consumption']
@@ -90,7 +97,12 @@ def main():
     st.markdown("Monitor and forecast stock levels for critical supplies and predict clinic occupancy using AI-powered models.")
     st.divider()
 
-    health_df, iot_df = get_data()
+    all_data = get_data()
+    health_df = all_data['health_df']
+    iot_df = all_data['iot_df']
+
+    if health_df.empty:
+        st.error("No health data available. Dashboard cannot be rendered."); st.stop()
 
     with st.sidebar:
         st.header("Dashboard Controls")
@@ -98,7 +110,8 @@ def main():
         selected_category = st.radio("Select Supply Category:", list(SUPPLY_CATEGORIES.keys()), horizontal=True)
         category_config = SUPPLY_CATEGORIES[selected_category]
         
-        all_items_in_cat = sorted(health_df[category_config["data_col"]].dropna().unique())
+        source_df_for_list = all_data[category_config["source_df"]]
+        all_items_in_cat = sorted(source_df_for_list[category_config["data_col"]].dropna().unique())
         available_items = [item for item in category_config["items"] if item in all_items_in_cat]
         selected_items = st.multiselect(f"Select {selected_category} to Forecast:", options=available_items, default=available_items[:3])
         
@@ -111,7 +124,8 @@ def main():
         if not selected_items:
             st.info(f"Select one or more {selected_category.lower()} from the sidebar to generate a forecast.")
         else:
-            forecast_df = get_supply_forecasts(health_df, category_config, selected_items, forecast_days)
+            source_df_for_fc = all_data[category_config["source_df"]]
+            forecast_df = get_supply_forecasts(source_df_for_fc, category_config, selected_items, forecast_days)
             if forecast_df.empty:
                 st.warning("Could not generate a forecast. There may not be enough historical data (at least 5 data points per item are required).")
             else:
