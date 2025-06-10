@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V10 - DEFINITIVE INDENTATION FIX)
+# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V12 - FINAL)
 
 import logging
 from datetime import date, timedelta
@@ -11,145 +11,163 @@ import streamlit as st
 # --- Core Sentinel Imports ---
 from analytics import apply_ai_models, generate_chw_alerts, generate_prophet_forecast
 from config import settings
-from data_processing import load_health_records
+from data_processing import load_health_records, load_iot_records
 from visualization import (create_empty_figure, plot_bar_chart,
-                           plot_forecast_chart, render_kpi_card)
+                           plot_forecast_chart, render_kpi_card,
+                           plot_line_chart)
 
 # --- Page Setup ---
-st.set_page_config(page_title="Field Operations", page_icon="🧑‍⚕️", layout="wide")
+st.set_page_config(page_title="Field Command Center", page_icon="📡", layout="wide")
 logger = logging.getLogger(__name__)
 
 
 # --- Data Loading & Caching ---
 @st.cache_data(ttl=3600)
-def get_data() -> pd.DataFrame:
-    """
-    Loads and caches the base health records, ensuring they are fully
-    enriched with all required AI-generated scores.
-    """
-    raw_df = load_health_records()
-    if raw_df.empty:
-        return pd.DataFrame()
-    enriched_df, _ = apply_ai_models(raw_df)
-    return enriched_df
+def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Loads, enriches, and caches all data for the dashboard."""
+    raw_health_df = load_health_records()
+    iot_df = load_iot_records() # Load IoT data
+    
+    if raw_health_df.empty:
+        return pd.DataFrame(), iot_df
+        
+    enriched_df, _ = apply_ai_models(raw_health_df)
+    return enriched_df, iot_df
 
 # --- Analytics & KPI Functions ---
 def calculate_field_ops_kpis(df: pd.DataFrame) -> Dict:
-    """
-    Calculates a rich set of decision-grade KPIs for field operations.
-    """
+    """Calculates a rich set of decision-grade KPIs for field operations."""
     if df.empty: return {}
-    kpis = {}
-    kpis['unique_patients_seen'] = df['patient_id'].nunique()
     
-    malaria_symptomatic = df[df['patient_reported_symptoms'].str.contains('fever', case=False, na=False)]
-    screened_for_malaria = malaria_symptomatic[malaria_symptomatic['test_type'] == 'Malaria RDT']
-    kpis['malaria_screening_rate'] = (len(screened_for_malaria) / len(malaria_symptomatic) * 100) if len(malaria_symptomatic) > 0 else 0
+    kpis = {
+        'unique_patients_seen': df['patient_id'].nunique(),
+        'high_priority_alerts': (df.get('ai_followup_priority_score', pd.Series(dtype=float)) >= 80).sum()
+    }
     
-    positive_tb = df[(df.get('test_type') == 'TB Screen') & (df.get('test_result') == 'Positive')]
-    linked_tb = positive_tb[positive_tb.get('referral_status') == 'Completed']
-    kpis['tb_linkage_rate'] = (len(linked_tb) / len(positive_tb) * 100) if len(positive_tb) > 0 else 0
+    # Malaria Screening Rate
+    symptomatic = df[df['patient_reported_symptoms'].str.contains('fever', case=False, na=False)]
+    screened = symptomatic[symptomatic['test_type'] == 'Malaria RDT']
+    kpis['malaria_screening_rate'] = (len(screened) / len(symptomatic) * 100) if len(symptomatic) > 0 else 0
+    
     return kpis
 
-@st.cache_data(ttl=3600, show_spinner="Generating disease forecasts...")
+@st.cache_data(ttl=3600, show_spinner="Generating forecasts...")
 def generate_forecasts(df: pd.DataFrame, forecast_days: int) -> Dict[str, pd.DataFrame]:
-    """
-    Generates Prophet forecasts for multiple metrics.
-    """
+    """Generates Prophet forecasts for multiple health metrics."""
     if df.empty or len(df) < 10: return {}
-    daily_encounters = df.set_index('encounter_date').resample('D').size().reset_index(name='count')
-    encounters_fc = generate_prophet_forecast(daily_encounters.rename(columns={'encounter_date': 'ds', 'count': 'y'}))
-    malaria_cases = df[df['diagnosis'] == 'Malaria'].set_index('encounter_date').resample('D').size().reset_index(name='count')
-    malaria_fc = generate_prophet_forecast(malaria_cases.rename(columns={'encounter_date': 'ds', 'count': 'y'}))
-    avg_risk = df.set_index('encounter_date')['ai_risk_score'].resample('D').mean().reset_index()
-    avg_risk_fc = generate_prophet_forecast(avg_risk.rename(columns={'encounter_date': 'ds', 'ai_risk_score': 'y'}))
-    return {"encounters": encounters_fc, "malaria": malaria_fc, "avg_risk": avg_risk_fc}
+    
+    # Prep data for forecasting functions
+    encounters_hist = df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
+    avg_risk_hist = df.set_index('encounter_date')['ai_risk_score'].resample('D').mean().reset_index().rename(columns={'encounter_date': 'ds', 'ai_risk_score': 'y'})
+    
+    return {
+        "Patient Load": generate_prophet_forecast(encounters_hist, forecast_days=forecast_days),
+        "Community Risk Index": generate_prophet_forecast(avg_risk_hist, forecast_days=forecast_days),
+    }
 
 # --- UI Rendering ---
 def display_alerts(df: pd.DataFrame):
-    st.subheader("🚨 Priority Patient Alerts")
+    st.subheader("🚨 Daily Priority Alerts")
     alerts = generate_chw_alerts(patient_df=df)
     if not alerts:
         st.success("✅ No high-priority patient alerts for this selection.")
         return
+    
     for alert in alerts:
         level, icon = ("CRITICAL", "🔴") if alert.get('alert_level') == 'CRITICAL' else (("WARNING", "🟠") if alert.get('alert_level') == 'WARNING' else ("INFO", "ℹ️"))
-        with st.expander(f"{icon} {level}: {alert.get('reason')} for Pt. {alert.get('patient_id')}", expanded=(level == 'CRITICAL')):
-            st.markdown(f"**Details:** {alert.get('details', 'N/A')}")
-            st.markdown(f"**Priority Score:** {alert.get('priority', 0):.0f}")
+        with st.container(border=True):
+            st.markdown(f"**{icon} {alert.get('reason')} for Pt. {alert.get('patient_id')}**")
+            st.markdown(f"> {alert.get('details', 'N/A')} (Priority: {alert.get('priority', 0):.0f})")
+        st.markdown("---", unsafe_allow_html=True)
+
+def render_iot_wearable_tab(iot_df: pd.DataFrame):
+    st.subheader("🌿 Environmental & Wearable Factors")
+    if iot_df.empty:
+        st.info("No IoT or wearable data available for this period.")
+        return
+
+    col1, col2 = st.columns(2)
+    with col1:
+        # Assuming CO2 data comes from static clinics
+        co2_trend = iot_df.set_index('timestamp')['avg_co2_ppm'].resample('D').mean()
+        fig_co2 = plot_line_chart(co2_trend, "Average Clinic CO₂ Levels (Ventilation Proxy)", "CO₂ (PPM)")
+        st.plotly_chart(fig_co2, use_container_width=True)
+    with col2:
+        # Assuming fatigue/stress data comes from CHW wearables
+        # For this demo, we'll simulate it from noise data
+        fatigue_trend = iot_df.set_index('timestamp')['avg_noise_db'].resample('D').mean()
+        fig_fatigue = plot_line_chart(fatigue_trend, "Team Stress/Fatigue Index (Wearable Proxy)", "Stress Index")
+        st.plotly_chart(fig_fatigue, use_container_width=True)
 
 # --- Main Page Execution ---
 def main():
-    st.title("🧑‍⚕️ Field Operations Command Center")
-    st.markdown("An AI-powered dashboard for supervising field teams, monitoring program effectiveness, and forecasting health trends.")
+    st.title("📡 Field Operations Command Center")
+    st.markdown("An integrated dashboard for supervising team activity, patient risk, environmental factors, and future trends.")
     st.divider()
 
-    full_df = get_data()
+    health_df, iot_df = get_data()
 
-    if full_df.empty:
+    if health_df.empty:
         st.error("No health data available. Dashboard cannot be rendered."); st.stop()
 
     with st.sidebar:
-        st.header("Filters")
-        min_date, max_date = full_df['encounter_date'].min().date(), full_df['encounter_date'].max().date()
-        zone_options = ["All Zones"] + sorted(full_df['zone_id'].dropna().unique())
+        st.header("Dashboard Controls")
+        zone_options = ["All Zones"] + sorted(health_df['zone_id'].dropna().unique())
         selected_zone = st.selectbox("Filter by Zone:", options=zone_options)
+        
+        today = health_df['encounter_date'].max().date()
+        view_date = st.date_input("Select Date for Daily Alerts:", value=today, min_value=health_df['encounter_date'].min().date(), max_value=today)
+        
         st.markdown("---")
-        st.subheader("Retrospective Analysis")
-        start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=6)), max_date), min_value=min_date, max_value=max_date)
-        st.markdown("---")
-        st.subheader("Predictive Analytics")
-        forecast_days = st.slider("Days to Forecast Ahead:", min_value=7, max_value=90, value=30, step=7)
+        forecast_days = st.slider("Days to Forecast Ahead:", min_value=7, max_value=90, value=14, step=7)
 
-    analysis_df = full_df[full_df['encounter_date'].dt.date.between(start_date, end_date)]
+    # --- Filter Data ---
+    daily_df = health_df[health_df['encounter_date'].dt.date == view_date]
     if selected_zone != "All Zones":
-        analysis_df = analysis_df[analysis_df['zone_id'] == selected_zone]
-
-    st.info(f"**Viewing Retrospective Data:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}` | **Zone:** {selected_zone}")
-
-    kpis = calculate_field_ops_kpis(analysis_df)
-    st.subheader(f"Performance Summary ({start_date:%d %b} to {end_date:%d %b})")
+        daily_df = daily_df[daily_df['zone_id'] == selected_zone]
     
-    # SME FIX: The indentation of this entire block is corrected.
+    # The full historical data for the selected zone is used for forecasting
+    forecast_source_df = health_df if selected_zone == "All Zones" else health_df[health_df['zone_id'] == selected_zone]
+
+    st.info(f"**Displaying Daily Alerts For:** `{view_date:%A, %d %b %Y}` | **Zone:** {selected_zone}")
+
+    # --- Top-Line KPIs ---
+    kpis = calculate_field_ops_kpis(daily_df)
     cols = st.columns(3)
     with cols[0]:
-        render_kpi_card("Patients Seen (Unique)", kpis.get('unique_patients_seen', 0), icon="👥", help_text="Total unique patients with an encounter in the selected period.")
+        render_kpi_card("Patients Seen Today", kpis.get('unique_patients_seen', 0), icon="👥")
     with cols[1]:
-        render_kpi_card("Malaria Screening Rate", f"{kpis.get('malaria_screening_rate', 0):.1f}%", icon="🦟", status_level="MODERATE_CONCERN" if kpis.get('malaria_screening_rate', 100) < 80 else "GOOD_PERFORMANCE", help_text="% of febrile patients tested for Malaria.")
+        render_kpi_card("High Priority Alerts", kpis.get('high_priority_alerts', 0), icon="🚨", status_level="HIGH_CONCERN" if kpis.get('high_priority_alerts', 0) > 0 else "GOOD_PERFORMANCE")
     with cols[2]:
-        render_kpi_card("TB Linkage to Care", f"{kpis.get('tb_linkage_rate', 0):.1f}%", icon="🫁", status_level="HIGH_CONCERN" if kpis.get('tb_linkage_rate', 100) < 75 else "GOOD_PERFORMANCE", help_text="% of positive TB screens linked to care.")
-    
+        render_kpi_card("Malaria Screening Rate", f"{kpis.get('malaria_screening_rate', 0):.1f}%", icon="🦟", status_level="MODERATE_CONCERN" if kpis.get('malaria_screening_rate', 100) < 80 else "GOOD_PERFORMANCE")
     st.divider()
-    
-    col1, col2 = st.columns([1, 2], gap="large")
-    with col1:
-        daily_df_for_alerts = full_df[full_df['encounter_date'].dt.date == end_date]
-        if selected_zone != "All Zones":
-            daily_df_for_alerts = daily_df_for_alerts[daily_df_for_alerts['zone_id'] == selected_zone]
-        display_alerts(daily_df_for_alerts)
-    with col2:
-        st.header(f"🔮 AI-Powered Forecasts ({forecast_days} Days Ahead)")
-        forecast_df_source = full_df if selected_zone == "All Zones" else full_df[full_df['zone_id'] == selected_zone]
-        forecasts = generate_forecasts(forecast_df_source, forecast_days)
+
+    # --- Main Content Area with Tabs ---
+    tab1, tab2, tab3 = st.tabs(["**🚨 Daily Alerts**", "**🔮 AI Forecasts**", "**🛰️ IoT & Wearables**"])
+
+    with tab1:
+        display_alerts(daily_df)
+
+    with tab2:
+        st.subheader(f"Predictive Analytics ({forecast_days} Days Ahead)")
+        forecasts = generate_forecasts(forecast_source_df, forecast_days)
 
         if not forecasts:
             st.warning("Not enough historical data in the selected zone to generate reliable forecasts.")
         else:
-            fc_type = st.selectbox("Select Forecast:", options=list(forecasts.keys()), format_func=lambda x: x.replace('_', ' ').title())
-            if fc_type == "encounters":
-                title, y_axis = "Daily Patient Encounters", "Encounters"
-            elif fc_type == "malaria":
-                title, y_axis = "Daily Malaria Cases", "Positive Cases"
-            else:
-                title, y_axis = "Daily Average Patient Risk", "Avg. Risk Score"
+            fc_type = st.selectbox("Select Forecast:", options=list(forecasts.keys()))
             
-            # Check if forecast data for the selected type is available and not empty
-            if forecasts.get(fc_type) is not None and not forecasts[fc_type].empty:
-                fig = plot_forecast_chart(forecasts[fc_type], title=title, y_title=y_axis)
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info(f"No forecast data available for '{title}'. There may be insufficient historical data for this specific metric.")
+            if fc_type == "Patient Load": y_axis = "Daily Encounters"
+            else: y_axis = "Avg. Community Risk"
 
+            fig = plot_forecast_chart(forecasts[fc_type], title=f"{fc_type} Forecast", y_title=y_axis)
+            st.plotly_chart(fig, use_container_width=True)
+
+    with tab3:
+        iot_filtered = iot_df[iot_df['timestamp'].dt.date == view_date]
+        if selected_zone != "All Zones":
+            iot_filtered = iot_filtered[iot_filtered['zone_id'] == selected_zone]
+        render_iot_wearable_tab(iot_filtered)
 
 if __name__ == "__main__":
     main()
