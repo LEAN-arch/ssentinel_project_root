@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V11 - FINAL)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V12 - DEMOGRAPHICS FIX)
 
 import logging
 from datetime import date, timedelta
@@ -84,19 +84,28 @@ def render_demographics_tab(df: pd.DataFrame):
     if df.empty:
         st.info("No patient data for demographic analysis."); return
 
-    df_unique = df.drop_duplicates(subset=['patient_id'])
+    df_unique = df.drop_duplicates(subset=['patient_id']).copy()
+    
+    # Define age bins for stratification
     age_bins = [0, 5, 15, 25, 50, 150]
     age_labels = ['0-4', '5-14', '15-24', '25-49', '50+']
     df_unique['age_group'] = pd.cut(df_unique['age'], bins=age_bins, labels=age_labels, right=False)
 
+    # SME FIX: Convert the 'age_group' categorical to string to ensure stable grouping.
+    df_unique['age_group'] = df_unique['age_group'].astype(str)
+
     demo_counts = df_unique.groupby(['age_group', 'gender'], observed=False).size().reset_index(name='count')
     
-    fig = plot_bar_chart(
-        demo_counts, x_col='age_group', y_col='count', color='gender',
-        barmode='group', title="Patient Encounters by Age and Gender",
-        x_title="Age Group", y_title="Number of Unique Patients"
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    # SME FIX: Add a check to ensure the grouped data is not empty before plotting.
+    if not demo_counts.empty:
+        fig = plot_bar_chart(
+            demo_counts, x_col='age_group', y_col='count', color='gender',
+            barmode='group', title="Patient Encounters by Age and Gender",
+            x_title="Age Group", y_title="Number of Unique Patients"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No demographic data to display for the selected filters.")
 
 def render_forecasting_tab(df: pd.DataFrame):
     """Renders the AI-powered forecasting tab."""
@@ -128,7 +137,6 @@ def render_environment_tab(iot_df: pd.DataFrame):
     render_traffic_light_indicator("Average CO₂ Levels", "HIGH_RISK" if env_kpis.get('avg_co2_ppm', 0) > 1500 else "MODERATE_CONCERN" if env_kpis.get('avg_co2_ppm', 0) > 1000 else "ACCEPTABLE", f"{env_kpis.get('avg_co2_ppm', 0):.0f} PPM")
     render_traffic_light_indicator("Rooms with High Noise", "HIGH_RISK" if env_kpis.get('rooms_with_high_noise_count', 0) > 0 else "ACCEPTABLE", f"{env_kpis.get('rooms_with_high_noise_count', 0)} rooms")
     
-    # SME FIX: The plot was missing from the previous combined version. It is now restored.
     from data_processing.cached import get_cached_trend
     co2_trend = get_cached_trend(df=iot_df, value_col='avg_co2_ppm', date_col='timestamp', freq='h', agg_func='mean')
     st.plotly_chart(plot_line_chart(co2_trend, "Hourly Average CO₂ Trend", y_title="CO₂ (PPM)"), use_container_width=True)
@@ -154,7 +162,6 @@ def main():
 
     st.info(f"**Displaying Clinic Data For:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}`")
 
-    # --- Main Tabbed Layout ---
     tab_keys = ["🚀 Snapshot"] + list(PROGRAM_DEFINITIONS.keys()) + ["🧑‍🤝‍🧑 Demographics", "🔮 Forecasting", "🌿 Environment"]
     tab_icons = ["🚀"] + [p['icon'] for p in PROGRAM_DEFINITIONS.values()] + ["🧑‍🤝‍🧑", "🔮", "🌿"]
     tabs = st.tabs([f"{icon} {key}" for icon, key in zip(tab_icons, tab_keys)])
