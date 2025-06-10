@@ -1,5 +1,5 @@
 # sentinel_project_root/data_processing/aggregation.py
-# SME PLATINUM STANDARD - DECISION-GRADE AGGREGATIONS (V4 - STRING ACCESSOR FIX)
+# SME PLATINUM STANDARD - DECISION-GRADE AGGREGATIONS (V5 - DEFINITIVE FIX)
 
 import logging
 from typing import Any, Callable, Dict, Optional, Union
@@ -32,8 +32,7 @@ def _calculate_clinic_kpis(df: pd.DataFrame) -> Dict[str, Any]:
         non_na_targets = conclusive_tests.dropna(subset=['target_tat'])
         kpis['perc_tests_within_tat'] = (met_tat / len(non_na_targets)) * 100 if len(non_na_targets) > 0 else 0
     else:
-        kpis['avg_test_tat_days'] = np.nan
-        kpis['perc_tests_within_tat'] = 0.0
+        kpis['avg_test_tat_days'] = np.nan; kpis['perc_tests_within_tat'] = 0.0
 
     kpis['sample_rejection_rate_perc'] = df.get('is_rejected', pd.Series(dtype=float)).mean() * 100
     kpis['pending_critical_tests_count'] = df.get('is_critical_and_pending', pd.Series(dtype=int)).sum()
@@ -44,14 +43,11 @@ def _calculate_clinic_kpis(df: pd.DataFrame) -> Dict[str, Any]:
     if not test_df.empty:
         positivity_groups = test_df.groupby('test_type')['is_positive'].agg(['mean', 'count'])
         for test_type, data in positivity_groups.iterrows():
-            positivity_breakdown[test_type] = {
-                'positivity_rate_perc': data['mean'] * 100,
-                'total_conclusive_tests': data['count']
-            }
+            positivity_breakdown[test_type] = {'positivity_rate_perc': data['mean'] * 100, 'total_conclusive_tests': data['count']}
     kpis['positivity_rates'] = positivity_breakdown
     return kpis
 
-# ... [The rest of the file (_calculate_environmental_kpis, _calculate_district_kpis, etc.) is correct and unchanged] ...
+# ... [The rest of the file (_calculate_environmental_kpis, etc.) is correct and unchanged] ...
 def _calculate_environmental_kpis(iot_df: pd.DataFrame) -> Dict[str, Any]:
     if not isinstance(iot_df, pd.DataFrame) or iot_df.empty: return {}
     kpis = {'avg_co2_ppm': iot_df['avg_co2_ppm'].mean(), 'avg_pm25_ugm3': iot_df['avg_pm25'].mean(), 'avg_waiting_room_occupancy': iot_df['waiting_room_occupancy'].mean()}
