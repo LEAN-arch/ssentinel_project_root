@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V20 - FINAL)
+# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V21 - FINAL)
 
 import logging
 from datetime import date, timedelta
@@ -78,6 +78,10 @@ def render_iot_wearable_tab(clinic_iot_df: pd.DataFrame, wearable_iot_df: pd.Dat
             st.info("No clinic environmental sensor data for this period.")
     with col2:
         st.subheader("Team Wearable Data")
+        # The CHW filter is applied here, on the already separated wearable data stream
+        if chw_id_filter != "All CHWs":
+            wearable_iot_df = wearable_iot_df[wearable_iot_df['chw_id'] == chw_id_filter]
+        
         if not wearable_iot_df.empty:
             stress_trend = wearable_iot_df.set_index('timestamp')['chw_stress_score'].resample('D').mean()
             fig_stress = plot_line_chart(stress_trend, f"Average Stress Index for {chw_id_filter}", "Stress Index (0-100)")
@@ -107,24 +111,25 @@ def main():
     # --- Data Filtering ---
     analysis_df = health_df[health_df['encounter_date'].dt.date.between(start_date, end_date)]
     forecast_source_df = health_df[(health_df['encounter_date'].dt.date <= end_date)]
-    
-    # SME FIX: Create two separate, correctly filtered streams for IoT data
     base_iot_filtered = iot_df[iot_df['timestamp'].dt.date.between(start_date, end_date)] if not iot_df.empty else pd.DataFrame()
-    
-    # Filter all dataframes by zone if selected
+
     if selected_zone != "All Zones":
         analysis_df = analysis_df[analysis_df['zone_id'] == selected_zone]
         forecast_source_df = forecast_source_df[forecast_source_df['zone_id'] == selected_zone]
         base_iot_filtered = base_iot_filtered[base_iot_filtered['zone_id'] == selected_zone]
     
-    # Apply CHW filter only to dataframes that contain CHW-specific data
     if selected_chw != "All CHWs":
         analysis_df = analysis_df[analysis_df['chw_id'] == selected_chw]
         forecast_source_df = forecast_source_df[forecast_source_df['chw_id'] == selected_chw]
-    
-    # Create the final IoT streams for the rendering function
-    clinic_iot_stream = base_iot_filtered[base_iot_filtered['chw_id'].isnull()]
-    wearable_iot_stream = base_iot_filtered[base_iot_filtered['chw_id'].notnull()]
+        
+    # --- SME FIX: Definitive logic to handle missing 'chw_id' column ---
+    if 'chw_id' in base_iot_filtered.columns:
+        clinic_iot_stream = base_iot_filtered[base_iot_filtered['chw_id'].isnull()]
+        wearable_iot_stream = base_iot_filtered[base_iot_filtered['chw_id'].notnull()]
+    else:
+        # If the column doesn't exist, assume all data is clinic-level
+        clinic_iot_stream = base_iot_filtered
+        wearable_iot_stream = pd.DataFrame() # No wearable data exists
 
     st.info(f"**Displaying Data For:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}` | **Zone:** `{selected_zone}` | **CHW:** `{selected_chw}`")
     st.divider()
