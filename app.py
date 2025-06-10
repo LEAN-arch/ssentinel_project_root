@@ -1,5 +1,5 @@
 # sentinel_project_root/app.py
-# SME PLATINUM STANDARD - APPLICATION ENTRY POINT
+# SME PLATINUM STANDARD - APPLICATION ENTRY POINT (V2)
 
 import logging
 import sys
@@ -41,6 +41,8 @@ st.set_page_config(
     }
 )
 
+# SME FIX: These function calls are correctly placed after all imports,
+# ensuring the settings object is available before they are executed.
 load_and_inject_css(settings.STYLE_CSS_PATH)
 set_plotly_theme()
 
@@ -70,7 +72,6 @@ st.divider()
 # --- Dynamic Page Navigation Links ---
 st.header("Explore Simulated Role-Specific Dashboards")
 
-# The pages are now automatically discovered from the `pages` directory
 pages_dir = _project_root / "pages"
 if pages_dir.is_dir():
     page_files = sorted(pages_dir.glob("[0-9]*.py"))
