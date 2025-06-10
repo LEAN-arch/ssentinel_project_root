@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/04_Population_Analytics.py
-# SME PLATINUM STANDARD - POPULATION ANALYTICS (V5 - DEFINITIVE FIX)
+# SME PLATINUM STANDARD - POPULATION ANALYTICS (V6 - DEFINITIVE FIX)
 
 import logging
 from datetime import date, timedelta
@@ -10,7 +10,6 @@ import streamlit as st
 
 from analytics import apply_ai_models
 from config import settings
-# SME FIX: Import directly from the correct submodules
 from data_processing.loaders import load_health_records, load_zone_data
 from data_processing.enrichment import enrich_zone_data_with_aggregates
 from data_processing.cached import get_cached_trend
@@ -24,8 +23,6 @@ logger = logging.getLogger(__name__)
 @st.cache_data(ttl=3600, show_spinner="Loading population datasets...")
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     """Loads and caches the primary health and zone data, ensuring all enrichments are applied."""
-    # SME FIX: The AI models must be applied to the health_df before it's used
-    # to enrich the zone_df to prevent KeyErrors.
     raw_health_df = load_health_records()
     if raw_health_df.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -33,7 +30,6 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     health_df, _ = apply_ai_models(raw_health_df)
     
     zone_df = load_zone_data()
-    # Now, the health_df passed for enrichment contains the 'ai_risk_score' column.
     enriched_zone_df = enrich_zone_data_with_aggregates(zone_df, health_df)
     
     return health_df, enriched_zone_df
@@ -86,7 +82,7 @@ def main():
     with cols[0]: render_custom_kpi("Unique Patients", unique_patients, "In selected period")
     with cols[1]: render_custom_kpi("Avg. Risk Score", df_filtered.get('ai_risk_score').mean(), "0-100 scale")
     high_risk_count = (df_filtered.get('ai_risk_score', pd.Series(dtype=float)) >= settings.ANALYTICS.risk_score_moderate_threshold).sum()
-    with cols[2]: render_custom_kpi("High-Risk Patients", high_risk_count, f"Score ≥ {settings.ANALYTICS.risk_score_moderate_threshold}", highlight_status='high-risk')
+    with cols[2]: render_custom_kpi("High-Risk Patients", high_risk_count, f"Score >= {settings.ANALYTICS.risk_score_moderate_threshold}", highlight_status='high-risk')
     with cols[3]: render_custom_kpi("Median Patient Age", df_filtered.get('age').median(), "Years")
     st.divider()
 
@@ -94,8 +90,9 @@ def main():
 
     with tab1:
         st.header("Epidemiological Overview")
-        trend = get_cached_trend(df_filtered, value_col='encounter_id', date_col='encounter_date', freq='W', agg_func='count')
-        st.plotly_chart(plot_line_chart(trend, "Weekly Encounters Trend", "Total Encounters"), use_container_width=True)
+        # SME FIX: Use a more robust column ('patient_id') and a more meaningful aggregation ('nunique') for the trend chart.
+        trend = get_cached_trend(df_filtered, value_col='patient_id', date_col='encounter_date', freq='W', agg_func='nunique')
+        st.plotly_chart(plot_line_chart(trend, "Weekly Unique Patients Seen", "Unique Patients"), use_container_width=True)
 
     with tab2:
         st.header("Population Risk Stratification")
@@ -111,7 +108,6 @@ def main():
         if 'geometry' not in zone_df_filtered.columns or zone_df_filtered['geometry'].isnull().all():
             st.warning("Geospatial data is unavailable for the selected zone(s).")
         else:
-            # SME FIX: The `geojson` parameter expects the full GeoJSON object structure.
             geojson_data = {"type": "FeatureCollection", "features": [
                 {"type": "Feature", "properties": {"zone_id": row['zone_id']}, "geometry": row['geometry']}
                 for _, row in zone_df_filtered.iterrows() if pd.notna(row.get('geometry'))
@@ -129,7 +125,6 @@ def main():
             fig_hist = px.histogram(df_unique, x='age', nbins=20, title="Age Distribution")
             st.plotly_chart(fig_hist, use_container_width=True)
         with col2:
-            # SME FIX: Use .value_counts() to correctly aggregate data for the pie chart.
             gender_counts = df_unique['gender'].fillna('Unknown').value_counts().reset_index()
             fig_pie = plot_donut_chart(gender_counts, label_col='gender', value_col='count', title="Gender Distribution")
             st.plotly_chart(fig_pie, use_container_width=True)
