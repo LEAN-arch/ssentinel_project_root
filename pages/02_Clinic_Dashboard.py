@@ -163,7 +163,7 @@ def main():
 
     st.info(f"**Displaying Clinic Data For:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}`")
 
-    tab_keys = ["🚀 Overview"] + list(PROGRAM_DEFINITIONS.keys()) + ["🧑‍🤝‍🧑 Demographics", "🔮 Forecasting", "🌿 Environment"]
+    tab_keys = ["Overview"] + list(PROGRAM_DEFINITIONS.keys()) + ["Demographics", "Forecasting", "Environment"]
     tab_icons = ["🚀"] + [p['icon'] for p in PROGRAM_DEFINITIONS.values()] + ["🧑‍🤝‍🧑", "🔮", "🌿"]
     tabs = st.tabs([f"{icon} {key}" for icon, key in zip(tab_icons, tab_keys)])
 
