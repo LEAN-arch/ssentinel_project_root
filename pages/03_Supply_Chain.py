@@ -17,7 +17,7 @@ st.set_page_config(page_title="Supply Chain", page_icon="📦", layout="wide")
 logger = logging.getLogger(__name__)
 
 # --- Data Loading ---
-@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, show_spinner="Loading supply data...")
+@st.cache_data(ttl=3600, show_spinner="Loading supply data...")
 def get_data() -> pd.DataFrame:
     return load_health_records()
 
