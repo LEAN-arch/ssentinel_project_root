@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V25 - FINAL COMPLETE)
+# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V25 - FINAL COMPLETE AND CLEANED)
 
 import logging
 from datetime import date, timedelta
@@ -123,10 +123,8 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
             st.subheader("🔮 Patient Load Forecast")
             forecast_days = st.slider("Forecast Horizon (Days):", 7, 30, 14, 7, key="forecast_slider")
             
-            # --- SME ENHANCEMENT: Predictive Pre-flight Check ---
             st.markdown("##### Forecast Pre-flight Check")
             encounters_hist = forecast_df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
-            # Prophet requires at least 2 data points (distinct days) to run.
             distinct_days_with_data = len(encounters_hist[encounters_hist['y'] > 0])
             
             if distinct_days_with_data < 2:
@@ -148,7 +146,6 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
                     current_stock = st.number_input("Current Test Kit Inventory:", min_value=0, value=5000, step=100, key="stock_input")
                     predicted_encounters = forecast['yhat'][-forecast_days:].sum()
                     if predicted_encounters > 0:
-                        # Ensure forecast_days is not zero to avoid division by zero error
                         daily_rate = predicted_encounters / forecast_days if forecast_days > 0 else 0
                         days_of_supply = current_stock / daily_rate if daily_rate > 0 else float('inf')
 
@@ -291,8 +288,7 @@ def main():
     with tabs[2]:
         render_iot_wearable_tab(clinic_iot_stream, wearable_iot_stream, selected_chw, analysis_df)
 
-if __name__ == "__main__":
-    main()
-# This single, clean block at the end of the file is the correct and only entry point.
+# This is the single, correct entry point for the script.
+# It ensures main() is called only once per script run.
 if __name__ == "__main__":
     main()
