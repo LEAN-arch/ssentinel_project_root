@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V6 - DEFINITIVE IMPORT FIX)
+# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V6 - FINAL FIX)
 
 import logging
 from datetime import date, timedelta
@@ -8,12 +8,10 @@ import streamlit as st
 
 from analytics import apply_ai_models, generate_chw_alerts
 from config import settings
-# SME FIX: Import directly from the aggregation submodule
-from data_processing.aggregation import get_cached_trend
-from data_processing.loaders import load_health_records
-from visualization import (create_empty_figure, plot_line_chart, render_kpi_card)
+from data_processing import load_health_records
+from data_processing.cached import get_cached_trend
+from visualization import create_empty_figure, plot_line_chart, render_kpi_card
 
-# ... [The rest of the file is correct and remains unchanged] ...
 st.set_page_config(page_title="Field Operations", page_icon="🧑‍⚕️", layout="wide")
 logger = logging.getLogger(__name__)
 
@@ -21,16 +19,14 @@ logger = logging.getLogger(__name__)
 def get_data() -> pd.DataFrame:
     raw_df = load_health_records()
     if raw_df.empty: return pd.DataFrame()
-    enriched_df, errors = apply_ai_models(raw_df, source_context="FieldOpsDashboard")
-    if errors: logger.error(f"Errors during AI model application: {errors}")
+    enriched_df, _ = apply_ai_models(raw_df)
     return enriched_df
 
 def get_summary_kpis(df: pd.DataFrame) -> dict:
     if df.empty: return {"visits": 0, "high_prio": 0, "crit_spo2": 0, "high_fever": 0}
-    df['temperature'] = df.get('vital_signs_temperature_celsius', pd.Series(dtype=float)).fillna(df.get('max_skin_temp_celsius', pd.Series(dtype=float)))
-    kpis = {"visits": df['patient_id'].nunique() if 'patient_id' in df.columns else 0, "high_prio": (df.get('ai_followup_priority_score', pd.Series(dtype=float)) >= 80).sum(), "crit_spo2": (df.get('min_spo2_pct', pd.Series(dtype=float)) < settings.ANALYTICS.spo2_critical_threshold_pct).sum(), "high_fever": (df.get('temperature', pd.Series(dtype=float)) >= settings.ANALYTICS.temp_high_fever_threshold_c).sum()}
+    df.loc[:, 'temperature'] = df.get('vital_signs_temperature_celsius', pd.Series(dtype=float)).fillna(df.get('max_skin_temp_celsius', pd.Series(dtype=float)))
+    kpis = {"visits": df['patient_id'].nunique(), "high_prio": (df.get('ai_followup_priority_score', pd.Series(dtype=float)) >= 80).sum(), "crit_spo2": (df.get('min_spo2_pct', pd.Series(dtype=float)) < settings.ANALYTICS.spo2_critical_threshold_pct).sum(), "high_fever": (df.get('temperature', pd.Series(dtype=float)) >= settings.ANALYTICS.temp_high_fever_threshold_c).sum()}
     return kpis
-
 def display_alerts(alerts: list):
     st.subheader("🚨 Priority Patient Alerts")
     if not alerts: st.success("✅ No significant patient alerts for this selection."); return
