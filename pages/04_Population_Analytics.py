@@ -18,11 +18,9 @@ from visualization import (plot_bar_chart, plot_choropleth_map,
                            plot_donut_chart, plot_line_chart,
                            render_custom_kpi)
 
-# --- Page Setup ---
 st.set_page_config(page_title="Population Analytics", page_icon="📊", layout="wide")
 logger = logging.getLogger(__name__)
 
-# --- Data Loading & Caching ---
 @st.cache_data(ttl=3600, show_spinner="Loading population datasets...")
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -42,7 +40,7 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     
     return health_df, enriched_zone_df
 
-# ... [The rest of the file (analytics functions, main page logic) is correct and remains unchanged] ...
+# ... [The rest of the file is correct and remains unchanged] ...
 @st.cache_data
 def get_risk_stratification(df: pd.DataFrame) -> dict:
     if df.empty or 'ai_risk_score' not in df.columns: return {'pyramid_data': pd.DataFrame()}
@@ -55,29 +53,24 @@ def get_risk_stratification(df: pd.DataFrame) -> dict:
     pyramid_data = df_copy['risk_tier'].value_counts().reset_index()
     pyramid_data.columns = ['risk_tier', 'patient_count']
     return {'pyramid_data': pyramid_data}
-
 def main():
     st.title("📊 Population Health Analytics")
     st.markdown("Explore demographic distributions, epidemiological patterns, and geospatial risk.")
     st.divider()
-
     health_df, zone_df = get_data()
     if health_df.empty or zone_df.empty:
         st.error("Could not load necessary data. Dashboard cannot be rendered.")
         st.stop()
-
     with st.sidebar:
         st.header("Filters")
         min_date, max_date = health_df['encounter_date'].min().date(), health_df['encounter_date'].max().date()
         start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=89)), max_date), min_value=min_date, max_value=max_date)
         zone_options = ["All Zones"] + sorted(zone_df['zone_name'].dropna().unique())
         selected_zone = st.selectbox("Filter by Zone:", options=zone_options)
-
     df_filtered = health_df[health_df['encounter_date'].dt.date.between(start_date, end_date)]
     if selected_zone != "All Zones":
         zone_id = zone_df.loc[zone_df['zone_name'] == selected_zone, 'zone_id'].iloc[0]
         df_filtered = df_filtered[df_filtered['zone_id'] == zone_id]
-
     st.subheader("Population Snapshot")
     cols = st.columns(4)
     unique_patients = df_filtered['patient_id'].nunique()
@@ -87,7 +80,6 @@ def main():
     with cols[2]: render_custom_kpi("High-Risk Patients", high_risk_count, f"Score >= {settings.ANALYTICS.risk_score_moderate_threshold}", highlight_status='high-risk')
     with cols[3]: render_custom_kpi("Median Patient Age", df_filtered.get('age', pd.Series(dtype=float)).median(), "Years")
     st.divider()
-
     tab1, tab2, tab3, tab4 = st.tabs(["📈 Epidemiology", "🚨 Risk Stratification", "🗺️ Geospatial", "🧑‍🤝‍🧑 Demographics"])
     with tab1:
         st.header("Epidemiological Overview")
