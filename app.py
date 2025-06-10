@@ -57,7 +57,7 @@ set_plotly_theme()
 # --- Application Header and Body ---
 header_cols = st.columns([0.1, 0.9])
 with header_cols[0]:
-    st.image(str(settings.APP_LOGO_LARGE_PATH), width=110)
+    st.image(str(settings.APP_LOGO_LARGE_PATH), width=200)
 with header_cols[1]:
     st.title(settings.APP_NAME)
     st.subheader("Actionable Intelligence for Resilient Health Systems")
