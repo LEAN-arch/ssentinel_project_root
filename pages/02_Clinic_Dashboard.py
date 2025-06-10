@@ -13,7 +13,6 @@ import streamlit as st
 
 # --- Core Sentinel Imports ---
 from analytics import apply_ai_models, generate_prophet_forecast
-# SME FIX: The import for predict_diagnosis_hotspots is removed as we will create a mock function locally.
 from config import settings
 from data_processing import load_health_records, load_iot_records
 from data_processing.cached import get_cached_environmental_kpis
@@ -37,49 +36,27 @@ PROGRAM_DEFINITIONS = {
     "Anemia": {"icon": "🩸", "symptom": "fatigue", "test": "CBC"},
 }
 
-# --- SME FIX: Create a mock function to stand in for the real AI model ---
 def predict_diagnosis_hotspots(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    MOCK AI FUNCTION: Predicts the case counts for the next week.
-    In a real-world scenario, this would be a sophisticated time-series model.
-    Here, we simulate a prediction by taking the average of the last 2 weeks
-    and adding some random noise for realism.
-    """
+    """MOCK AI FUNCTION: Predicts the case counts for the next week."""
     if df.empty:
         return pd.DataFrame(columns=['diagnosis', 'predicted_cases'])
-
-    # Get the diagnoses we are working with
     diagnoses = df['diagnosis'].unique()
-    
-    # Calculate historical weekly counts
     weekly_counts = df.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'diagnosis']).size().unstack(fill_value=0)
-    
     if len(weekly_counts) < 2:
-        # If less than 2 weeks of data, just use the last week's numbers
         last_week_avg = weekly_counts.iloc[-1]
     else:
-        # Average the last two weeks
         last_week_avg = weekly_counts.iloc[-2:].mean()
-
-    # Create a simulated prediction with some noise
     predictions = {}
     for diag in diagnoses:
         base_value = last_week_avg.get(diag, 0)
-        # Add random noise (+/- 20%)
         predicted_value = base_value * np.random.uniform(0.8, 1.2)
-        predictions[diag] = max(0, int(predicted_value)) # Ensure non-negative
-
+        predictions[diag] = max(0, int(predicted_value))
     pred_df = pd.DataFrame(list(predictions.items()), columns=['diagnosis', 'predicted_cases'])
     return pred_df
-# --- END SME FIX ---
-
 
 # --- Data Loading & Caching ---
 @st.cache_data(ttl=3600, show_spinner="Loading all operational data...")
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Loads and enriches all data required for the clinic dashboard.
-    """
     raw_health_df = load_health_records()
     iot_df = load_iot_records()
     if raw_health_df.empty:
@@ -94,9 +71,6 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
 # --- UI Rendering Components for Tabs ---
 
 def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: date, end_date: date):
-    """
-    Renders a high-level overview with key metrics and a trend heatmap.
-    """
     period_str = f"{start_date:%d %b} - {end_date:%d %b}"
     st.header(f"🚀 Clinic Overview: {period_str}")
     
@@ -149,17 +123,13 @@ def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: dat
                 go.Bar(name='Predicted Next Week', x=comparison_df['Diagnosis'], y=comparison_df['Predicted Next Week'], marker_color='#007bff')
             ])
             fig.update_layout(
-                barmode='group',
-                title='Actual vs. AI-Predicted Cases for Next Week',
-                xaxis_title='Diagnosis',
-                yaxis_title='Case Count',
-                template=PLOTLY_TEMPLATE,
+                barmode='group', title='Actual vs. AI-Predicted Cases for Next Week',
+                xaxis_title='Diagnosis', yaxis_title='Case Count', template=PLOTLY_TEMPLATE,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Insufficient data to generate diagnosis predictions.")
-
 
 def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
     program_name = program_config['name']
@@ -198,7 +168,8 @@ def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
                 title_text="Risk Profile of Untested Cohort", template=PLOTLY_TEMPLATE, showlegend=True,
                 annotations=[dict(text='Focus on<br>High-Risk', x=0.5, y=0.5, font_size=16, showarrow=False)]
             )
-            st.plotly_chart(fig_donut, use_container_width=True)
+            # --- SME FIX: Add a unique key based on the program name ---
+            st.plotly_chart(fig_donut, use_container_width=True, key=f"donut_chart_{program_name}")
             st.caption("Actionability: Prioritize outreach to the high-risk symptomatic patients who have not yet been tested.")
 
     with col2:
@@ -206,9 +177,10 @@ def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
         if funnel_data['count'].sum() > 0:
             fig = px.funnel(funnel_data, x='count', y='stage', title=f"Screening & Linkage Funnel: {program_name}", template=PLOTLY_TEMPLATE)
             fig.update_yaxes(categoryorder="array", categoryarray=["Symptomatic/At-Risk", "Tested", "Positive", "Linked to Care"])
-            st.plotly_chart(fig, use_container_width=True)
-        else: st.info(f"No activity recorded for the {program_name} screening program in this period.")
-
+            # --- SME FIX: Add a unique key based on the program name for robustness ---
+            st.plotly_chart(fig, use_container_width=True, key=f"funnel_chart_{program_name}")
+        else: 
+            st.info(f"No activity recorded for the {program_name} screening program in this period.")
 
 def render_demographics_tab(df: pd.DataFrame):
     st.header("🧑‍🤝‍🧑 Patient Demographics Deep Dive")
@@ -219,7 +191,7 @@ def render_demographics_tab(df: pd.DataFrame):
     age_bins = [0, 5, 15, 25, 50, 150]; age_labels = ['0-4', '5-14', '15-24', '25-49', '50+']
     df_unique['age_group'] = pd.cut(df_unique['age'], bins=age_bins, labels=age_labels, right=False).astype(str).replace('nan', 'Not Recorded')
 
-    analysis_type = st.radio("Select Demographic Analysis:", ["Patient Volume", "Average Risk Score", "High-Risk Contribution"], horizontal=True)
+    analysis_type = st.radio("Select Demographic Analysis:", ["Patient Volume", "Average Risk Score", "High-Risk Contribution"], horizontal=True, key="demo_radio")
     st.divider()
 
     if analysis_type == "Patient Volume":
@@ -247,7 +219,6 @@ def render_demographics_tab(df: pd.DataFrame):
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No high-risk patients found for this period.")
-
 
 def render_forecasting_tab(df: pd.DataFrame):
     st.header("🔮 AI-Powered Capacity Planning")
@@ -279,7 +250,7 @@ def render_forecasting_tab(df: pd.DataFrame):
             st.metric("Required Full-Time Staff (FTE)", f"{required_fte:.2f} FTEs")
 
             st.markdown("##### Predicted Clinic Capacity Utilization")
-            capacity_fte = st.number_input("Current Available Clinical FTE:", min_value=1.0, value=5.0, step=0.5)
+            capacity_fte = st.number_input("Current Available Clinical FTE:", min_value=1.0, value=5.0, step=0.5, key="capacity_fte")
             utilization = (required_fte / capacity_fte * 100) if capacity_fte > 0 else 0
             
             fig_gauge = go.Figure(go.Indicator(
@@ -298,7 +269,6 @@ def render_forecasting_tab(df: pd.DataFrame):
         else:
             st.info("Run forecast to see capacity predictions.")
 
-
 def render_environment_tab(iot_df: pd.DataFrame):
     st.header("🌿 Facility Environmental Safety")
     if iot_df.empty: st.info("No environmental data available for this period."); return
@@ -308,7 +278,6 @@ def render_environment_tab(iot_df: pd.DataFrame):
     from data_processing.cached import get_cached_trend
     co2_trend = get_cached_trend(df=iot_df, value_col='avg_co2_ppm', date_col='timestamp', freq='h', agg_func='mean')
     st.plotly_chart(plot_line_chart(co2_trend, "Hourly Average CO₂ Trend", y_title="CO₂ (PPM)"), use_container_width=True)
-
 
 def render_efficiency_tab(df: pd.DataFrame):
     st.header("⏱️ Operational Efficiency Analysis")
@@ -354,7 +323,7 @@ def main():
     with st.sidebar:
         st.header("Filters")
         min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
-        start_date, end_date = st.date_input("Select Date Range for Analysis:", value=(max(min_date, max_date - timedelta(days=29)), max_date), min_value=min_date, max_value=max_date)
+        start_date, end_date = st.date_input("Select Date Range for Analysis:", value=(max(min_date, max_date - timedelta(days=29)), max_date), min_value=min_date, max_value=max_date, key="date_range")
 
     period_health_df = full_health_df[full_health_df['encounter_date'].dt.date.between(start_date, end_date)]
     period_iot_df = full_iot_df[full_iot_df['timestamp'].dt.date.between(start_date, end_date)] if not full_iot_df.empty else pd.DataFrame()
