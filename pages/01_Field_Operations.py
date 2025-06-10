@@ -1,5 +1,4 @@
-# sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V25 - FINAL WITH FALLBACK MODEL)
+# In file: /mount/src/ssentinel_project_root/pages/01_Field_Operations.py
 
 import logging
 from datetime import date, timedelta
@@ -11,7 +10,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-# --- Core Sentinel Imports ---
 from analytics import apply_ai_models, generate_chw_alerts, generate_prophet_forecast
 from config import settings
 from data_processing import load_health_records, load_iot_records
@@ -19,12 +17,9 @@ from visualization import (create_empty_figure, plot_bar_chart,
                            plot_donut_chart, plot_forecast_chart,
                            plot_line_chart)
 
-# --- Page Setup ---
 st.set_page_config(page_title="Field Command Center", page_icon="📡", layout="wide")
 logger = logging.getLogger(__name__)
 
-
-# --- Disease Program Definitions ---
 PROGRAM_DEFINITIONS = {
     "Tuberculosis": {"icon": "🫁", "symptom": "cough", "test": "TB Screen"},
     "Malaria": {"icon": "🦟", "symptom": "fever", "test": "Malaria RDT"},
@@ -32,14 +27,11 @@ PROGRAM_DEFINITIONS = {
     "Anemia & NTDs": {"icon": "🩸", "symptom": "fatigue|weakness", "test": "CBC"},
 }
 
-# --- AI/ML & Visualization Constants ---
 PLOTLY_TEMPLATE = "plotly_white"
 RISK_BINS = [-np.inf, 0.4, 0.7, np.inf]
 RISK_LABELS = ["Low Risk", "Medium Risk", "High Risk"]
 RISK_COLOR_MAP = {"Low Risk": "#2ECC71", "Medium Risk": "#F39C12", "High Risk": "#E74C3C"}
 
-
-# --- Data Loading & Caching ---
 @st.cache_data(ttl=3600)
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     raw_health_df = load_health_records()
@@ -56,31 +48,17 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
         enriched_df['risk_category'] = "Low Risk"
     return enriched_df, iot_df
 
-# --- SME ENHANCEMENT: Fallback Forecasting Model ---
 def generate_moving_average_forecast(df: pd.DataFrame, days_to_forecast: int, window: int) -> pd.DataFrame:
-    """Generates a simple forecast using a moving average."""
     if df.empty:
         return pd.DataFrame()
-    
     last_known_date = df['ds'].max()
-    # Calculate the moving average
     moving_avg = df['y'].rolling(window=window, min_periods=1).mean().iloc[-1]
-    
-    # Create future dates
     future_dates = pd.to_datetime([last_known_date + timedelta(days=i) for i in range(1, days_to_forecast + 1)])
-    
-    # Create forecast DataFrame
     forecast_df = pd.DataFrame({'ds': future_dates, 'yhat': moving_avg})
-    
-    # Combine historical and forecast
-    combined = pd.concat([df.rename(columns={'y': 'yhat_original'}), forecast_df], ignore_index=True)
-    combined['yhat_lower'] = combined['yhat']
-    combined['yhat_upper'] = combined['yhat']
-    
-    return combined
+    forecast_df['yhat_lower'] = moving_avg
+    forecast_df['yhat_upper'] = moving_avg
+    return forecast_df
 
-
-# --- UI Rendering Components ---
 def render_program_cascade(df: pd.DataFrame, config: Dict, key_prefix: str):
     symptomatic = df[df['patient_reported_symptoms'].str.contains(config['symptom'], case=False, na=False)]
     tested = symptomatic[symptomatic['test_type'] == config['test']]
@@ -158,42 +136,45 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
 
             forecast_successful = False
             model_used = None
+            final_forecast_df = pd.DataFrame()
 
             if distinct_days_with_data < 2:
                 st.warning(f"⚠️ **Cannot Forecast:** Model requires at least 2 days with data, but found only **{distinct_days_with_data}**.")
             elif std_dev == 0:
                 st.warning(f"⚠️ **Cannot Forecast:** Data has zero variation (it is a 'flat line').")
             else:
-                st.success(f"✅ **Pre-flight Checks Passed:** Found **{distinct_days_with_data}** days with sufficient variation (Std Dev: {std_dev:.2f}). Attempting primary forecast...")
-                forecast = generate_prophet_forecast(encounters_hist, forecast_days)
-                if not forecast.empty and 'yhat' in forecast.columns:
+                st.success(f"✅ **Pre-flight Checks Passed:** Found **{distinct_days_with_data}** days with sufficient variation (Std Dev: {std_dev:.2f}).")
+                prophet_forecast_df = generate_prophet_forecast(encounters_hist, forecast_days)
+                if not prophet_forecast_df.empty and 'yhat' in prophet_forecast_df.columns:
+                    final_forecast_df = prophet_forecast_df
                     forecast_successful = True
                     model_used = "Primary (Prophet AI)"
                 else:
-                    st.warning("Primary forecast model failed to converge. Attempting fallback model...")
-                    # --- SME FALLBACK ---
-                    forecast = generate_moving_average_forecast(encounters_hist, forecast_days, window=7)
-                    if not forecast.empty:
+                    st.warning("Primary forecast model failed to converge. Using fallback model...")
+                    fallback_forecast_df = generate_moving_average_forecast(encounters_hist, forecast_days, window=7)
+                    if not fallback_forecast_df.empty:
+                        final_forecast_df = fallback_forecast_df
                         forecast_successful = True
                         model_used = "Fallback (7-Day Moving Average)"
 
             if forecast_successful:
                 st.info(f"**Model Used:** `{model_used}`")
-                # Need to rename columns for plotting function if it's the fallback
-                if 'yhat_original' in forecast.columns:
-                    plot_data = forecast.rename(columns={'yhat_original': 'y'})
-                else:
-                    plot_data = pd.merge(encounters_hist, forecast, on='ds', how='outer')
+                
+                # Combine historical and forecast data for plotting
+                plot_data = pd.merge(encounters_hist, final_forecast_df, on='ds', how='outer')
 
                 fig_forecast = plot_forecast_chart(plot_data, title="Forecasted Daily Patient Encounters", y_title="Patient Encounters")
-                fig_forecast.update_layout(template=PLOTLY_TEMPLATE)
                 st.plotly_chart(fig_forecast, use_container_width=True)
                 
                 st.divider()
                 st.subheader("📦 Predictive Supply Chain")
                 avg_tests_per_encounter = 0.6
                 current_stock = st.number_input("Current Test Kit Inventory:", min_value=0, value=5000, step=100, key="stock_input")
-                predicted_encounters = forecast['yhat'].sum()
+                
+                # Use only the future part of the forecast for calculations
+                future_df = final_forecast_df[final_forecast_df['ds'] > encounters_hist['ds'].max()]
+                predicted_encounters = future_df['yhat'].sum()
+
                 if predicted_encounters > 0:
                     daily_rate = predicted_encounters / forecast_days if forecast_days > 0 else 0
                     days_of_supply = current_stock / daily_rate if daily_rate > 0 else float('inf')
@@ -215,7 +196,6 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
         if not clinic_iot.empty:
             co2_trend = clinic_iot.set_index('timestamp')['avg_co2_ppm'].resample('D').mean()
             fig_co2 = plot_line_chart(co2_trend, "Average Clinic CO₂ (Ventilation Proxy)", "CO₂ PPM")
-            fig_co2.update_layout(template=PLOTLY_TEMPLATE)
             st.plotly_chart(fig_co2, use_container_width=True)
             st.caption("High CO₂ indicates poor ventilation, a risk for airborne diseases.")
         else:
@@ -243,7 +223,6 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
         if not wearable_iot.empty:
             stress_trend = wearable_iot.set_index('timestamp')['chw_stress_score'].resample('D').mean()
             fig_stress = plot_line_chart(stress_trend, f"Average Stress Index for {chw_filter}", "Stress Index (0-100)")
-            fig_stress.update_layout(template=PLOTLY_TEMPLATE)
             st.plotly_chart(fig_stress, use_container_width=True)
             st.caption("Monitors team stress, which can impact performance and patient care.")
         else:
@@ -268,16 +247,15 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
                 st.plotly_chart(fig_corr, use_container_width=True)
                 st.caption("Identifies potential relationships for further investigation.")
             else:
-                st.info("Could not compute a correlation matrix from the available data.")
+                st.info("Could not compute a correlation matrix.")
         else:
-            st.info("Not enough overlapping data sources to generate a correlation matrix for the current selection.")
+            st.info("Not enough overlapping data sources for a correlation matrix.")
 
-# --- Main Page Execution ---
 def main():
     st.title("📡 Field Operations Command Center")
     st.markdown("An integrated dashboard for supervising team activity, managing screening programs, and forecasting health trends.")
     health_df, iot_df = get_data()
-    if health_df.empty: st.error("No health data available. Dashboard cannot be rendered."); st.stop()
+    if health_df.empty: st.error("No health data available."); st.stop()
 
     with st.sidebar:
         if hasattr(settings, 'APP_LOGO'):
