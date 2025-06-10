@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V25 - FINAL COMPLETE AND CLEANED)
+# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V25 - FINAL AND COMPLETE)
 
 import logging
 from datetime import date, timedelta
@@ -123,16 +123,28 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
             st.subheader("🔮 Patient Load Forecast")
             forecast_days = st.slider("Forecast Horizon (Days):", 7, 30, 14, 7, key="forecast_slider")
             
+            # --- SME ENHANCEMENT: Advanced Pre-flight Checks ---
             st.markdown("##### Forecast Pre-flight Check")
             encounters_hist = forecast_df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
-            distinct_days_with_data = len(encounters_hist[encounters_hist['y'] > 0])
             
+            distinct_days_with_data = len(encounters_hist[encounters_hist['y'] > 0])
+            std_dev = encounters_hist['y'].std()
+
+            # Create an expander to show the data being used, which is helpful for debugging any scenario.
+            with st.expander("Show Raw Daily Encounter Data for Forecast Model"):
+                st.caption("This is the daily count of encounters used as input for the model. A forecast requires at least two different days with data and variation in the daily counts.")
+                st.bar_chart(encounters_hist.rename(columns={'ds': 'Date', 'y': 'Encounters'}).set_index('Date'))
+                st.dataframe(encounters_hist)
+
+            # Check for insufficient data points
             if distinct_days_with_data < 2:
                 st.warning(f"⚠️ **Cannot Forecast:** Model requires at least 2 days with data, but found only **{distinct_days_with_data}** for the current filters.")
-                with st.expander("Show Raw Data Being Used"):
-                    st.dataframe(encounters_hist)
+            # Check for zero variance (flat line)
+            elif std_dev == 0:
+                st.warning(f"⚠️ **Cannot Forecast:** All data points have the same value (the data is a 'flat line'). The model cannot learn trends from data with zero variation.")
+            # If all checks pass, proceed
             else:
-                st.success(f"✅ **Ready to Forecast:** Found data for **{distinct_days_with_data}** distinct days.")
+                st.success(f"✅ **Ready to Forecast:** Found data for **{distinct_days_with_data}** distinct days with sufficient variation (Std Dev: {std_dev:.2f}).")
                 forecast = generate_prophet_forecast(encounters_hist, forecast_days)
 
                 if not forecast.empty and 'yhat' in forecast.columns:
@@ -157,7 +169,8 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
                         elif days_of_supply < 14: st.warning("🟠 WARNING: Re-supply recommended.")
                         else: st.success("✅ HEALTHY: Inventory levels are sufficient.")
                 else:
-                    st.error("Forecast generation failed. The model did not converge with the current data. Try a broader date range or less specific filter.")
+                    st.error("Forecast generation failed. The model did not converge with the current data. This can happen with unusual data patterns even if pre-flight checks pass. Try adjusting filters.")
+
 
 def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame, chw_filter: str, health_df: pd.DataFrame):
     st.header("🛰️ Environmental & Team Factors")
@@ -288,7 +301,5 @@ def main():
     with tabs[2]:
         render_iot_wearable_tab(clinic_iot_stream, wearable_iot_stream, selected_chw, analysis_df)
 
-# This is the single, correct entry point for the script.
-# It ensures main() is called only once per script run.
 if __name__ == "__main__":
     main()
