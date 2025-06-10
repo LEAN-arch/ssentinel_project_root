@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/05_System_Glossary.py
-# SME PLATINUM STANDARD - GLOSSARY PAGE (V2 - NAMEERROR FIX)
+# SME PLATINUM STANDARD - COMPREHENSIVE GLOSSARY (V4 - FINAL)
 
 import html
 import logging
@@ -11,16 +11,15 @@ from config import settings
 st.set_page_config(page_title="Glossary", page_icon="📜", layout="wide")
 logger = logging.getLogger(__name__)
 
+
 # --- Helper Function ---
-# SME FIX: The helper function is defined at the top level of the module
-# so it is available to the entire script, resolving the NameError.
 def display_term(term: str, definition: str, config_key: str = None):
+    """Renders a single glossary term in a standardized format."""
     st.markdown(f"#### {html.escape(term)}")
     st.markdown(f"*{html.escape(definition)}*")
     
     if config_key:
         try:
-            # Nested access for Pydantic sub-models
             value = settings
             for key in config_key.split('.'):
                 value = getattr(value, key)
@@ -34,46 +33,75 @@ def display_term(term: str, definition: str, config_key: str = None):
             st.caption(f"`settings.{config_key}` (Not found in current config)")
     st.markdown("---")
 
-
-# --- Main Page ---
-st.title("📜 System Glossary")
-st.markdown("Definitions for common terms, abbreviations, and concepts used throughout the Sentinel platform.")
-st.divider()
-
-# --- Search Functionality ---
-search_query = st.text_input("Search Glossary", placeholder="e.g., Risk Score, TAT, Edge AI")
-
-# --- Glossary Content ---
+# --- Glossary Data ---
 GLOSSARY_TERMS = [
-    {"term": "AI Risk Score", "definition": "A predictive score (0-100) indicating a patient's risk of adverse health outcomes, calculated from various health and contextual data points. Higher scores denote higher risk.", "config_key": "ANALYTICS.risk_score_moderate_threshold", "category": "Analytics"},
-    {"term": "Edge AI", "definition": "Artificial intelligence models optimized to run directly on local devices (like a CHW's phone) with minimal resources, enabling real-time decision support without internet connectivity.", "category": "System"},
-    {"term": "Follow-up Priority", "definition": "An AI-generated score (0-100) that ranks patients by the urgency of required follow-up, helping CHWs prioritize their visits.", "config_key": "MODEL_WEIGHTS.risk_score_multiplier", "category": "Analytics"},
-    {"term": "KPI (Key Performance Indicator)", "definition": "A measurable value that demonstrates how effectively a health system objective is being achieved. Sentinel KPIs are designed to be inferential and decision-grade.", "category": "System"},
+    # --- System Architecture & Core Concepts ---
+    {"term": "Sentinel Health Co-Pilot", "definition": "An edge-first health intelligence and action support system. It's designed for resource-limited, high-risk LMIC environments, prioritizing offline functionality, actionable insights for frontline health workers (FHWs), and resilient data flow.", "category": "System"},
     {"term": "Personal Edge Device (PED)", "definition": "A ruggedized smartphone or similar device used by frontline health workers. It runs the Sentinel native application for offline-first task management, data capture, and AI-driven guidance.", "category": "System"},
-    {"term": "TAT (Turnaround Time)", "definition": "The duration from when a lab sample is collected to when a conclusive result is available. A key metric for diagnostic efficiency.", "config_key": "KEY_TEST_TYPES", "category": "Operations"},
-    {"term": "Prophet Forecast", "definition": "An advanced time-series forecasting model by Meta used in Sentinel to predict supply consumption, accounting for trends and seasonality to provide more accurate stockout predictions.", "config_key": "ANALYTICS.prophet_forecast_days", "category": "Analytics"},
+    {"term": "Edge AI", "definition": "Artificial intelligence models optimized to run directly on local devices (like a CHW's phone) with minimal resources, enabling real-time decision support without internet connectivity.", "category": "System"},
+    {"term": "KPI (Key Performance Indicator)", "definition": "A measurable value that demonstrates how effectively a health system objective is being achieved. Sentinel KPIs are designed to be inferential and decision-grade.", "category": "System"},
+    {"term": "Supervisor Hub (Tier 1)", "definition": "An optional intermediary device (e.g., tablet, rugged phone) used by a CHW Supervisor. It locally aggregates data from team members' PEDs via short-range communication, allowing for localized team oversight and batched data transfer to higher tiers.", "category": "System"},
+    {"term": "Facility Node (Tier 2)", "definition": "A local server or PC situated at a clinic or health post. It aggregates data from Hubs or PEDs, performs local analytics, generates facility-level reports, and serves as a crucial staging point for wider data synchronization.", "category": "System"},
+    {"term": "Regional/Cloud Node (Tier 3)", "definition": "Optional centralized infrastructure for population-level analytics, epidemiological surveillance, advanced AI model training, and national-level health reporting. It receives batched data from multiple Facility Nodes.", "category": "System"},
+    {"term": "Lean Data Inputs", "definition": "A core design principle focused on collecting only the minimum viable data points that possess maximum predictive power for Edge AI models and are directly actionable by FHWs.", "category": "System", "config_key": "SYMPTOM_CLUSTERS"},
+    {"term": "Action Code", "definition": "A system-internal alphanumeric code (e.g., 'ACTION_SPO2_MANAGE_URGENT') generated by an alert or AI model. On a PED, this code is mapped to display a specific pictogram, trigger guidance media, or initiate an automated workflow.", "category": "System"},
+    {"term": "Opportunistic Sync", "definition": "A data synchronization strategy where devices transfer data to higher tiers only when a viable, low-cost, and stable communication channel becomes available (e.g., Bluetooth, local Wi-Fi). This is vital for environments with intermittent or expensive internet access.", "category": "System"},
+
+    # --- Analytics Terms ---
+    {"term": "AI Risk Score", "definition": "A predictive score (0-100) indicating a patient's risk of adverse health outcomes, calculated from various health and contextual data points. Higher scores denote higher risk.", "category": "Analytics", "config_key": "ANALYTICS.risk_score_moderate_threshold"},
+    {"term": "Follow-up Priority", "definition": "An AI-generated score (0-100) that ranks patients by the urgency of required follow-up, helping CHWs prioritize their visits.", "category": "Analytics", "config_key": "MODEL_WEIGHTS.risk_score_multiplier"},
+    {"term": "Prophet Forecast", "definition": "An advanced time-series forecasting model by Meta used in Sentinel to predict supply consumption, accounting for trends and seasonality to provide more accurate stockout predictions.", "category": "Analytics", "config_key": "ANALYTICS.prophet_forecast_days"},
+
+    # --- Clinical & Operational Terms ---
+    {"term": "TAT (Turnaround Time)", "definition": "The duration from when a lab sample is collected to when a conclusive result is available. A key metric for diagnostic efficiency.", "category": "Operations", "config_key": "KEY_TEST_TYPES"},
     {"term": "Zonal Analysis", "definition": "The aggregation and comparison of health metrics across different predefined geographical areas (zones) to identify hotspots, resource gaps, and performance variations.", "category": "Operations"},
+    {"term": "SpO₂ (Oxygen Saturation)", "definition": "AnOf course. My apologies for the previous omission. I will now provide the definitive and complete version of the **System Glossary** page, ensuring all the terms you've specified are correctly integrated.
+
+This final version accomplishes the following:
+
+1.  **Complete Integration:** All requested terms—`AI Risk Score`, `Follow-up Priority`, `Prophet Forecast`, `TAT`, `Zonal Analysis`, `Edge AI`, `KPI`, and `PED`—have been added to the glossary data.
+2.  **Correct Categorization:** The terms have been placed under the appropriate categories: "Analytics", "Operations", and "System".
+3.  **Accurate Configuration Linking:** The `config_key` for each term has been correctly specified, allowing the page to dynamically display the current value from the `settings` object.
+4.  **Robust Display Logic:** The `display_term` function correctly handles nested Pydantic models (like `settings.ANALYTICS.risk_score_moderate_threshold`) and complex objects (like the `KEY_TEST_TYPES` dictionary).
+5.  **Enhanced User Experience:** The glossary is now searchable and grouped by category, making it easy for users to find the information they need.
+
+---
+
+### **Definitively Re-engineered `pages/05_System_Glossary.py`**
+
+This is the final, complete version of the glossary estimate of the amount of oxygen in the blood, expressed as a percentage. A critical metric for respiratory health.", "category": "Operations", "config_key": "ANALYTICS.spo2_critical_threshold_pct"},
 ]
 
-# --- Filter and Display ---
-query = search_query.lower()
-if query:
-    filtered_terms = [
-        t for t in GLOSSARY_TERMS 
-        if query in t['term'].lower() or query in t['definition'].lower() or (t.get('config_key') and query in t['config_key'].lower())
-    ]
-else:
-    filtered_terms = GLOSSARY_TERMS
+# --- Main Page Execution ---
+def main():
+    st.title("📜 System Glossary")
+    st.markdown("Definitions for common terms, abbreviations, and concepts used throughout the Sentinel platform.")
+    st.divider()
 
-if not filtered_terms and query:
-    st.warning(f"No results found for '{html.escape(query)}'.")
+    search_query = st.text_input("Search Glossary", placeholder="e.g., Risk Score, TAT, Edge AI")
 
-categories = sorted(list(set(t['category'] for t in filtered_terms)))
-for category in categories:
-    st.header(category)
-    for term_data in filtered_terms:
-        if term_data['category'] == category:
-            display_term(term_data['term'], term_data['definition'], term_data.get('config_key'))
+    query = search_query.lower()
+    if query:
+        filtered_terms = [
+            t for t in GLOSSARY_TERMS 
+            if query in t['term'].lower() or query in t['definition'].lower()
+        ]
+    else:
+        filtered_terms = GLOSSARY_TERMS
 
-st.divider()
-st.caption(settings.APP_FOOTER_TEXT)
+    if not filtered_terms and query:
+        st.warning(f"No results found for '{html.escape(query)}'.")
+
+    # Display terms grouped by category
+    categories = sorted(list(set(t['category'] for t in filtered_terms)), key=lambda x: (x != 'System', x != 'Analytics', x))
+    for category in categories:
+        st.header(category)
+        for term_data in filtered_terms:
+            if term_data['category'] == category:
+                display_term(term_data['term'], term_data['definition'], term_data.get('config_key'))
+
+    st.divider()
+    st.caption(settings.APP_FOOTER_TEXT)
+
+if __name__ == "__main__":
+    main()
