@@ -29,3 +29,38 @@ EID027,PID027,CHW003,2023-10-24T08:00:00Z,Zone-C,22,Female,Gastroenteritis,Stool
 EID028,PID028,CHW001,2023-10-29T10:00:00Z,Zone-A,30,Male,Pain,NA,NA,"back pain",Paracetamol,14900,150,NA,NA,NA,97,37.1,0,0,Completed,Good,0,24,Routine Visit
 EID029,PID029,CHW002,2023-10-30T11:00:00Z,Zone-B,45,Female,Sinusitis,NA,NA,"congestion",Amoxicillin,1550,120,NA,NA,NA,98,37.4,0,0,Completed,Good,0,42,Follow-up
 EID030,PID030,CHW003,2023-11-01T09:00:00Z,Zone-C,3,Female,Diarrhea,Stool Test,Positive,"diarrhea",ORS,4950,250,1,Completed,NA,96,37.9,0,0,Completed,Good,0,31,Routine Visit
+EID016,PID016,CHW001,2024-01-05T09:00:00Z,Zone-A,28,Female,Malaria,Malaria RDT,Positive,"fever; chills",Paracetamol,15000,140,1,Completed,NA,97,38.7,0,0,Completed,Good,0,23,Routine Visit
+EID017,PID017,CHW002,2024-01-10T10:30:00Z,Zone-B,36,Male,Pneumonia,Chest X-ray,Positive,"cough; chest pain",Amoxicillin,1900,120,2,Completed,NA,95,38.9,0,1,Completed,Fair,1,29,Follow-up
+EID018,PID018,CHW003,2024-01-15T11:45:00Z,Zone-C,49,Male,Diarrhea,Stool Test,Negative,"diarrhea",ORS,5500,240,1,Completed,NA,98,37.0,0,0,Completed,Good,0,32,Initial Assessment
+EID019,PID019,CHW001,2024-01-20T08:15:00Z,Zone-A,65,Female,Hypertension,NA,NA,"dizziness",Paracetamol,14200,160,NA,NA,NA,94,36.7,0,0,Completed,Poor,1,41,Alert Response
+EID020,PID020,CHW002,2024-01-25T12:00:00Z,Zone-B,31,Male,Fever,NA,NA,"fever",Paracetamol,16500,150,NA,NA,NA,96,39.1,0,2,Completed,Good,0,33,CHW Alert Response
+EID021,PID021,CHW003,2024-02-02T09:20:00Z,Zone-C,54,Female,Diabetes,Glucose Test,Positive,"fatigue; thirst",ORS,5100,200,1,Completed,NA,92,37.4,0,0,Pending,Fair,1,58,Routine Visit
+EID022,PID022,CHW001,2024-02-05T13:00:00Z,Zone-A,19,Male,URI,NA,NA,"runny nose; sore throat",Paracetamol,14400,145,NA,NA,NA,98,38.2,0,0,Completed,Good,0,27,Follow-up
+EID023,PID023,CHW002,2024-02-10T10:30:00Z,Zone-B,42,Female,Otitis Media,NA,NA,"ear pain",Amoxicillin,1800,130,NA,NA,NA,97,37.9,0,1,Completed,Good,0,45,Routine Visit
+EID024,PID024,CHW003,2024-02-15T11:00:00Z,Zone-C,8,Male,Diarrhea,Stool Test,Positive,"diarrhea",ORS,5200,240,1,Completed,NA,93,37.6,0,0,Completed,Good,0,60,Initial Assessment
+EID025,PID025,CHW001,2024-02-20T14:00:00Z,Zone-A,73,Female,Dehydration,Stool Test,Negative,"fatigue; dry mouth",ORS,5300,230,2,Completed,NA,90,36.9,0,3,Completed,Poor,1,49,Follow-up
+EID026,PID026,CHW002,2024-03-01T09:30:00Z,Zone-B,37,Male,Fever,NA,NA,"fever; chills",Paracetamol,16000,160,NA,NA,NA,98,39.2,0,0,Completed,Good,0,34,Routine Visit
+EID027,PID027,CHW003,2024-03-05T11:15:00Z,Zone-C,5,Female,Bacterial Infection,CBC,Positive,"fever",Amoxicillin,1950,100,2,Completed,NA,95,38.7,0,0,Pending,Fair,1,48,Alert Response
+EID028,PID028,CHW001,2024-03-10T08:45:00Z,Zone-A,59,Male,Hypertension,NA,NA,"dizziness",Paracetamol,14750,170,NA,NA,NA,93,36.8,0,0,Completed,Good,1,52,Routine Visit
+EID029,PID029,CHW002,2024-03-15T10:00:00Z,Zone-B,4,Female,Diarrhea,Stool Test,Positive,"diarrhea",ORS,5100,250,1,Completed,NA,97,38.0,0,0,Completed,Good,0,43,Follow-up
+EID030,PID030,CHW003,2024-03-20T13:30:00Z,Zone-C,61,Female,URI,NA,NA,"sore throat",Paracetamol,16900,150,NA,NA,NA,96,37.2,0,1,Completed,Good,0,25,Initial Assessment
+EID031,PID031,CHW001,2024-03-25T09:00:00Z,Zone-A,26,Male,Malaria,Malaria RDT,Positive,"fever; headache",Paracetamol,17500,155,1,Completed,NA,94,38.6,0,0,Completed,Good,0,28,Medication Delivery
+EID032,PID032,CHW002,2024-04-01T10:30:00Z,Zone-B,44,Male,Sinusitis,NA,NA,"nasal congestion",Amoxicillin,1500,125,NA,NA,NA,97,37.3,0,0,Completed,Good,0,50,Follow-up
+EID033,PID033,CHW003,2024-04-05T12:00:00Z,Zone-C,17,Female,Pain,NA,NA,"back pain",Paracetamol,13800,135,NA,NA,NA,98,37.5,0,0,Completed,Good,0,31,Routine Visit
+EID034,PID034,CHW001,2024-04-10T11:45:00Z,Zone-A,66,Male,Diabetes,Glucose Test,Positive,"increased thirst",ORS,5500,200,1,Completed,NA,93,37.0,0,0,Completed,Fair,1,61,Initial Assessment
+EID035,PID035,CHW002,2024-04-15T08:15:00Z,Zone-B,33,Female,Fever,NA,NA,"fever",Paracetamol,15200,145,NA,NA,NA,99,39.3,0,0,Completed,Good,0,36,CHW Alert Response
+EID036,PID036,CHW003,2024-04-20T14:00:00Z,Zone-C,39,Male,Pneumonia,Chest X-ray,Positive,"cough; chest pain",Amoxicillin,1850,115,2,Completed,NA,92,39.0,0,1,Completed,Fair,1,46,Follow-up
+EID037,PID037,CHW001,2024-05-01T10:00:00Z,Zone-A,48,Female,Dehydration,Stool Test,Negative,"fatigue",ORS,5400,240,1,Completed,NA,94,36.7,0,2,Completed,Good,1,44,Routine Visit
+EID038,PID038,CHW002,2024-05-07T09:45:00Z,Zone-B,20,Male,URI,NA,NA,"runny nose",Paracetamol,14000,150,NA,NA,NA,97,38.1,0,0,Completed,Good,0,40,Initial Assessment
+EID039,PID039,CHW003,2024-05-12T11:30:00Z,Zone-C,72,Female,Fever,NA,NA,"fever",Paracetamol,16000,160,NA,NA,NA,95,39.4,0,0,Completed,Good,0,47,Alert Response
+EID040,PID040,CHW001,2024-05-18T12:15:00Z,Zone-A,35,Male,Otitis Media,NA,NA,"ear pain",Amoxicillin,1750,110,NA,NA,NA,96,37.6,0,0,Completed,Good,0,55,Routine Visit
+EID041,PID041,CHW002,2024-06-02T09:30:00Z,Zone-B,7,Female,Diarrhea,Stool Test,Positive,"diarrhea",ORS,5300,255,2,Completed,NA,93,37.8,0,0,Completed,Good,0,59,Initial Assessment
+EID042,PID042,CHW003,2024-06-06T11:00:00Z,Zone-C,29,Male,Pain,NA,NA,"joint pain",Paracetamol,14600,140,NA,NA,NA,97,37.0,0,0,Completed,Good,0,30,Follow-up
+EID043,PID043,CHW001,2024-06-12T13:30:00Z,Zone-A,46,Female,Hypertension,NA,NA,"dizziness",Paracetamol,15000,170,NA,NA,NA,92,36.9,0,1,Completed,Fair,1,37,Alert Response
+EID044,PID044,CHW002,2024-06-20T10:30:00Z,Zone-B,50,Male,Sinusitis,NA,NA,"nasal congestion",Amoxicillin,1550,130,NA,NA,NA,95,37.4,0,0,Completed,Good,0,38,Follow-up
+EID045,PID045,CHW003,2024-06-25T08:00:00Z,Zone-C,62,Female,Diabetes,Glucose Test,Positive,"thirst; fatigue",ORS,5600,210,1,Completed,NA,91,37.1,0,2,Completed,Poor,1,65,Routine Visit
+EID046,PID046,CHW001,2024-07-01T10:00:00Z,Zone-A,23,Male,URI,NA,NA,"sore throat",Paracetamol,14300,150,NA,NA,NA,98,38.0,0,0,Completed,Good,0,26,Initial Assessment
+EID047,PID047,CHW002,2024-07-08T11:45:00Z,Zone-B,38,Female,Fever,NA,NA,"fever",Paracetamol,15000,160,NA,NA,NA,97,39.0,0,0,Completed,Good,0,51,Routine Visit
+EID048,PID048,CHW003,2024-07-15T09:30:00Z,Zone-C,10,Male,Bacterial Infection,CBC,Positive,"fever",Amoxicillin,1800,120,2,Completed,NA,94,38.5,0,0,Pending,Fair,1,53,Follow-up
+EID049,PID049,CHW001,2024-07-21T13:00:00Z,Zone-A,67,Female,Hypertension,NA,NA,"headache; dizziness",Paracetamol,15700,165,NA,NA,NA,93,37.2,0,1,Completed,Good,1,62,Alert Response
+EID050,PID050,CHW002,2024-07-28T08:30:00Z,Zone-B,42,Male,Dehydration,Stool Test,Negative,"fatigue; dry lips",ORS,5700,240,1,Completed,NA,92,36.8,0,0,Completed,Good,0,39,Routine Visit
