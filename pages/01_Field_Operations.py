@@ -122,29 +122,45 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
         with st.container(border=True):
             st.subheader("🔮 Patient Load Forecast")
             forecast_days = st.slider("Forecast Horizon (Days):", 7, 30, 14, 7, key="forecast_slider")
-            if len(forecast_df) < 10:
-                st.warning("Not enough historical data for the selected filters to generate a forecast.")
+            
+            # --- SME ENHANCEMENT: Predictive Pre-flight Check ---
+            st.markdown("##### Forecast Pre-flight Check")
+            encounters_hist = forecast_df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
+            # Prophet requires at least 2 data points (distinct days) to run.
+            distinct_days_with_data = len(encounters_hist[encounters_hist['y'] > 0])
+            
+            if distinct_days_with_data < 2:
+                st.warning(f"⚠️ **Cannot Forecast:** Model requires at least 2 days with data, but found only **{distinct_days_with_data}** for the current filters.")
+                with st.expander("Show Raw Data Being Used"):
+                    st.dataframe(encounters_hist)
             else:
-                encounters_hist = forecast_df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
+                st.success(f"✅ **Ready to Forecast:** Found data for **{distinct_days_with_data}** distinct days.")
                 forecast = generate_prophet_forecast(encounters_hist, forecast_days)
+
                 if not forecast.empty and 'yhat' in forecast.columns:
                     fig_forecast = plot_forecast_chart(forecast, title="Forecasted Daily Patient Encounters", y_title="Patient Encounters")
                     fig_forecast.update_layout(template=PLOTLY_TEMPLATE)
                     st.plotly_chart(fig_forecast, use_container_width=True)
+                    
+                    st.divider()
                     st.subheader("📦 Predictive Supply Chain")
                     avg_tests_per_encounter = 0.6
                     current_stock = st.number_input("Current Test Kit Inventory:", min_value=0, value=5000, step=100, key="stock_input")
                     predicted_encounters = forecast['yhat'][-forecast_days:].sum()
                     if predicted_encounters > 0:
+                        # Ensure forecast_days is not zero to avoid division by zero error
+                        daily_rate = predicted_encounters / forecast_days if forecast_days > 0 else 0
+                        days_of_supply = current_stock / daily_rate if daily_rate > 0 else float('inf')
+
                         predicted_tests_needed = int(predicted_encounters * avg_tests_per_encounter)
-                        days_of_supply = current_stock / (predicted_tests_needed / forecast_days)
                         st.metric(label=f"Predicted Test Demand ({forecast_days} days)", value=f"{predicted_tests_needed:,} kits")
-                        st.metric(label="Projected Days of Supply Remaining", value=f"{days_of_supply:.1f} days", delta=f"{days_of_supply - 14:.1f} vs. 14-day safety stock", delta_color="inverse")
+                        st.metric(label="Projected Days of Supply Remaining", value=f"{days_of_supply:.1f}" if days_of_supply != float('inf') else "∞", delta=f"{days_of_supply - 14:.1f} vs. 14-day safety stock" if days_of_supply != float('inf') else None, delta_color="inverse")
+                        
                         if days_of_supply < 7: st.error("🔴 CRITICAL: Urgent re-supply needed.")
                         elif days_of_supply < 14: st.warning("🟠 WARNING: Re-supply recommended.")
                         else: st.success("✅ HEALTHY: Inventory levels are sufficient.")
                 else:
-                    st.error("Forecast generation failed. Try a different date range or zone.")
+                    st.error("Forecast generation failed. The model did not converge with the current data. Try a broader date range or less specific filter.")
 
 def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame, chw_filter: str, health_df: pd.DataFrame):
     st.header("🛰️ Environmental & Team Factors")
@@ -275,6 +291,8 @@ def main():
     with tabs[2]:
         render_iot_wearable_tab(clinic_iot_stream, wearable_iot_stream, selected_chw, analysis_df)
 
+if __name__ == "__main__":
+    main()
 # This single, clean block at the end of the file is the correct and only entry point.
 if __name__ == "__main__":
     main()
