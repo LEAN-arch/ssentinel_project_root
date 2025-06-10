@@ -1,9 +1,8 @@
 # sentinel_project_root/pages/04_Population_Analytics.py
-# SME PLATINUM STANDARD - POPULATION HEALTH ANALYTICS (V3 - DEFINITIVE FIX)
+# SME PLATINUM STANDARD - POPULATION ANALYTICS (V4 - FINAL FIX)
 
 import logging
 from datetime import date, timedelta
-
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -11,34 +10,25 @@ import streamlit as st
 
 from analytics import apply_ai_models
 from config import settings
-from data_processing import (convert_to_numeric, get_cached_trend,
-                             load_health_records, load_zone_data,
-                             enrich_zone_data_with_aggregates)
-from visualization import (plot_bar_chart, plot_choropleth_map,
-                           plot_donut_chart, plot_line_chart,
-                           render_custom_kpi)
+from data_processing import load_health_records, load_zone_data
+from data_processing.enrichment import enrich_zone_data_with_aggregates
+from data_processing.cached import get_cached_trend
+from data_processing.helpers import convert_to_numeric
+from visualization import plot_bar_chart, plot_choropleth_map, plot_donut_chart, plot_line_chart, render_custom_kpi
 
 st.set_page_config(page_title="Population Analytics", page_icon="📊", layout="wide")
 logger = logging.getLogger(__name__)
 
 @st.cache_data(ttl=3600, show_spinner="Loading population datasets...")
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Loads and caches the primary health and zone data, ensuring all
-    AI models and enrichments are applied in the correct order.
-    """
-    # SME FIX: The health_df must be enriched with AI scores *before* being
-    # used to enrich the zone data to prevent KeyErrors.
     raw_health_df = load_health_records()
-    if raw_health_df.empty:
-        return pd.DataFrame(), pd.DataFrame()
-
+    if raw_health_df.empty: return pd.DataFrame(), pd.DataFrame()
     health_df, _ = apply_ai_models(raw_health_df)
-    
     zone_df = load_zone_data()
     enriched_zone_df = enrich_zone_data_with_aggregates(zone_df, health_df)
-    
     return health_df, enriched_zone_df
+
+# ... [Rest of the file is identical to the previous correct version] ...
 
 # ... [The rest of the file is correct and remains unchanged] ...
 @st.cache_data
