@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V4 - DEFINITIVE DATA PIPELINE FIX)
+# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V5 - DEFINITIVE FIX)
 
 import logging
 from datetime import date, timedelta
@@ -35,8 +35,6 @@ def get_data() -> pd.DataFrame:
     enriched_df, errors = apply_ai_models(raw_df, source_context="FieldOpsDashboard")
     if errors:
         logger.error(f"Errors during AI model application: {errors}")
-        # Return the partially enriched data to prevent a full crash
-        return enriched_df
         
     return enriched_df
 
@@ -55,7 +53,7 @@ def get_summary_kpis(df: pd.DataFrame) -> dict:
         df.get('max_skin_temp_celsius', pd.Series(dtype=float))
     )
     
-    # SME FIX: Use defensive checks with .get(column, 0) for each calculation.
+    # SME FIX: Use defensive .get() calls for each column before calculation.
     # This prevents KeyErrors if the data pipeline has an upstream failure.
     kpis = {
         "visits": df['patient_id'].nunique() if 'patient_id' in df.columns else 0,
@@ -82,7 +80,6 @@ def display_alerts(alerts: list):
 
 # --- Main Page Execution ---
 def main():
-    # ... [The rest of the main function is correct and remains unchanged] ...
     st.title("🧑‍⚕️ Field Operations Dashboard")
     st.markdown("Monitor zone-level performance, patient risk signals, and field activity.")
     st.divider()
