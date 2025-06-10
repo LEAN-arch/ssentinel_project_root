@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V9 - DEFINITIVE API FIX)
+# SME PLATINUM STANDARD - FIELD OPERATIONS DASHBOARD (V10 - DEFINITIVE INDENTATION FIX)
 
 import logging
 from datetime import date, timedelta
@@ -110,7 +110,7 @@ def main():
     kpis = calculate_field_ops_kpis(analysis_df)
     st.subheader(f"Performance Summary ({start_date:%d %b} to {end_date:%d %b})")
     
-    # SME FIX: Use the correct `with` syntax to render elements inside columns.
+    # SME FIX: The indentation of this entire block is corrected.
     cols = st.columns(3)
     with cols[0]:
         render_kpi_card("Patients Seen (Unique)", kpis.get('unique_patients_seen', 0), icon="👥", help_text="Total unique patients with an encounter in the selected period.")
@@ -124,7 +124,8 @@ def main():
     col1, col2 = st.columns([1, 2], gap="large")
     with col1:
         daily_df_for_alerts = full_df[full_df['encounter_date'].dt.date == end_date]
-        if selected_zone != "All Zones": daily_df_for_alerts = daily_df_for_alerts[daily_df_for_alerts['zone_id'] == selected_zone]
+        if selected_zone != "All Zones":
+            daily_df_for_alerts = daily_df_for_alerts[daily_df_for_alerts['zone_id'] == selected_zone]
         display_alerts(daily_df_for_alerts)
     with col2:
         st.header(f"🔮 AI-Powered Forecasts ({forecast_days} Days Ahead)")
@@ -135,16 +136,20 @@ def main():
             st.warning("Not enough historical data in the selected zone to generate reliable forecasts.")
         else:
             fc_type = st.selectbox("Select Forecast:", options=list(forecasts.keys()), format_func=lambda x: x.replace('_', ' ').title())
-            if fc_type == "encounters": title, y_axis = "Daily Patient Encounters", "Encounters"
-            elif fc_type == "malaria": title, y_axis = "Daily Malaria Cases", "Positive Cases"
-            else: title, y_axis = "Daily Average Patient Risk", "Avg. Risk Score"
-            fig = plot_forecast_chart(forecasts[fc_type], title=title, y_title=y_axis)
-            st.plotly_chart(fig, use_container_width=True)
+            if fc_type == "encounters":
+                title, y_axis = "Daily Patient Encounters", "Encounters"
+            elif fc_type == "malaria":
+                title, y_axis = "Daily Malaria Cases", "Positive Cases"
+            else:
+                title, y_axis = "Daily Average Patient Risk", "Avg. Risk Score"
+            
+            # Check if forecast data for the selected type is available and not empty
+            if forecasts.get(fc_type) is not None and not forecasts[fc_type].empty:
+                fig = plot_forecast_chart(forecasts[fc_type], title=title, y_title=y_axis)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info(f"No forecast data available for '{title}'. There may be insufficient historical data for this specific metric.")
 
-if __name__ == "__main__":
-    main()
-            fig = plot_forecast_chart(forecasts[fc_type], title=title, y_title=y_axis)
-            st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
     main()
