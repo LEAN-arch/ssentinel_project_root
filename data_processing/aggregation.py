@@ -1,5 +1,5 @@
 # sentinel_project_root/data_processing/aggregation.py
-# SME PLATINUM STANDARD - DECISION-GRADE AGGREGATIONS
+# SME PLATINUM STANDARD - DECISION-GRADE AGGREGATIONS (V2 - CACHE FIX)
 
 import logging
 from typing import Any, Callable, Dict, Optional, Union
@@ -8,10 +8,15 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+# We import settings here for use inside functions, but not at the module level for decorators.
 from config import settings
 from .helpers import convert_to_numeric, hash_dataframe
 
 logger = logging.getLogger(__name__)
+
+# SME FIX: Define a constant for the TTL to be used in decorators.
+# This avoids accessing `settings` at module import time.
+DEFAULT_CACHE_TTL = 3600
 
 def _calculate_clinic_kpis(df: pd.DataFrame) -> Dict[str, Any]:
     if not isinstance(df, pd.DataFrame) or df.empty:
@@ -25,7 +30,8 @@ def _calculate_clinic_kpis(df: pd.DataFrame) -> Dict[str, Any]:
         target_map = {name: config.target_tat_days for name, config in settings.KEY_TEST_TYPES.items()}
         conclusive_tests['target_tat'] = conclusive_tests['test_type'].map(target_map)
         met_tat = (conclusive_tests['test_turnaround_days'] <= conclusive_tests['target_tat']).sum()
-        kpis['perc_tests_within_tat'] = (met_tat / len(conclusive_tests.dropna(subset=['target_tat']))) * 100 if len(conclusive_tests.dropna(subset=['target_tat'])) > 0 else 0
+        non_na_targets = conclusive_tests.dropna(subset=['target_tat'])
+        kpis['perc_tests_within_tat'] = (met_tat / len(non_na_targets)) * 100 if len(non_na_targets) > 0 else 0
     else:
         kpis['avg_test_tat_days'] = np.nan
         kpis['perc_tests_within_tat'] = 0.0
@@ -62,32 +68,24 @@ def _calculate_environmental_kpis(iot_df: pd.DataFrame) -> Dict[str, Any]:
     return kpis
 
 def _calculate_district_kpis(enriched_zone_df: pd.DataFrame) -> Dict[str, Any]:
-    if not isinstance(enriched_zone_df, pd.DataFrame) or enriched_zone_df.empty:
-        return {}
+    if not isinstance(enriched_zone_df, pd.DataFrame) or enriched_zone_df.empty: return {}
     kpis: Dict[str, Any] = {}
     population = enriched_zone_df['population'].sum()
     kpis['total_population'] = int(population)
     kpis['total_zones'] = len(enriched_zone_df)
-    
     if population > 0 and 'avg_risk_score' in enriched_zone_df.columns:
         kpis['population_weighted_avg_risk_score'] = np.average(enriched_zone_df['avg_risk_score'].fillna(0), weights=enriched_zone_df['population'])
     else:
         kpis['population_weighted_avg_risk_score'] = enriched_zone_df['avg_risk_score'].mean()
-
     kpis['zones_in_high_risk_count'] = (enriched_zone_df['avg_risk_score'] > settings.ANALYTICS.risk_score_moderate_threshold).sum()
-    
     active_case_cols = [col for col in enriched_zone_df.columns if col.startswith('active_cases_')]
     for col in active_case_cols:
         disease_name = col.replace('active_cases_', '').replace('_', ' ').title()
         kpis[f'total_{disease_name.lower().replace(" ", "_")}_cases'] = int(enriched_zone_df[col].sum())
     return kpis
 
-def _calculate_trend(
-    df: Optional[pd.DataFrame], value_col: str, date_col: str, freq: str = 'D',
-    agg_func: Union[str, Callable] = 'mean'
-) -> pd.Series:
-    if not isinstance(df, pd.DataFrame) or df.empty or date_col not in df.columns or value_col not in df.columns:
-        return pd.Series(dtype=np.float64)
+def _calculate_trend(df: Optional[pd.DataFrame], value_col: str, date_col: str, freq: str = 'D', agg_func: Union[str, Callable] = 'mean') -> pd.Series:
+    if not isinstance(df, pd.DataFrame) or df.empty or date_col not in df.columns or value_col not in df.columns: return pd.Series(dtype=np.float64)
     df_trend = df[[date_col, value_col]].copy()
     df_trend[date_col] = pd.to_datetime(df_trend[date_col], errors='coerce')
     df_trend[value_col] = convert_to_numeric(df_trend[value_col])
@@ -99,22 +97,21 @@ def _calculate_trend(
             trend_series = trend_series.fillna(0).astype(int)
         return trend_series
     except Exception as e:
-        logger.error(f"Error generating trend for '{value_col}': {e}", exc_info=True)
-        return pd.Series(dtype=np.float64)
+        logger.error(f"Error generating trend for '{value_col}': {e}", exc_info=True); return pd.Series(dtype=np.float64)
 
 # --- Streamlit-Cached Wrapper Functions for UI ---
-@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
+@st.cache_data(ttl=DEFAULT_CACHE_TTL, hash_funcs={pd.DataFrame: hash_dataframe})
 def get_cached_clinic_kpis(df: Optional[pd.DataFrame], _source_context: str = "") -> Dict[str, Any]:
     return _calculate_clinic_kpis(df)
 
-@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
+@st.cache_data(ttl=DEFAULT_CACHE_TTL, hash_funcs={pd.DataFrame: hash_dataframe})
 def get_cached_environmental_kpis(iot_df: Optional[pd.DataFrame], _source_context: str = "") -> Dict[str, Any]:
     return _calculate_environmental_kpis(iot_df)
 
-@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
+@st.cache_data(ttl=DEFAULT_CACHE_TTL, hash_funcs={pd.DataFrame: hash_dataframe})
 def get_cached_district_kpis(enriched_zone_df: Optional[pd.DataFrame], _source_context: str = "") -> Dict[str, Any]:
     return _calculate_district_kpis(enriched_zone_df)
 
-@st.cache_data(ttl=settings.WEB_CACHE_TTL_SECONDS, hash_funcs={pd.DataFrame: hash_dataframe})
+@st.cache_data(ttl=DEFAULT_CACHE_TTL, hash_funcs={pd.DataFrame: hash_dataframe})
 def get_cached_trend(df: Optional[pd.DataFrame], **kwargs) -> pd.Series:
     return _calculate_trend(df, **kwargs)
