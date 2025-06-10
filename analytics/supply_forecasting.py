@@ -1,5 +1,5 @@
 # sentinel_project_root/analytics/supply_forecasting.py
-# SME PLATINUM STANDARD - ADVANCED SUPPLY FORECASTING (V2 - TIMEZONE FIX)
+# SME PLATINUM STANDARD - ADVANCED SUPPLY FORECASTING (V3 - DEFINITIVE FIX)
 
 import logging
 from typing import List, Optional
