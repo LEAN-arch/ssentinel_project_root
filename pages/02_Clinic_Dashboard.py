@@ -1,30 +1,27 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - CLINIC DASHBOARD (V4 - DEFINITIVE IMPORT FIX)
+# SME PLATINUM STANDARD - CLINIC DASHBOARD (V6 - FINAL FIX)
 
 import logging
 from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
-# SME FIX: Explicit imports from submodules to avoid circular dependencies.
 from analytics import apply_ai_models, generate_kpi_analysis_table
 from config import settings
-from data_processing.aggregation import get_cached_environmental_kpis, get_cached_trend
-from data_processing.loaders import load_health_records, load_iot_records
-from visualization import (create_empty_figure, plot_bar_chart,
-                           plot_line_chart, render_traffic_light_indicator)
+from data_processing import load_health_records, load_iot_records
+from data_processing.cached import get_cached_environmental_kpis, get_cached_trend
+from visualization import create_empty_figure, plot_bar_chart, plot_line_chart, render_traffic_light_indicator
 
 st.set_page_config(page_title="Clinic Dashboard", page_icon="🏥", layout="wide")
 logger = logging.getLogger(__name__)
 
 @st.cache_data(ttl=3600, show_spinner="Loading operational data...")
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Loads and enriches all data required for the clinic dashboard."""
     raw_health_df = load_health_records()
     health_df, _ = apply_ai_models(raw_health_df)
-    
     iot_df = load_iot_records()
     return health_df, iot_df
+
 
 def render_epidemiology_tab(df: pd.DataFrame):
     st.subheader("Top 5 Diagnoses by Volume")
