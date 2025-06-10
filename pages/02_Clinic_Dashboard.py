@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V20 - AI ENHANCED AND FIXED)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V20 - AI ENHANCED AND FINAL FIX)
 
 import logging
 from datetime import date, timedelta
@@ -111,7 +111,7 @@ def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: dat
     with col2:
         st.subheader("🔬 AI-Predicted Diagnosis Hotspots")
         st.markdown("This module predicts the case counts for next week, enabling proactive inventory and staffing adjustments.")
-        if not df_top.empty:
+        if not df_top.empty and not heatmap_data.empty:
             predicted_trends = predict_diagnosis_hotspots(df_top)
             
             last_week_actual = heatmap_data.iloc[-1].rename("Last Week Actual")
@@ -168,7 +168,6 @@ def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
                 title_text="Risk Profile of Untested Cohort", template=PLOTLY_TEMPLATE, showlegend=True,
                 annotations=[dict(text='Focus on<br>High-Risk', x=0.5, y=0.5, font_size=16, showarrow=False)]
             )
-            # --- SME FIX: Add a unique key based on the program name ---
             st.plotly_chart(fig_donut, use_container_width=True, key=f"donut_chart_{program_name}")
             st.caption("Actionability: Prioritize outreach to the high-risk symptomatic patients who have not yet been tested.")
 
@@ -177,7 +176,6 @@ def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
         if funnel_data['count'].sum() > 0:
             fig = px.funnel(funnel_data, x='count', y='stage', title=f"Screening & Linkage Funnel: {program_name}", template=PLOTLY_TEMPLATE)
             fig.update_yaxes(categoryorder="array", categoryarray=["Symptomatic/At-Risk", "Tested", "Positive", "Linked to Care"])
-            # --- SME FIX: Add a unique key based on the program name for robustness ---
             st.plotly_chart(fig, use_container_width=True, key=f"funnel_chart_{program_name}")
         else: 
             st.info(f"No activity recorded for the {program_name} screening program in this period.")
@@ -230,14 +228,17 @@ def render_forecasting_tab(df: pd.DataFrame):
         forecast_days = st.slider("Days to Forecast Ahead:", 7, 90, 30, 7, key="clinic_forecast_days")
         encounters_hist = df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
         encounter_fc = generate_prophet_forecast(encounters_hist, forecast_days=forecast_days)
-        if not encounter_fc.empty:
+        
+        # --- SME FIX: Use a more robust check for forecast success ---
+        if 'yhat' in encounter_fc.columns:
             st.plotly_chart(plot_forecast_chart(encounter_fc, "Forecasted Daily Patient Load", "Patient Encounters"), use_container_width=True)
         else:
-            st.warning("Could not generate forecast with the available data.")
+            st.warning("Could not generate forecast with the available data. The model may not have converged. Try using a broader date range.")
 
     with col2:
         st.subheader("Predicted Capacity & Staffing Needs")
-        if not encounter_fc.empty:
+        # --- SME FIX: Use the same robust check here ---
+        if 'yhat' in encounter_fc.columns:
             avg_consult_time_min, staff_hours_per_day = 20, 8
             
             future_fc = encounter_fc[encounter_fc['ds'] > df['encounter_date'].max()]
