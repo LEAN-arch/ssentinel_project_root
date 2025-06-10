@@ -1,5 +1,5 @@
 # sentinel_project_root/visualization/plots.py
-# SME PLATINUM STANDARD - CENTRALIZED PLOTTING FACTORY (V2 - INITIALIZATION FIX)
+# SME PLATINUM STANDARD - CENTRALIZED PLOTTING FACTORY (V3 - INITIALIZATION FIX)
 
 import logging
 from typing import Any, Dict, Optional
@@ -23,6 +23,7 @@ def set_plotly_theme():
     """
     # SME FIX: The layout dictionary is now defined inside this function,
     # deferring access to the `settings` object until it is fully initialized.
+    # This resolves the AttributeError on startup.
     base_layout = {
         'font': {'family': "sans-serif", 'size': 12, 'color': settings.COLOR_TEXT_PRIMARY},
         'title': {'x': 0.5, 'xanchor': 'center', 'font': {'size': 18, 'color': settings.COLOR_TEXT_HEADINGS}},
