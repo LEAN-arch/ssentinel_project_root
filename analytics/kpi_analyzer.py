@@ -1,5 +1,5 @@
 # sentinel_project_root/analytics/kpi_analyzer.py
-# SME PLATINUM STANDARD - KPI ANALYSIS & TRENDING
+# SME PLATINUM STANDARD - KPI ANALYSIS & TRENDING (V2 - PLOTLY COLOR FIX)
 
 import logging
 from datetime import date, timedelta
@@ -18,29 +18,44 @@ from data_processing.aggregation import get_cached_clinic_kpis, get_cached_trend
 
 logger = logging.getLogger(__name__)
 
+# SME FIX: Add a helper function to convert hex to a valid rgba string for Plotly
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    """Converts a hex color string to an rgba string."""
+    hex_color = hex_color.lstrip('#')
+    rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    return f'rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {alpha})'
+
 def _create_sparkline(
     series: pd.Series,
     color: str,
-    fill_color: str,
+    fill_color_hex: str, # Now expects a hex color
     is_good_change: Optional[bool] = None
 ) -> Optional[bytes]:
-    """Creates a compact sparkline chart as PNG bytes."""
+    """Creates a compact sparkline chart as PNG bytes if plotly/kaleido are installed."""
     if not KALEIDO_INSTALLED or not isinstance(series, pd.Series) or series.empty or series.isna().all():
         return None
 
     final_color = color
     if is_good_change is not None:
         final_color = settings.COLOR_DELTA_POSITIVE if is_good_change else settings.COLOR_DELTA_NEGATIVE
+    
+    # SME FIX: Use the helper to create a valid rgba string for the fill color
+    rgba_fill_color = _hex_to_rgba(fill_color_hex, 0.2) # 0.2 alpha for a subtle fill
 
     fig = go.Figure(go.Scatter(
-        x=series.index, y=series.values, mode='lines',
+        x=series.index,
+        y=series.values,
+        mode='lines',
         line=dict(color=final_color, width=3),
-        fill='tozeroy', fillcolor=fill_color
+        fill='tozeroy',
+        fillcolor=rgba_fill_color  # Pass the valid rgba string
     ))
     fig.update_layout(
-        width=180, height=50, margin=dict(l=0, r=0, t=5, b=5),
+        width=180, height=50,
+        margin=dict(l=0, r=0, t=5, b=5),
         xaxis_visible=False, yaxis_visible=False,
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
     )
     try:
         return fig.to_image(format="png", engine="kaleido", scale=2)
@@ -53,7 +68,9 @@ def generate_kpi_analysis_table(
     start_date: date,
     end_date: date
 ) -> pd.DataFrame:
-    """Performs a period-over-period KPI analysis, calculates change, and generates trend sparklines."""
+    """
+    Performs a period-over-period KPI analysis, calculates change, and generates trend sparklines.
+    """
     if full_df.empty or 'encounter_date' not in full_df.columns:
         return pd.DataFrame()
 
@@ -82,7 +99,7 @@ def generate_kpi_analysis_table(
         prev_val = kpi_previous.get(kpi_key)
         
         change_str, is_good_change = "N/A", None
-        if pd.notna(current_val) and pd.notna(prev_val) and prev_val != 0:
+        if pd.notna(current_val) and pd.notna(prev_val) and prev_val != 0 and abs(prev_val) > 1e-9:
             change = ((current_val - prev_val) / abs(prev_val)) * 100
             change_str = f"{change:+.1f}%"
             is_good_change = (change > 0) if higher_is_better else (change < 0)
@@ -91,7 +108,10 @@ def generate_kpi_analysis_table(
         if trend_agg == "mean" and trend_col == "is_rejected": trend_series *= 100
             
         sparkline_bytes = _create_sparkline(
-            trend_series, settings.COLOR_PRIMARY, settings.COLOR_ACCENT + '33', is_good_change
+            trend_series,
+            color=settings.COLOR_PRIMARY,
+            fill_color_hex=settings.COLOR_ACCENT, # Pass the base hex color
+            is_good_change=is_good_change
         )
         
         analysis_data.append({
