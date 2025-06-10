@@ -1,5 +1,5 @@
 # sentinel_project_root/app.py
-# SME PLATINUM STANDARD - APPLICATION ENTRY POINT (V2)
+# SME PLATINUM STANDARD - APPLICATION ENTRY POINT (V3)
 
 import logging
 import sys
@@ -12,6 +12,8 @@ try:
         sys.path.insert(0, str(_project_root))
 
     import streamlit as st
+    # SME FIX: This import now correctly pulls the `settings` INSTANCE
+    # because config/__init__.py is present and correct.
     from config import settings
     from visualization import load_and_inject_css, set_plotly_theme
     
@@ -23,6 +25,7 @@ except ImportError as e:
     sys.exit(1)
 
 # --- Global Configuration ---
+# This block will now work correctly.
 logging.basicConfig(
     level=settings.LOG_LEVEL, format=settings.LOG_FORMAT,
     datefmt=settings.LOG_DATE_FORMAT, handlers=[logging.StreamHandler(sys.stdout)],
@@ -41,13 +44,10 @@ st.set_page_config(
     }
 )
 
-# SME NOTE: These function calls are correctly placed after all imports,
-# ensuring the settings object is available before the functions are executed.
 load_and_inject_css(settings.STYLE_CSS_PATH)
 set_plotly_theme()
 
-# --- Application Header and Body (Unchanged) ---
-# ... [rest of app.py code] ...
+# --- Application Header and Body ---
 header_cols = st.columns([0.1, 0.9])
 with header_cols[0]:
     st.image(str(settings.APP_LOGO_LARGE_PATH), width=110)
@@ -56,16 +56,9 @@ with header_cols[1]:
     st.subheader("Actionable Intelligence for Resilient Health Systems")
 st.divider()
 
-st.markdown(f"""
-### Welcome to the {html.escape(settings.APP_NAME)}
-This application demonstrates an **edge-first health intelligence system** designed for **maximum clinical and 
-operational actionability** in resource-constrained environments. It transforms diverse data sources 
-into life-saving, workflow-integrated decisions.
-""")
-
+st.markdown(f"### Welcome to the {html.escape(settings.APP_NAME)}")
 st.info("""
 **💡 How to Use This Demo:** The dashboards linked below simulate the views available to **Supervisors, Clinic Managers, and Health Analysts**. 
-The primary interface for frontline workers (e.g., CHWs) is a separate, dedicated native application on their device, which is not part of this web demo.
 """, icon="ℹ️")
 st.divider()
 
