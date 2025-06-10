@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# FINAL CLEANED VERSION
+# SME PLATINUM STANDARD - INTEGRATED FIELD COMMAND CENTER (V25 - FINAL WITH FALLBACK MODEL)
 
 import logging
 from datetime import date, timedelta
@@ -55,6 +55,30 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
         enriched_df['risk_score'] = 0.1
         enriched_df['risk_category'] = "Low Risk"
     return enriched_df, iot_df
+
+# --- SME ENHANCEMENT: Fallback Forecasting Model ---
+def generate_moving_average_forecast(df: pd.DataFrame, days_to_forecast: int, window: int) -> pd.DataFrame:
+    """Generates a simple forecast using a moving average."""
+    if df.empty:
+        return pd.DataFrame()
+    
+    last_known_date = df['ds'].max()
+    # Calculate the moving average
+    moving_avg = df['y'].rolling(window=window, min_periods=1).mean().iloc[-1]
+    
+    # Create future dates
+    future_dates = pd.to_datetime([last_known_date + timedelta(days=i) for i in range(1, days_to_forecast + 1)])
+    
+    # Create forecast DataFrame
+    forecast_df = pd.DataFrame({'ds': future_dates, 'yhat': moving_avg})
+    
+    # Combine historical and forecast
+    combined = pd.concat([df.rename(columns={'y': 'yhat_original'}), forecast_df], ignore_index=True)
+    combined['yhat_lower'] = combined['yhat']
+    combined['yhat_upper'] = combined['yhat']
+    
+    return combined
+
 
 # --- UI Rendering Components ---
 def render_program_cascade(df: pd.DataFrame, config: Dict, key_prefix: str):
@@ -129,39 +153,59 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
             std_dev = encounters_hist['y'].std()
 
             with st.expander("Show Raw Daily Encounter Data for Forecast Model"):
-                st.caption("This is the daily count of encounters used as input for the model. A forecast requires at least two different days with data and variation in the daily counts.")
+                st.caption("This is the daily count of encounters used as input for the model.")
                 st.bar_chart(encounters_hist.rename(columns={'ds': 'Date', 'y': 'Encounters'}).set_index('Date'))
-                st.dataframe(encounters_hist)
+
+            forecast_successful = False
+            model_used = None
 
             if distinct_days_with_data < 2:
-                st.warning(f"⚠️ **Cannot Forecast:** Model requires at least 2 days with data, but found only **{distinct_days_with_data}** for the current filters.")
+                st.warning(f"⚠️ **Cannot Forecast:** Model requires at least 2 days with data, but found only **{distinct_days_with_data}**.")
             elif std_dev == 0:
-                st.warning(f"⚠️ **Cannot Forecast:** All data points have the same value (the data is a 'flat line'). The model cannot learn trends from data with zero variation.")
+                st.warning(f"⚠️ **Cannot Forecast:** Data has zero variation (it is a 'flat line').")
             else:
-                st.success(f"✅ **Ready to Forecast:** Found data for **{distinct_days_with_data}** distinct days with sufficient variation (Std Dev: {std_dev:.2f}).")
+                st.success(f"✅ **Pre-flight Checks Passed:** Found **{distinct_days_with_data}** days with sufficient variation (Std Dev: {std_dev:.2f}). Attempting primary forecast...")
                 forecast = generate_prophet_forecast(encounters_hist, forecast_days)
-
                 if not forecast.empty and 'yhat' in forecast.columns:
-                    fig_forecast = plot_forecast_chart(forecast, title="Forecasted Daily Patient Encounters", y_title="Patient Encounters")
-                    fig_forecast.update_layout(template=PLOTLY_TEMPLATE)
-                    st.plotly_chart(fig_forecast, use_container_width=True)
-                    
-                    st.divider()
-                    st.subheader("📦 Predictive Supply Chain")
-                    avg_tests_per_encounter = 0.6
-                    current_stock = st.number_input("Current Test Kit Inventory:", min_value=0, value=5000, step=100, key="stock_input")
-                    predicted_encounters = forecast['yhat'][-forecast_days:].sum()
-                    if predicted_encounters > 0:
-                        daily_rate = predicted_encounters / forecast_days if forecast_days > 0 else 0
-                        days_of_supply = current_stock / daily_rate if daily_rate > 0 else float('inf')
-                        predicted_tests_needed = int(predicted_encounters * avg_tests_per_encounter)
-                        st.metric(label=f"Predicted Test Demand ({forecast_days} days)", value=f"{predicted_tests_needed:,} kits")
-                        st.metric(label="Projected Days of Supply Remaining", value=f"{days_of_supply:.1f}" if days_of_supply != float('inf') else "∞", delta=f"{days_of_supply - 14:.1f} vs. 14-day safety stock" if days_of_supply != float('inf') else None, delta_color="inverse")
-                        if days_of_supply < 7: st.error("🔴 CRITICAL: Urgent re-supply needed.")
-                        elif days_of_supply < 14: st.warning("🟠 WARNING: Re-supply recommended.")
-                        else: st.success("✅ HEALTHY: Inventory levels are sufficient.")
+                    forecast_successful = True
+                    model_used = "Primary (Prophet AI)"
                 else:
-                    st.error("Forecast generation failed. The model did not converge with the current data. This can happen with unusual data patterns even if pre-flight checks pass. Try adjusting filters.")
+                    st.warning("Primary forecast model failed to converge. Attempting fallback model...")
+                    # --- SME FALLBACK ---
+                    forecast = generate_moving_average_forecast(encounters_hist, forecast_days, window=7)
+                    if not forecast.empty:
+                        forecast_successful = True
+                        model_used = "Fallback (7-Day Moving Average)"
+
+            if forecast_successful:
+                st.info(f"**Model Used:** `{model_used}`")
+                # Need to rename columns for plotting function if it's the fallback
+                if 'yhat_original' in forecast.columns:
+                    plot_data = forecast.rename(columns={'yhat_original': 'y'})
+                else:
+                    plot_data = pd.merge(encounters_hist, forecast, on='ds', how='outer')
+
+                fig_forecast = plot_forecast_chart(plot_data, title="Forecasted Daily Patient Encounters", y_title="Patient Encounters")
+                fig_forecast.update_layout(template=PLOTLY_TEMPLATE)
+                st.plotly_chart(fig_forecast, use_container_width=True)
+                
+                st.divider()
+                st.subheader("📦 Predictive Supply Chain")
+                avg_tests_per_encounter = 0.6
+                current_stock = st.number_input("Current Test Kit Inventory:", min_value=0, value=5000, step=100, key="stock_input")
+                predicted_encounters = forecast['yhat'].sum()
+                if predicted_encounters > 0:
+                    daily_rate = predicted_encounters / forecast_days if forecast_days > 0 else 0
+                    days_of_supply = current_stock / daily_rate if daily_rate > 0 else float('inf')
+                    predicted_tests_needed = int(predicted_encounters * avg_tests_per_encounter)
+                    st.metric(label=f"Predicted Test Demand ({forecast_days} days)", value=f"{predicted_tests_needed:,} kits")
+                    st.metric(label="Projected Days of Supply Remaining", value=f"{days_of_supply:.1f}" if days_of_supply != float('inf') else "∞", delta=f"{days_of_supply - 14:.1f} vs. 14-day safety stock" if days_of_supply != float('inf') else None, delta_color="inverse")
+                    if days_of_supply < 7: st.error("🔴 CRITICAL: Urgent re-supply needed.")
+                    elif days_of_supply < 14: st.warning("🟠 WARNING: Re-supply recommended.")
+                    else: st.success("✅ HEALTHY: Inventory levels are sufficient.")
+            else:
+                st.error("All forecast models failed. The data is too sparse or erratic for a reliable prediction. Please broaden your filters.")
+
 
 def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame, chw_filter: str, health_df: pd.DataFrame):
     st.header("🛰️ Environmental & Team Factors")
