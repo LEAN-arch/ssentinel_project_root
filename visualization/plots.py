@@ -1,5 +1,5 @@
 # sentinel_project_root/visualization/plots.py
-# SME PLATINUM STANDARD - CENTRALIZED PLOTTING FACTORY (V4 - DEFINITIVE INITIALIZATION FIX)
+# SME PLATINUM STANDARD - CENTRALIZED PLOTTING FACTORY (V5 - FINAL INITIALIZATION FIX)
 
 import logging
 from typing import Any, Dict, Optional
@@ -10,6 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
 
+# We import settings here, but critically, DO NOT access its attributes at the module level.
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -19,8 +20,9 @@ logger = logging.getLogger(__name__)
 def set_plotly_theme():
     """
     Sets the custom Sentinel theme as the default for all Plotly charts.
-    The layout dictionary is defined here to ensure settings are loaded first,
-    resolving the startup AttributeError.
+    The layout dictionary is defined locally within this function to ensure
+    the `settings` object is fully initialized before its attributes are accessed.
+    This resolves the startup AttributeError.
     """
     base_layout = {
         'font': {'family': "sans-serif", 'size': 12, 'color': settings.COLOR_TEXT_PRIMARY},
@@ -33,16 +35,16 @@ def set_plotly_theme():
         'yaxis': {'gridcolor': '#e9ecef', 'zeroline': False},
     }
     
-    sentinel_template = go.layout.Template()
-    sentinel_template.layout = base_layout
+    sentinel_template = go.layout.Template(layout=base_layout)
     sentinel_template.layout.colorway = settings.PLOTLY_COLORWAY
     
     pio.templates['sentinel'] = sentinel_template
     pio.templates.default = 'sentinel'
-    logger.debug("Custom 'sentinel' Plotly theme applied.")
+    logger.debug("Custom 'sentinel' Plotly theme applied successfully.")
 
 
-# --- Factory Functions for Standardized Charts ---
+# --- Factory Functions for Standardized Charts (Unchanged) ---
+# These functions are safe as they only access `settings` when they are called.
 
 def create_empty_figure(title: str, message: str = "No data available.") -> go.Figure:
     fig = go.Figure()
@@ -80,87 +82,52 @@ def plot_bar_chart(
         logger.error(f"Failed to create bar chart '{title}': {e}", exc_info=True)
         return create_empty_figure(title, "Error generating chart.")
 
+# ... [The rest of the plotting functions (plot_donut_chart, etc.) remain exactly the same as the last correct version] ...
 def plot_donut_chart(df: pd.DataFrame, label_col: str, value_col: str, title: str) -> go.Figure:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return create_empty_figure(title)
+    if not isinstance(df, pd.DataFrame) or df.empty: return create_empty_figure(title)
     try:
-        fig = px.pie(
-            df, names=label_col, values=value_col,
-            title=f"<b>{html.escape(title)}</b>", hole=0.5
-        )
-        fig.update_traces(
-            textinfo='percent+label', textposition='inside', insidetextorientation='radial',
-            hoverinfo='label+percent+value', marker_line_width=2, marker_line_color=settings.COLOR_BACKGROUND_CONTENT
-        )
+        fig = px.pie(df, names=label_col, values=value_col, title=f"<b>{html.escape(title)}</b>", hole=0.5)
+        fig.update_traces(textinfo='percent+label', textposition='inside', insidetextorientation='radial', hoverinfo='label+percent+value', marker_line_width=2, marker_line_color=settings.COLOR_BACKGROUND_CONTENT)
         fig.update_layout(legend_title_text=label_col.replace("_", " ").title())
         return fig
     except Exception as e:
-        logger.error(f"Failed to create donut chart '{title}': {e}", exc_info=True)
-        return create_empty_figure(title, "Error generating chart.")
+        logger.error(f"Failed to create donut chart '{title}': {e}", exc_info=True); return create_empty_figure(title, "Error generating chart.")
 
 def plot_line_chart(series: pd.Series, title: str, y_title: str, add_annotations: bool = True) -> go.Figure:
-    if not isinstance(series, pd.Series) or series.empty:
-        return create_empty_figure(title)
+    if not isinstance(series, pd.Series) or series.empty: return create_empty_figure(title)
     try:
-        fig = go.Figure(go.Scatter(
-            x=series.index, y=series.values, mode='lines+markers',
-            line=dict(color=settings.COLOR_PRIMARY, width=3), marker=dict(size=6),
-            hovertemplate=f'<b>%{{x|%Y-%m-%d}}</b><br>{html.escape(y_title)}: %{{y:,.2f}}<extra></extra>'
-        ))
+        fig = go.Figure(go.Scatter(x=series.index, y=series.values, mode='lines+markers', line=dict(color=settings.COLOR_PRIMARY, width=3), marker=dict(size=6), hovertemplate=f'<b>%{{x|%Y-%m-%d}}</b><br>{html.escape(y_title)}: %{{y:,.2f}}<extra></extra>'))
         fig.update_layout(title_text=f"<b>{html.escape(title)}</b>", yaxis_title=y_title, xaxis_title="Date")
-        
         if add_annotations and len(series.dropna()) > 1:
             max_val, min_val, max_idx, min_idx = series.max(), series.min(), series.idxmax(), series.idxmin()
             anno_font = dict(color="white", size=10)
             fig.add_annotation(x=max_idx, y=max_val, text=f"Max<br>{max_val:,.1f}", showarrow=True, bgcolor=settings.COLOR_RISK_HIGH, font=anno_font, borderpad=2, yshift=15)
             fig.add_annotation(x=min_idx, y=min_val, text=f"Min<br>{min_val:,.1f}", showarrow=True, bgcolor=settings.COLOR_RISK_LOW, font=anno_font, borderpad=2, yshift=-15)
-        
         return fig
     except Exception as e:
-        logger.error(f"Failed to create line chart '{title}': {e}", exc_info=True)
-        return create_empty_figure(title, "Error generating chart.")
+        logger.error(f"Failed to create line chart '{title}': {e}", exc_info=True); return create_empty_figure(title, "Error generating chart.")
 
 def plot_choropleth_map(df: pd.DataFrame, geojson: Dict, value_col: str, title: str, zone_id_col: str = 'zone_id', **px_kwargs: Any) -> go.Figure:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return create_empty_figure(title, "No geographic data.")
+    if not isinstance(df, pd.DataFrame) or df.empty: return create_empty_figure(title, "No geographic data.")
     try:
-        fig = px.choropleth_mapbox(
-            df, geojson=geojson, locations=zone_id_col, featureidkey="properties.zone_id", color=value_col,
-            mapbox_style=settings.MAPBOX_STYLE, zoom=settings.MAP_DEFAULT_ZOOM,
-            center={"lat": settings.MAP_DEFAULT_CENTER[0], "lon": settings.MAP_DEFAULT_CENTER[1]},
-            opacity=0.75, title=f"<b>{html.escape(title)}</b>", **px_kwargs
-        )
+        fig = px.choropleth_mapbox(df, geojson=geojson, locations=zone_id_col, featureidkey="properties.zone_id", color=value_col, mapbox_style=settings.MAPBOX_STYLE, zoom=settings.MAP_DEFAULT_ZOOM, center={"lat": settings.MAP_DEFAULT_CENTER[0], "lon": settings.MAP_DEFAULT_CENTER[1]}, opacity=0.75, title=f"<b>{html.escape(title)}</b>", **px_kwargs)
         fig.update_layout(margin={"r":0, "t":40, "l":0, "b":0}, mapbox_accesstoken=settings.MAPBOX_TOKEN)
         return fig
     except Exception as e:
-        logger.error(f"Failed to create choropleth map '{title}': {e}", exc_info=True)
-        return create_empty_figure(title, "Error generating map.")
+        logger.error(f"Failed to create choropleth map '{title}': {e}", exc_info=True); return create_empty_figure(title, "Error generating map.")
 
 def plot_heatmap(df: pd.DataFrame, title: str, **px_kwargs: Any) -> go.Figure:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return create_empty_figure(title)
+    if not isinstance(df, pd.DataFrame) or df.empty: return create_empty_figure(title)
     try:
         fig = px.imshow(df, text_auto=True, aspect="auto", title=f"<b>{html.escape(title)}</b>", **px_kwargs)
         return fig
     except Exception as e:
-        logger.error(f"Failed to create heatmap '{title}': {e}", exc_info=True)
-        return create_empty_figure(title, "Error generating chart.")
+        logger.error(f"Failed to create heatmap '{title}': {e}", exc_info=True); return create_empty_figure(title, "Error generating chart.")
 
 def plot_forecast_chart(forecast_df: pd.DataFrame, title: str, y_title: str) -> go.Figure:
-    if not isinstance(forecast_df, pd.DataFrame) or forecast_df.empty:
-        return create_empty_figure(title, "No forecast data available.")
-        
+    if not isinstance(forecast_df, pd.DataFrame) or forecast_df.empty: return create_empty_figure(title, "No forecast data available.")
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=forecast_df['forecast_date'].tolist() + forecast_df['forecast_date'].tolist()[::-1],
-        y=forecast_df['consumption_upper_bound'].tolist() + forecast_df['consumption_lower_bound'].tolist()[::-1],
-        fill='toself', fillcolor=settings.COLOR_ACCENT + '33', line=dict(color='rgba(255,255,255,0)'),
-        hoverinfo="skip", name='Uncertainty Interval'
-    ))
-    fig.add_trace(go.Scatter(
-        x=forecast_df['forecast_date'], y=forecast_df['predicted_daily_consumption'],
-        mode='lines', line=dict(color=settings.COLOR_PRIMARY, width=3), name='Forecast'
-    ))
+    fig.add_trace(go.Scatter(x=forecast_df['forecast_date'].tolist() + forecast_df['forecast_date'].tolist()[::-1], y=forecast_df['consumption_upper_bound'].tolist() + forecast_df['consumption_lower_bound'].tolist()[::-1], fill='toself', fillcolor=settings.COLOR_ACCENT + '33', line=dict(color='rgba(255,255,255,0)'), hoverinfo="skip", name='Uncertainty Interval'))
+    fig.add_trace(go.Scatter(x=forecast_df['forecast_date'], y=forecast_df['predicted_daily_consumption'], mode='lines', line=dict(color=settings.COLOR_PRIMARY, width=3), name='Forecast'))
     fig.update_layout(title_text=f"<b>{html.escape(title)}</b>", yaxis_title=y_title, xaxis_title="Date", showlegend=True)
     return fig
-
