@@ -17,6 +17,8 @@ pydantic-settings>=2.1.0
 plotly>=5.15.0
 # Required by Plotly for static image export (e.g., sparklines)
 kaleido>=0.2.1
+statsmodels
+cmdstanpy
 
 # --- Advanced Analytics & Forecasting ---
 # Prophet by Meta for time-series forecasting
