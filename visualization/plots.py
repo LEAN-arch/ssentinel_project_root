@@ -1,5 +1,5 @@
 # sentinel_project_root/visualization/plots.py
-# SME PLATINUM STANDARD - CENTRALIZED PLOTTING FACTORY
+# SME PLATINUM STANDARD - CENTRALIZED PLOTTING FACTORY (V2 - INITIALIZATION FIX)
 
 import logging
 from typing import Any, Dict, Optional
@@ -14,25 +14,36 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-_BASE_LAYOUT = {
-    'font': {'family': "sans-serif", 'size': 12, 'color': settings.COLOR_TEXT_PRIMARY},
-    'title': {'x': 0.5, 'xanchor': 'center', 'font': {'size': 18, 'color': settings.COLOR_TEXT_HEADINGS}},
-    'paper_bgcolor': settings.COLOR_BACKGROUND_CONTENT,
-    'plot_bgcolor': settings.COLOR_BACKGROUND_CONTENT,
-    'margin': dict(l=60, r=40, t=60, b=60),
-    'legend': dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font={'size': 10}),
-    'xaxis': {'showgrid': False, 'zeroline': False},
-    'yaxis': {'gridcolor': '#e9ecef', 'zeroline': False},
-}
+# --- Theme and Layout Configuration ---
 
 def set_plotly_theme():
-    """Sets the custom Sentinel theme as the default for all Plotly charts."""
+    """
+    Sets the custom Sentinel theme as the default for all Plotly charts.
+    The layout dictionary is defined here to ensure settings are loaded first.
+    """
+    # SME FIX: The layout dictionary is now defined inside this function,
+    # deferring access to the `settings` object until it is fully initialized.
+    base_layout = {
+        'font': {'family': "sans-serif", 'size': 12, 'color': settings.COLOR_TEXT_PRIMARY},
+        'title': {'x': 0.5, 'xanchor': 'center', 'font': {'size': 18, 'color': settings.COLOR_TEXT_HEADINGS}},
+        'paper_bgcolor': settings.COLOR_BACKGROUND_CONTENT,
+        'plot_bgcolor': settings.COLOR_BACKGROUND_CONTENT,
+        'margin': dict(l=60, r=40, t=60, b=60),
+        'legend': dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font={'size': 10}),
+        'xaxis': {'showgrid': False, 'zeroline': False},
+        'yaxis': {'gridcolor': '#e9ecef', 'zeroline': False},
+    }
+    
     sentinel_template = go.layout.Template()
-    sentinel_template.layout = _BASE_LAYOUT
+    sentinel_template.layout = base_layout
     sentinel_template.layout.colorway = settings.PLOTLY_COLORWAY
+    
     pio.templates['sentinel'] = sentinel_template
     pio.templates.default = 'sentinel'
     logger.debug("Custom 'sentinel' Plotly theme applied.")
+
+
+# --- Factory Functions for Standardized Charts ---
 
 def create_empty_figure(title: str, message: str = "No data available.") -> go.Figure:
     """Creates a standardized empty plot with a message."""
