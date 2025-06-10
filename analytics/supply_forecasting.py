@@ -1,5 +1,5 @@
 # sentinel_project_root/analytics/supply_forecasting.py
-# SME PLATINUM STANDARD - ADVANCED SUPPLY FORECASTING (V3 - DEFINITIVE FIX)
+# SME PLATINUM STANDARD - ADVANCED SUPPLY FORECASTING (V4 - DEFINITIVE FIX)
 
 import logging
 from typing import List, Optional
@@ -17,14 +17,10 @@ except ImportError:
     
 logger = logging.getLogger(__name__)
 
-def generate_linear_forecast(
-    source_df: pd.DataFrame,
-    forecast_days: int = 30,
-    item_filter: Optional[List[str]] = None
-) -> pd.DataFrame:
+def generate_linear_forecast(source_df: pd.DataFrame, forecast_days: int = 30, item_filter: Optional[List[str]] = None) -> pd.DataFrame:
     # ... [function body is correct and remains unchanged] ...
     if not isinstance(source_df, pd.DataFrame) or source_df.empty: return pd.DataFrame()
-    df = source_df.copy()
+    df = source_df.copy();
     if item_filter: df = df[df['item'].isin(item_filter)]
     latest_status = df.sort_values('encounter_date', ascending=False).drop_duplicates('item')
     if latest_status.empty: return pd.DataFrame()
@@ -40,23 +36,15 @@ def generate_linear_forecast(
         all_forecasts.append(item_df)
     return pd.concat(all_forecasts, ignore_index=True) if all_forecasts else pd.DataFrame()
 
-def generate_prophet_forecast(
-    source_df: pd.DataFrame,
-    item_filter: Optional[List[str]] = None
-) -> pd.DataFrame:
-    """
-    Generates an advanced forecast using Meta's Prophet model.
-    """
+def generate_prophet_forecast(source_df: pd.DataFrame, item_filter: Optional[List[str]] = None) -> pd.DataFrame:
     if not PROPHET_AVAILABLE:
         logger.warning("Prophet library not installed. Falling back to linear forecast.")
         return generate_linear_forecast(source_df, settings.ANALYTICS.prophet_forecast_days, item_filter)
 
-    if not isinstance(source_df, pd.DataFrame) or source_df.empty:
-        return pd.DataFrame()
+    if not isinstance(source_df, pd.DataFrame) or source_df.empty: return pd.DataFrame()
 
     df = source_df.copy()
-    if item_filter:
-        df = df[df['item'].isin(item_filter)]
+    if item_filter: df = df[df['item'].isin(item_filter)]
 
     all_forecasts = []
     for item_name, group in df.groupby('item'):
