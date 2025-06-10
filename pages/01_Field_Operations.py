@@ -223,7 +223,6 @@ def main():
             st.image(settings.APP_LOGO, width=100)
         st.header("Dashboard Controls")
 
-        # SME FIX: Added unique `key` arguments to all sidebar widgets to prevent any possibility of a duplicate ID error.
         zone_options = ["All Zones"] + sorted(health_df['zone_id'].dropna().unique())
         selected_zone = st.selectbox("Filter by Zone:", options=zone_options, key="zone_filter")
 
@@ -253,7 +252,6 @@ def main():
         iot_filtered = iot_filtered[iot_filtered['zone_id'] == selected_zone]
     if selected_chw != "All CHWs":
         analysis_df = analysis_df[analysis_df['chw_id'] == selected_chw]
-        # SME FIX: Corrected a typo from forecast_source__df to forecast_source_df
         forecast_source_df = forecast_source_df[forecast_source_df['chw_id'] == selected_chw]
 
     clinic_iot_stream = iot_filtered[iot_filtered['chw_id'].isnull()] if 'chw_id' in iot_filtered.columns else iot_filtered
@@ -277,10 +275,6 @@ def main():
     with tabs[2]:
         render_iot_wearable_tab(clinic_iot_stream, wearable_iot_stream, selected_chw, analysis_df)
 
-# SME FIX: The file had structural errors causing `main()` to be called twice.
-# This single, clean block at the end of the file is the correct way to run the app.
-if __name__ == "__main__":
-    main()
-
+# This single, clean block at the end of the file is the correct and only entry point.
 if __name__ == "__main__":
     main()
