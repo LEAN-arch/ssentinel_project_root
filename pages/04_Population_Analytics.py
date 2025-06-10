@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/04_Population_Analytics.py
-# SME PLATINUM STANDARD - POPULATION ANALYTICS (V6 - DEFINITIVE FIX)
+# SME PLATINUM STANDARD - POPULATION ANALYTICS (V7 - FINAL)
 
 import logging
 from datetime import date, timedelta
@@ -12,10 +12,9 @@ from analytics import apply_ai_models
 from config import settings
 from data_processing.loaders import load_health_records, load_zone_data
 from data_processing.enrichment import enrich_zone_data_with_aggregates
-from data_processing.cached import get_cached_trend
 from data_processing.helpers import convert_to_numeric
 from visualization import (plot_bar_chart, plot_choropleth_map,
-                           plot_donut_chart, plot_line_chart, render_custom_kpi)
+                           plot_donut_chart, render_custom_kpi)
 
 st.set_page_config(page_title="Population Analytics", page_icon="📊", layout="wide")
 logger = logging.getLogger(__name__)
@@ -53,7 +52,7 @@ def get_risk_stratification(df: pd.DataFrame) -> dict:
 
 def main():
     st.title("📊 Population Health Analytics")
-    st.markdown("Explore demographic distributions, epidemiological patterns, and geospatial risk.")
+    st.markdown("Explore demographic distributions, geospatial risk patterns, and population risk stratification.")
     st.divider()
 
     health_df, zone_df = get_data()
@@ -72,9 +71,13 @@ def main():
     df_filtered = health_df[health_df['encounter_date'].dt.date.between(start_date, end_date)]
     zone_df_filtered = zone_df.copy()
     if selected_zone != "All Zones":
-        zone_id = zone_df.loc[zone_df['zone_name'] == selected_zone, 'zone_id'].iloc[0]
-        df_filtered = df_filtered[df_filtered['zone_id'] == zone_id]
-        zone_df_filtered = zone_df[zone_df['zone_name'] == selected_zone]
+        # Ensure zone_id exists and is not null before trying to filter
+        if 'zone_id' in zone_df.columns and 'zone_name' in zone_df.columns:
+            zone_id_series = zone_df.loc[zone_df['zone_name'] == selected_zone, 'zone_id']
+            if not zone_id_series.empty:
+                zone_id = zone_id_series.iloc[0]
+                df_filtered = df_filtered[df_filtered['zone_id'] == zone_id]
+                zone_df_filtered = zone_df[zone_df['zone_id'] == zone_id]
 
     st.subheader("Population Snapshot")
     cols = st.columns(4)
@@ -82,19 +85,14 @@ def main():
     with cols[0]: render_custom_kpi("Unique Patients", unique_patients, "In selected period")
     with cols[1]: render_custom_kpi("Avg. Risk Score", df_filtered.get('ai_risk_score').mean(), "0-100 scale")
     high_risk_count = (df_filtered.get('ai_risk_score', pd.Series(dtype=float)) >= settings.ANALYTICS.risk_score_moderate_threshold).sum()
-    with cols[2]: render_custom_kpi("High-Risk Patients", high_risk_count, f"Score >= {settings.ANALYTICS.risk_score_moderate_threshold}", highlight_status='high-risk')
+    with cols[2]: render_custom_kpi("High-Risk Patients", high_risk_count, f"Score ≥ {settings.ANALYTICS.risk_score_moderate_threshold}", highlight_status='high-risk')
     with cols[3]: render_custom_kpi("Median Patient Age", df_filtered.get('age').median(), "Years")
     st.divider()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 Epidemiology", "🚨 Risk Stratification", "🗺️ Geospatial", "🧑‍🤝‍🧑 Demographics"])
+    # --- SME FIX: Removed the "Epidemiology" tab and its corresponding block ---
+    tab1, tab2, tab3 = st.tabs(["🚨 Risk Stratification", "🗺️ Geospatial Analysis", "🧑‍🤝‍🧑 Demographics"])
 
     with tab1:
-        st.header("Epidemiological Overview")
-        # SME FIX: Use a more robust column ('patient_id') and a more meaningful aggregation ('nunique') for the trend chart.
-        trend = get_cached_trend(df_filtered, value_col='patient_id', date_col='encounter_date', freq='W', agg_func='nunique')
-        st.plotly_chart(plot_line_chart(trend, "Weekly Unique Patients Seen", "Unique Patients"), use_container_width=True)
-
-    with tab2:
         st.header("Population Risk Stratification")
         risk_data = get_risk_stratification(df_filtered)
         pyramid_data = risk_data.get('pyramid_data')
@@ -102,8 +100,10 @@ def main():
             fig = px.funnel(pyramid_data, x='patient_count', y='risk_tier', title="Risk Pyramid")
             fig.update_yaxes(categoryorder="array", categoryarray=['High Risk', 'Moderate Risk', 'Low Risk'])
             st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No data available to generate a risk pyramid for this period.")
 
-    with tab3:
+    with tab2:
         st.header("Geospatial Analysis")
         if 'geometry' not in zone_df_filtered.columns or zone_df_filtered['geometry'].isnull().all():
             st.warning("Geospatial data is unavailable for the selected zone(s).")
@@ -117,7 +117,7 @@ def main():
             fig = plot_choropleth_map(zone_df_filtered, geojson=geojson_data, value_col=color_metric, title="Zonal Health Metrics", hover_name='zone_name', color_continuous_scale="Reds")
             st.plotly_chart(fig, use_container_width=True)
 
-    with tab4:
+    with tab3:
         st.header("Demographic Insights")
         df_unique = df_filtered.drop_duplicates(subset=['patient_id'])
         col1, col2 = st.columns(2)
