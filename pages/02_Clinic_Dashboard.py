@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V10 - FINAL)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V11 - FINAL)
 
 import logging
 from datetime import date, timedelta
@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 # --- Disease Program Definitions ---
-# This centralized dictionary makes the dashboard easily extensible.
 PROGRAM_DEFINITIONS = {
     "Tuberculosis": {"icon": "🫁", "symptom": "cough", "test": "TB Screen"},
     "Malaria": {"icon": "🦟", "symptom": "fever", "test": "Malaria RDT"},
@@ -49,16 +48,14 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
 def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
     """Renders a comprehensive analysis tab for a specific disease program."""
     program_name = program_config['name']
-    st.header(f"{program_config['icon']} {program_name} Program Deep Dive")
+    st.header(f"{program_config['icon']} {program_name} Program Analysis")
     st.markdown(f"Analyze the screening-to-treatment cascade for **{program_name}** to identify bottlenecks and improve patient outcomes.")
     
-    # --- 1. Calculate the Cascade ---
     symptomatic = df[df['patient_reported_symptoms'].str.contains(program_config['symptom'], case=False, na=False)]
     tested = symptomatic[symptomatic['test_type'] == program_config['test']]
     positive = tested[tested['test_result'] == 'Positive']
     linked = positive[positive['referral_status'] == 'Completed']
     
-    # --- 2. Display Cascade Metrics & Funnel Chart ---
     col1, col2 = st.columns([1, 1.5])
     with col1:
         st.subheader("Screening Funnel Metrics")
@@ -67,15 +64,6 @@ def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
         st.metric("Positive Cases Detected", f"{len(positive):,}")
         st.metric("Successfully Linked to Care", f"{len(linked):,}")
 
-        screening_rate = (len(tested) / len(symptomatic) * 100) if len(symptomatic) > 0 else 0
-        positivity_rate = (len(positive) / len(tested) * 100) if len(tested) > 0 else 0
-        linkage_rate = (len(linked) / len(positive) * 100) if len(positive) > 0 else 0
-        
-        st.subheader("Key Program Rates")
-        st.progress(int(screening_rate), text=f"Screening Rate: {screening_rate:.1f}%")
-        st.progress(int(positivity_rate), text=f"Positivity Rate: {positivity_rate:.1f}%")
-        st.progress(int(linkage_rate), text=f"Linkage to Care Rate: {linkage_rate:.1f}%")
-
     with col2:
         funnel_data = pd.DataFrame([
             dict(stage="Symptomatic/At-Risk", count=len(symptomatic)),
@@ -83,7 +71,6 @@ def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
             dict(stage="Positive", count=len(positive)),
             dict(stage="Linked to Care", count=len(linked)),
         ])
-        
         if funnel_data['count'].sum() > 0:
             fig = px.funnel(funnel_data, x='count', y='stage', title=f"Screening & Linkage Funnel: {program_name}")
             fig.update_yaxes(categoryorder="array", categoryarray=["Symptomatic/At-Risk", "Tested", "Positive", "Linked to Care"])
@@ -92,21 +79,27 @@ def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
             st.info(f"No activity recorded for the {program_name} screening program in this period.")
 
 def render_demographics_tab(df: pd.DataFrame):
-    st.header("🧑‍🤝‍🧑 Patient Demographics Analysis")
+    """Renders the patient demographics analysis tab."""
+    st.header("🧑‍🤝‍🧑 Patient Demographics")
     if df.empty:
         st.info("No patient data for demographic analysis."); return
 
     df_unique = df.drop_duplicates(subset=['patient_id'])
     age_bins = [0, 5, 15, 25, 50, 150]
-    age_labels = ['0-4 (Child)', '5-14 (Adolescent)', '15-24 (Youth)', '25-49 (Adult)', '50+ (Senior)']
+    age_labels = ['0-4', '5-14', '15-24', '25-49', '50+']
     df_unique['age_group'] = pd.cut(df_unique['age'], bins=age_bins, labels=age_labels, right=False)
 
     demo_counts = df_unique.groupby(['age_group', 'gender'], observed=False).size().reset_index(name='count')
     
-    fig = plot_bar_chart(demo_counts, x_col='age_group', y_col='count', color='gender', barmode='group', title="Patient Encounters by Age and Gender", x_title="Age Group", y_title="Number of Unique Patients")
+    fig = plot_bar_chart(
+        demo_counts, x_col='age_group', y_col='count', color='gender',
+        barmode='group', title="Patient Encounters by Age and Gender",
+        x_title="Age Group", y_title="Number of Unique Patients"
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 def render_forecasting_tab(df: pd.DataFrame):
+    """Renders the AI-powered forecasting tab."""
     st.header("🔮 AI-Powered Forecasts")
     st.info("These forecasts use historical data to predict future trends, helping with resource and staff planning.")
     
@@ -123,6 +116,23 @@ def render_forecasting_tab(df: pd.DataFrame):
         st.plotly_chart(plot_forecast_chart(encounter_fc, "Forecasted Daily Patient Load", "Patient Encounters"), use_container_width=True)
     with col2:
         st.plotly_chart(plot_forecast_chart(risk_fc, "Forecasted Community Risk Index", "Average Patient Risk Score"), use_container_width=True)
+
+def render_environment_tab(iot_df: pd.DataFrame):
+    """Renders the environmental monitoring tab."""
+    st.header("🌿 Facility Environmental Safety")
+    if iot_df.empty:
+        st.info("No environmental data available for this period.")
+        return
+        
+    env_kpis = get_cached_environmental_kpis(iot_df)
+    render_traffic_light_indicator("Average CO₂ Levels", "HIGH_RISK" if env_kpis.get('avg_co2_ppm', 0) > 1500 else "MODERATE_CONCERN" if env_kpis.get('avg_co2_ppm', 0) > 1000 else "ACCEPTABLE", f"{env_kpis.get('avg_co2_ppm', 0):.0f} PPM")
+    render_traffic_light_indicator("Rooms with High Noise", "HIGH_RISK" if env_kpis.get('rooms_with_high_noise_count', 0) > 0 else "ACCEPTABLE", f"{env_kpis.get('rooms_with_high_noise_count', 0)} rooms")
+    
+    # SME FIX: The plot was missing from the previous combined version. It is now restored.
+    from data_processing.cached import get_cached_trend
+    co2_trend = get_cached_trend(df=iot_df, value_col='avg_co2_ppm', date_col='timestamp', freq='h', agg_func='mean')
+    st.plotly_chart(plot_line_chart(co2_trend, "Hourly Average CO₂ Trend", y_title="CO₂ (PPM)"), use_container_width=True)
+
 
 # --- Main Page Execution ---
 def main():
@@ -165,13 +175,7 @@ def main():
     with tabs[-2]:
         render_forecasting_tab(full_health_df)
     with tabs[-1]:
-        st.header("Facility Environmental Safety")
-        if period_iot_df.empty:
-            st.info("No environmental data available for this period.")
-        else:
-            env_kpis = get_cached_environmental_kpis(period_iot_df)
-            render_traffic_light_indicator("Average CO₂ Levels", "HIGH_RISK" if env_kpis.get('avg_co2_ppm', 0) > 1500 else "MODERATE_CONCERN" if env_kpis.get('avg_co2_ppm', 0) > 1000 else "ACCEPTABLE", f"{env_kpis.get('avg_co2_ppm', 0):.0f} PPM")
-            render_traffic_light_indicator("Rooms with High Noise", "HIGH_RISK" if env_kpis.get('rooms_with_high_noise_count', 0) > 0 else "ACCEPTABLE", f"{env_kpis.get('rooms_with_high_noise_count', 0)} rooms")
+        render_environment_tab(period_iot_df)
 
 if __name__ == "__main__":
     main()
