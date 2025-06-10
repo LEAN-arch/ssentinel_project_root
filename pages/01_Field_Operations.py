@@ -72,11 +72,13 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     return enriched_df, iot_df
 
 # --- UI Rendering Components ---
-def render_program_cascade(df: pd.DataFrame, config: Dict):
+def render_program_cascade(df: pd.DataFrame, config: Dict, key_prefix: str):
     """
     Renders a visual funnel and KPIs for a specific screening program.
     SME EXPANSION: Now includes an AI Risk Stratification chart to show
     the risk profile of the symptomatic cohort, helping prioritize testing.
+    SME FIX: Added `key_prefix` argument to ensure all interactive elements within this
+    repeatedly called function have a unique key.
     """
     symptomatic = df[df['patient_reported_symptoms'].str.contains(config['symptom'], case=False, na=False)]
     tested = symptomatic[symptomatic['test_type'] == config['test']]
@@ -119,7 +121,8 @@ def render_program_cascade(df: pd.DataFrame, config: Dict):
                 height=200,
                 margin=dict(t=40, b=10, l=10, r=10)
             )
-            st.plotly_chart(fig_risk, use_container_width=True)
+            # --- SME FIX: Added a unique key to the plotly_chart call ---
+            st.plotly_chart(fig_risk, use_container_width=True, key=f"risk_profile_chart_{key_prefix}")
         # --- END SME EXPANSION ---
 
     with col2:
@@ -135,7 +138,8 @@ def render_program_cascade(df: pd.DataFrame, config: Dict):
                 template=PLOTLY_TEMPLATE
             )
             fig.update_yaxes(categoryorder="array", categoryarray=["Symptomatic/At-Risk", "Tested", "Positive", "Linked to Care"])
-            st.plotly_chart(fig, use_container_width=True)
+            # --- SME FIX: Also added a unique key to the funnel chart for robustness ---
+            st.plotly_chart(fig, use_container_width=True, key=f"funnel_chart_{key_prefix}")
         else:
             st.info(f"No activity recorded for the {config['name']} program in this period.")
 
@@ -206,7 +210,7 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
         # --- MODULE 3: Patient Load Forecast (Existing, Enhanced) ---
         with st.container(border=True):
             st.subheader("🔮 Patient Load Forecast")
-            forecast_days = st.slider("Forecast Horizon (Days):", 7, 30, 14, 7)
+            forecast_days = st.slider("Forecast Horizon (Days):", 7, 30, 14, 7, key="forecast_slider")
             if len(forecast_df) < 10:
                 st.warning("Not enough historical data for the selected filters to generate a forecast.")
             else:
@@ -219,7 +223,7 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
                 # --- SME EXPANSION MODULE 4: Predictive Supply Chain Management ---
                 st.subheader("📦 Predictive Supply Chain")
                 avg_tests_per_encounter = 0.6  # Assumption: 60% of encounters result in a test
-                current_stock = st.number_input("Current Test Kit Inventory:", min_value=0, value=5000, step=100)
+                current_stock = st.number_input("Current Test Kit Inventory:", min_value=0, value=5000, step=100, key="stock_input")
                 
                 predicted_encounters = forecast['yhat'][-forecast_days:].sum()
                 predicted_tests_needed = int(predicted_encounters * avg_tests_per_encounter)
@@ -411,7 +415,8 @@ def main():
         program_sub_tabs = st.tabs(program_tab_list)
         for i, (program_name, config) in enumerate(PROGRAM_DEFINITIONS.items()):
             with program_sub_tabs[i]:
-                render_program_cascade(analysis_df, {**config, "name": program_name})
+                # --- SME FIX: Pass the unique program_name to the render function to use as a key prefix ---
+                render_program_cascade(analysis_df, {**config, "name": program_name}, key_prefix=program_name)
 
     with tabs[1]:
         render_decision_support_tab(analysis_df, forecast_source_df)
