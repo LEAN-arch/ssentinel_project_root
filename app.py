@@ -1,5 +1,5 @@
 # sentinel_project_root/app.py
-# SME PLATINUM STANDARD - APPLICATION ENTRY POINT (V4)
+# SME PLATINUM STANDARD - APPLICATION ENTRY POINT (V6 - FINAL)
 
 import logging
 import sys
@@ -12,8 +12,6 @@ try:
         sys.path.insert(0, str(_project_root))
 
     import streamlit as st
-    # SME FIX: This import now correctly pulls the `settings` INSTANCE
-    # because config/__init__.py exists and exposes it.
     from config import settings
     from visualization import load_and_inject_css, set_plotly_theme
     
@@ -25,13 +23,22 @@ except ImportError as e:
     sys.exit(1)
 
 # --- Global Configuration ---
-# This block will now work correctly as `settings` is the Pydantic instance.
 logging.basicConfig(
-    level=settings.LOG_LEVEL, format=settings.LOG_FORMAT,
-    datefmt=settings.LOG_DATE_FORMAT, handlers=[logging.StreamHandler(sys.stdout)],
+    level=settings.LOG_LEVEL,
+    format=settings.LOG_FORMAT,
+    datefmt=settings.LOG_DATE_FORMAT,
+    handlers=[logging.StreamHandler(sys.stdout)],
     force=True
 )
 logger = logging.getLogger(__name__)
+
+# --- SME FIX: Tame noisy third-party loggers for a cleaner console ---
+# This sets the log level for these specific libraries to WARNING,
+# so their INFO and DEBUG messages are suppressed.
+logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
+logging.getLogger("prophet").setLevel(logging.WARNING)
+logging.getLogger("matplotlib").setLevel(logging.WARNING)
+
 
 st.set_page_config(
     page_title=f"{settings.APP_NAME} - Overview",
