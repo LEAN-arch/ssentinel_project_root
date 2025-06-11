@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/03_Supply_Chain.py
-# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V17 - FINAL DATAFLOW FIX)
+# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V18 - DEFINITIVE, ROBUST FIX)
 
 import logging
 from datetime import date, timedelta
@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 
+# --- Core Sentinel Imports ---
 from analytics import generate_prophet_forecast
 from config import settings
 from data_processing import load_health_records, load_iot_records
@@ -37,6 +38,7 @@ def analyze_supplier_performance(health_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 # --- Supply Category Definitions ---
+# SME FIX: The source_df is now always 'health_df'. The logic will handle it.
 SUPPLY_CATEGORIES = {
     "Medications": {
         "items": settings.KEY_SUPPLY_ITEMS, "data_col": "medication_prescribed",
@@ -54,18 +56,23 @@ def get_data() -> dict:
     health_df = load_health_records()
     iot_df = load_iot_records()
     
+    # Generate rich mock data if loaded data is insufficient for a full demo
     if health_df.empty or len(health_df['encounter_date'].dt.date.unique()) < 10:
         st.warning("Live data is insufficient for a full demonstration. Generating realistic mock data.", icon="⚠️")
         num_records, end_date = 2000, date.today()
         start_date = end_date - timedelta(days=90)
         date_range = pd.to_datetime(pd.date_range(start_date, end_date))
+        
         health_df = pd.DataFrame({'encounter_date': np.random.choice(date_range, num_records)})
         health_df['medication_prescribed'] = np.random.choice(settings.KEY_SUPPLY_ITEMS + [None], num_records, p=[0.1]*len(settings.KEY_SUPPLY_ITEMS) + [1 - 0.1*len(settings.KEY_SUPPLY_ITEMS)])
         health_df['test_type'] = np.random.choice(list(settings.KEY_TEST_TYPES.keys()) + [None], num_records, p=[0.2]*len(settings.KEY_TEST_TYPES) + [1 - 0.2*len(settings.KEY_TEST_TYPES)])
-
+    
+    # --- SME FIX: Guarantee all necessary columns exist, even if they are empty ---
     for col, gen_stock_col in [('medication_prescribed', 'item_stock_agg_zone'), ('test_type', 'test_kit_stock')]:
-        if col not in health_df.columns: health_df[col] = None
-        if gen_stock_col not in health_df.columns: health_df[gen_stock_col] = health_df[col].apply(lambda x: np.random.randint(500, 2000) if pd.notna(x) else 0)
+        if col not in health_df.columns:
+            health_df[col] = None
+        if gen_stock_col not in health_df.columns:
+            health_df[gen_stock_col] = health_df[col].apply(lambda x: np.random.randint(500, 2000) if pd.notna(x) else 0)
 
     if iot_df.empty or 'fridge_temp_c' not in iot_df.columns:
         start_date, end_date = health_df['encounter_date'].min(), health_df['encounter_date'].max()
@@ -74,10 +81,8 @@ def get_data() -> dict:
         
     return {"health_df": health_df, "iot_df": iot_df}
 
-
 @st.cache_data(ttl=3600, show_spinner="Generating AI-powered supply chain forecasts...")
 def get_supply_forecasts(source_df: pd.DataFrame, category_config: dict, items: list, days: int) -> tuple[pd.DataFrame, dict]:
-    # --- SME FIX: This function now returns a summary DataFrame and a dictionary of detailed forecasts ---
     all_summaries, all_item_forecasts = [], {}
     data_col, stock_col, date_col = category_config["data_col"], category_config["stock_col"], category_config["date_col"]
 
@@ -86,6 +91,7 @@ def get_supply_forecasts(source_df: pd.DataFrame, category_config: dict, items: 
         item_df = item_df[item_df[data_col] == item]
         if item_df.empty: continue
 
+        # On-the-fly calculation of daily consumption
         history = item_df.groupby(pd.Grouper(key=date_col, freq='D')).size().reset_index(name='y').rename(columns={date_col: 'ds'})
         if len(history[history['y'] > 0]) < 2: continue
 
@@ -97,14 +103,13 @@ def get_supply_forecasts(source_df: pd.DataFrame, category_config: dict, items: 
             avg_daily_consumption = future_forecast['yhat'].clip(lower=0).mean()
             days_of_supply = latest_stock / avg_daily_consumption if avg_daily_consumption > 0 else float('inf')
             all_summaries.append({"item": item, "current_stock": latest_stock, "predicted_daily_consumption": avg_daily_consumption, "days_of_supply": days_of_supply})
-            
     return pd.DataFrame(all_summaries), all_item_forecasts
 
 # --- Rendering Components ---
 def render_supply_kpi_dashboard(summary_df: pd.DataFrame):
     st.subheader("Key Item Inventory Status")
     if summary_df.empty:
-        st.warning("Could not generate forecasts. Selected items may have insufficient historical data.")
+        st.warning("Could not generate forecasts. Selected items may have insufficient historical data (at least 2 days of activity are required).")
         return
     cols = st.columns(len(summary_df))
     for i, row in summary_df.sort_values("days_of_supply").iterrows():
@@ -132,7 +137,6 @@ def render_cold_chain_tab(iot_df: pd.DataFrame):
     with col1:
         st.subheader("Current Status")
         fig = go.Figure(go.Indicator(mode="gauge+number", value=current_temp, title={'text': "Fridge Temp (°C)"}, gauge={'axis': {'range': [-5, 15]}, 'bar': {'color': "#2c3e50"}, 'steps': [{'range': [-5, safe_min], 'color': "red"}, {'range': [safe_min, safe_max], 'color': "lightgreen"}, {'range': [safe_max, 15], 'color': "red"}]}))
-        fig.update_layout(height=250, margin=dict(t=40, b=40, l=30, r=30))
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         if safe_min <= current_temp <= safe_max: st.success("✅ **Stable**")
         else: st.error("🚨 **Alert:** Temp. out of range!")
@@ -158,11 +162,13 @@ def main():
         st.header("Dashboard Controls")
         selected_category = st.radio("Select Supply Category:", list(SUPPLY_CATEGORIES.keys()), horizontal=True)
         category_config = SUPPLY_CATEGORIES[selected_category]
+        # SME FIX: The logic to get available items is now simpler and data-driven
         available_items = sorted(health_df[category_config["data_col"]].dropna().unique())
-        selected_items = st.multiselect(f"Select {selected_category} to Forecast:", options=available_items, default=available_items[:3])
+        # Select default items that actually exist in the available list
+        default_selection = [item for item in category_config["items"] if item in available_items]
+        selected_items = st.multiselect(f"Select {selected_category} to Forecast:", options=available_items, default=default_selection[:3])
         forecast_days = st.slider("Days to Forecast Ahead:", 7, 90, 30, 7)
 
-    # --- SME FIX: Call the corrected forecast function and receive two separate outputs ---
     forecast_summary_df, all_item_forecasts = get_supply_forecasts(health_df, category_config, selected_items, forecast_days)
 
     col1, col2 = st.columns(2, gap="large")
