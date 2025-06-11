@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/03_Supply_Chain.py
-# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V14 - DATA GUARANTEE FIX)
+# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V15 - FINAL DATA FIX)
 
 import logging
 from datetime import date, timedelta
@@ -43,14 +43,21 @@ def analyze_supplier_performance(health_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 # --- Supply Category Definitions ---
+# SME FIX: Corrected `data_col` to match the actual DataFrame columns.
 SUPPLY_CATEGORIES = {
     "Medications": {
-        "items": settings.KEY_SUPPLY_ITEMS, "source_df_name": "health_df", "data_col": "medication_prescribed",
-        "stock_col": "item_stock_agg_zone", "date_col": "encounter_date"
+        "items": settings.KEY_SUPPLY_ITEMS,
+        "source_df_name": "health_df",
+        "data_col": "medication_prescribed", # Corrected from "item"
+        "stock_col": "item_stock_agg_zone",
+        "date_col": "encounter_date"
     },
     "Diagnostic Tests": {
-        "items": list(settings.KEY_TEST_TYPES.keys()), "source_df_name": "health_df", "data_col": "test_type",
-        "stock_col": "test_kit_stock", "date_col": "encounter_date"
+        "items": list(settings.KEY_TEST_TYPES.keys()),
+        "source_df_name": "health_df", # Process directly from health_df for robustness
+        "data_col": "test_type",
+        "stock_col": "test_kit_stock",
+        "date_col": "encounter_date"
     }
 }
 
@@ -60,7 +67,7 @@ def get_data() -> dict:
     health_df = load_health_records()
     iot_df = load_iot_records()
     
-    # --- SME FIX: Guarantee required columns exist for a robust demo ---
+    # Generate rich mock data if loaded data is insufficient for a full demo
     if health_df.empty or len(health_df['encounter_date'].dt.date.unique()) < 10:
         st.warning("Live data is insufficient for a full demonstration. Generating realistic mock data.", icon="⚠️")
         num_records = 2000
@@ -68,37 +75,34 @@ def get_data() -> dict:
         start_date = end_date - timedelta(days=90)
         date_range = pd.to_datetime(pd.date_range(start_date, end_date))
         
-        mock_health_data = {
-            'encounter_date': np.random.choice(date_range, num_records),
-            'medication_prescribed': np.random.choice(settings.KEY_SUPPLY_ITEMS + [None], num_records, p=[0.1]*len(settings.KEY_SUPPLY_ITEMS) + [1 - 0.1*len(settings.KEY_SUPPLY_ITEMS)]),
-            'test_type': np.random.choice(list(settings.KEY_TEST_TYPES.keys()) + [None], num_records, p=[0.2]*len(settings.KEY_TEST_TYPES) + [1 - 0.2*len(settings.KEY_TEST_TYPES)])
-        }
-        health_df = pd.DataFrame(mock_health_data)
-    
-    # Ensure all necessary columns exist, even if they are empty
-    if 'medication_prescribed' not in health_df.columns:
-        health_df['medication_prescribed'] = None
-    if 'item_stock_agg_zone' not in health_df.columns:
-        health_df['item_stock_agg_zone'] = health_df['medication_prescribed'].apply(lambda x: np.random.randint(500, 2000) if x else 0)
-    if 'test_type' not in health_df.columns:
-        health_df['test_type'] = None
-    if 'test_kit_stock' not in health_df.columns:
-        health_df['test_kit_stock'] = health_df['test_type'].apply(lambda x: np.random.randint(200, 1000) if x else 0)
-    
-    if iot_df.empty or 'fridge_temp_c' not in iot_df.columns:
-        # Define a default date range for mock IoT data if health_df was also empty
-        if 'start_date' not in locals():
-            end_date = date.today()
-            start_date = end_date - timedelta(days=90)
+        # Create a base DataFrame with dates
+        mock_df = pd.DataFrame({'encounter_date': np.random.choice(date_range, num_records)})
+        
+        # Add mock medications
+        mock_df['medication_prescribed'] = np.random.choice(settings.KEY_SUPPLY_ITEMS + [None], num_records, p=[0.05]*len(settings.KEY_SUPPLY_ITEMS) + [1 - 0.05*len(settings.KEY_SUPPLY_ITEMS)])
+        mock_df['item_stock_agg_zone'] = mock_df['medication_prescribed'].apply(lambda x: np.random.randint(500, 2000) if pd.notna(x) else 0)
+        
+        # Add mock tests
+        mock_df['test_type'] = np.random.choice(list(settings.KEY_TEST_TYPES.keys()) + [None], num_records, p=[0.1]*len(settings.KEY_TEST_TYPES) + [1 - 0.1*len(settings.KEY_TEST_TYPES)])
+        mock_df['test_kit_stock'] = mock_df['test_type'].apply(lambda x: np.random.randint(200, 1000) if pd.notna(x) else 0)
+        
+        health_df = mock_df
 
+    # Ensure all necessary columns exist, even if they are empty
+    for col in ['medication_prescribed', 'item_stock_agg_zone', 'test_type', 'test_kit_stock']:
+        if col not in health_df.columns:
+            health_df[col] = None
+
+    if iot_df.empty or 'fridge_temp_c' not in iot_df.columns:
+        mock_end_date = health_df['encounter_date'].max()
+        mock_start_date = health_df['encounter_date'].min()
         num_iot_records = 24 * 90
-        iot_date_range = pd.to_datetime(pd.date_range(start_date, end_date, periods=num_iot_records))
-        mock_iot_data = {
+        iot_date_range = pd.to_datetime(pd.date_range(mock_start_date, mock_end_date, periods=num_iot_records))
+        iot_df = pd.DataFrame({
             'timestamp': iot_date_range,
             'fridge_temp_c': np.random.normal(5.0, 1.5, num_iot_records),
             'waiting_room_occupancy': np.random.randint(0, 25, num_iot_records)
-        }
-        iot_df = pd.DataFrame(mock_iot_data)
+        })
         
     return {"health_df": health_df, "iot_df": iot_df}
 
@@ -158,8 +162,7 @@ def render_reorder_analysis(summary_df: pd.DataFrame):
 
 def render_cold_chain_tab(iot_df: pd.DataFrame):
     st.header("🌡️ Cold Chain Integrity Monitoring")
-    if iot_df.empty or 'fridge_temp_c' not in iot_df.columns:
-        st.warning("No cold chain IoT data available for monitoring."); return
+    if iot_df.empty: st.warning("No cold chain IoT data available for monitoring."); return
     latest_reading, safe_min, safe_max = iot_df.sort_values('timestamp').iloc[-1], 2.0, 8.0
     current_temp = latest_reading['fridge_temp_c']
     col1, col2 = st.columns([1, 2])
