@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/03_Supply_Chain.py
-# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V13 - DEMO-READY)
+# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V13 - SCOPE FIX)
 
 import logging
 from datetime import date, timedelta
@@ -45,13 +45,11 @@ def analyze_supplier_performance(health_df: pd.DataFrame) -> pd.DataFrame:
 # --- Supply Category Definitions ---
 SUPPLY_CATEGORIES = {
     "Medications": {
-        "items": settings.KEY_SUPPLY_ITEMS,
-        "source_df_name": "health_df", "data_col": "medication_prescribed",
+        "items": settings.KEY_SUPPLY_ITEMS, "source_df_name": "health_df", "data_col": "medication_prescribed",
         "stock_col": "item_stock_agg_zone", "date_col": "encounter_date"
     },
     "Diagnostic Tests": {
-        "items": list(settings.KEY_TEST_TYPES.keys()),
-        "source_df_name": "health_df", "data_col": "test_type",
+        "items": list(settings.KEY_TEST_TYPES.keys()), "source_df_name": "health_df", "data_col": "test_type",
         "stock_col": "test_kit_stock", "date_col": "encounter_date"
     }
 }
@@ -62,13 +60,14 @@ def get_data() -> dict:
     health_df = load_health_records()
     iot_df = load_iot_records()
     
-    # --- SME FIX: Generate rich mock data if loaded data is insufficient for demo ---
+    # Define a default date range to be used ONLY if we generate mock data.
+    mock_end_date = date.today()
+    mock_start_date = mock_end_date - timedelta(days=90)
+    
     if health_df.empty or len(health_df['encounter_date'].dt.date.unique()) < 10:
         st.warning("Live data is insufficient for a full demonstration. Generating realistic mock data.", icon="⚠️")
         num_records = 2000
-        end_date = date.today()
-        start_date = end_date - timedelta(days=90)
-        date_range = pd.to_datetime(pd.date_range(start_date, end_date))
+        date_range = pd.to_datetime(pd.date_range(mock_start_date, mock_end_date))
         
         mock_health_data = {
             'encounter_date': np.random.choice(date_range, num_records),
@@ -80,11 +79,12 @@ def get_data() -> dict:
         health_df['test_kit_stock'] = health_df['test_type'].apply(lambda x: np.random.randint(200, 1000) if x else 0)
     
     if iot_df.empty or 'fridge_temp_c' not in iot_df.columns:
-        num_iot_records = 24 * 90 # 90 days of hourly data
-        iot_date_range = pd.to_datetime(pd.date_range(start_date, end_date, periods=num_iot_records))
+        num_iot_records = 24 * 90 
+        # --- SME FIX: Use the locally defined mock date range ---
+        iot_date_range = pd.to_datetime(pd.date_range(mock_start_date, mock_end_date, periods=num_iot_records))
         mock_iot_data = {
             'timestamp': iot_date_range,
-            'fridge_temp_c': np.random.normal(5.0, 1.5, num_iot_records), # Centered on 5°C
+            'fridge_temp_c': np.random.normal(5.0, 1.5, num_iot_records),
             'waiting_room_occupancy': np.random.randint(0, 25, num_iot_records)
         }
         iot_df = pd.DataFrame(mock_iot_data)
@@ -126,7 +126,7 @@ def get_supply_forecasts(source_df: pd.DataFrame, category_config: dict, items: 
 def render_supply_kpi_dashboard(summary_df: pd.DataFrame):
     st.subheader("Key Item Inventory Status")
     if summary_df.empty:
-        st.warning("Could not generate forecasts for the selected items. They may have insufficient historical consumption data (at least 2 days of activity are required).")
+        st.warning("Could not generate forecasts for the selected items. They may have insufficient historical consumption data.")
         return
     cols = st.columns(len(summary_df))
     for i, row in summary_df.sort_values("days_of_supply").iterrows():
@@ -147,7 +147,8 @@ def render_reorder_analysis(summary_df: pd.DataFrame):
 
 def render_cold_chain_tab(iot_df: pd.DataFrame):
     st.header("🌡️ Cold Chain Integrity Monitoring")
-    if iot_df.empty: st.warning("No cold chain IoT data available for monitoring."); return
+    if iot_df.empty or 'fridge_temp_c' not in iot_df.columns:
+        st.warning("No cold chain IoT data available for monitoring."); return
     latest_reading, safe_min, safe_max = iot_df.sort_values('timestamp').iloc[-1], 2.0, 8.0
     current_temp = latest_reading['fridge_temp_c']
     col1, col2 = st.columns([1, 2])
@@ -180,7 +181,7 @@ def main():
         st.header("Dashboard Controls")
         selected_category = st.radio("Select Supply Category:", list(SUPPLY_CATEGORIES.keys()), horizontal=True)
         category_config = SUPPLY_CATEGORIES[selected_category]
-        source_df_for_list = all_data["health_df"] # Always use health_df for the list
+        source_df_for_list = all_data["health_df"]
         all_items_in_cat = sorted(source_df_for_list[category_config["data_col"]].dropna().unique())
         available_items = [item for item in category_config["items"] if item in all_items_in_cat]
         selected_items = st.multiselect(f"Select {selected_category} to Forecast:", options=available_items, default=available_items[:3])
