@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/03_Supply_Chain.py
-# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V13 - SCOPE FIX)
+# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V14 - DATA GUARANTEE FIX)
 
 import logging
 from datetime import date, timedelta
@@ -60,14 +60,13 @@ def get_data() -> dict:
     health_df = load_health_records()
     iot_df = load_iot_records()
     
-    # Define a default date range to be used ONLY if we generate mock data.
-    mock_end_date = date.today()
-    mock_start_date = mock_end_date - timedelta(days=90)
-    
+    # --- SME FIX: Guarantee required columns exist for a robust demo ---
     if health_df.empty or len(health_df['encounter_date'].dt.date.unique()) < 10:
         st.warning("Live data is insufficient for a full demonstration. Generating realistic mock data.", icon="⚠️")
         num_records = 2000
-        date_range = pd.to_datetime(pd.date_range(mock_start_date, mock_end_date))
+        end_date = date.today()
+        start_date = end_date - timedelta(days=90)
+        date_range = pd.to_datetime(pd.date_range(start_date, end_date))
         
         mock_health_data = {
             'encounter_date': np.random.choice(date_range, num_records),
@@ -75,13 +74,25 @@ def get_data() -> dict:
             'test_type': np.random.choice(list(settings.KEY_TEST_TYPES.keys()) + [None], num_records, p=[0.2]*len(settings.KEY_TEST_TYPES) + [1 - 0.2*len(settings.KEY_TEST_TYPES)])
         }
         health_df = pd.DataFrame(mock_health_data)
+    
+    # Ensure all necessary columns exist, even if they are empty
+    if 'medication_prescribed' not in health_df.columns:
+        health_df['medication_prescribed'] = None
+    if 'item_stock_agg_zone' not in health_df.columns:
         health_df['item_stock_agg_zone'] = health_df['medication_prescribed'].apply(lambda x: np.random.randint(500, 2000) if x else 0)
+    if 'test_type' not in health_df.columns:
+        health_df['test_type'] = None
+    if 'test_kit_stock' not in health_df.columns:
         health_df['test_kit_stock'] = health_df['test_type'].apply(lambda x: np.random.randint(200, 1000) if x else 0)
     
     if iot_df.empty or 'fridge_temp_c' not in iot_df.columns:
-        num_iot_records = 24 * 90 
-        # --- SME FIX: Use the locally defined mock date range ---
-        iot_date_range = pd.to_datetime(pd.date_range(mock_start_date, mock_end_date, periods=num_iot_records))
+        # Define a default date range for mock IoT data if health_df was also empty
+        if 'start_date' not in locals():
+            end_date = date.today()
+            start_date = end_date - timedelta(days=90)
+
+        num_iot_records = 24 * 90
+        iot_date_range = pd.to_datetime(pd.date_range(start_date, end_date, periods=num_iot_records))
         mock_iot_data = {
             'timestamp': iot_date_range,
             'fridge_temp_c': np.random.normal(5.0, 1.5, num_iot_records),
@@ -126,7 +137,7 @@ def get_supply_forecasts(source_df: pd.DataFrame, category_config: dict, items: 
 def render_supply_kpi_dashboard(summary_df: pd.DataFrame):
     st.subheader("Key Item Inventory Status")
     if summary_df.empty:
-        st.warning("Could not generate forecasts for the selected items. They may have insufficient historical consumption data.")
+        st.warning("Could not generate forecasts. Selected items may have insufficient historical data (at least 2 days of activity are required).")
         return
     cols = st.columns(len(summary_df))
     for i, row in summary_df.sort_values("days_of_supply").iterrows():
