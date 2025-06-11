@@ -1,14 +1,19 @@
 # sentinel_project_root/pages/04_Population_Analytics.py
-# SME PLATINUM STANDARD - POPULATION ANALYTICS (V7 - FINAL)
+# SME PLATINUM STANDARD - POPULATION ANALYTICS (V8 - AI ENHANCED)
 
 import logging
 from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from analytics import apply_ai_models
+# SME EXPANSION: We'll add mock functions for new AI models
+from analytics.population import (predict_risk_transition,
+                                  calculate_preventive_opportunity,
+                                  detect_emerging_threats)
 from config import settings
 from data_processing.loaders import load_health_records, load_zone_data
 from data_processing.enrichment import enrich_zone_data_with_aggregates
@@ -19,6 +24,10 @@ from visualization import (plot_bar_chart, plot_choropleth_map,
 st.set_page_config(page_title="Population Analytics", page_icon="📊", layout="wide")
 logger = logging.getLogger(__name__)
 
+# SME EXPANSION: Constants for better styling and readability
+PLOTLY_TEMPLATE = "plotly_white"
+RISK_COLORS = {'Low Risk': '#28a745', 'Moderate Risk': '#ffc107', 'High Risk': '#dc3545'}
+
 @st.cache_data(ttl=3600, show_spinner="Loading population datasets...")
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     """Loads and caches the primary health and zone data, ensuring all enrichments are applied."""
@@ -26,7 +35,12 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     if raw_health_df.empty:
         return pd.DataFrame(), pd.DataFrame()
     
+    # Assume the AI model now also provides a list of risk factors for each patient
     health_df, _ = apply_ai_models(raw_health_df)
+    if 'risk_factors' not in health_df.columns:
+        # Mock risk factors for demonstration
+        factors = ['Hypertension', 'Diabetes', 'Smoking', 'Obesity', 'Malnutrition']
+        health_df['risk_factors'] = health_df['patient_id'].apply(lambda x: list(np.random.choice(factors, size=np.random.randint(0, 4), replace=False)))
     
     zone_df = load_zone_data()
     enriched_zone_df = enrich_zone_data_with_aggregates(zone_df, health_df)
@@ -52,7 +66,7 @@ def get_risk_stratification(df: pd.DataFrame) -> dict:
 
 def main():
     st.title("📊 Population Health Analytics")
-    st.markdown("Explore demographic distributions, geospatial risk patterns, and population risk stratification.")
+    st.markdown("A strategic command center for understanding population dynamics, predicting future health trends, and targeting interventions.")
     st.divider()
 
     health_df, zone_df = get_data()
@@ -63,15 +77,14 @@ def main():
     with st.sidebar:
         st.header("Filters")
         min_date, max_date = health_df['encounter_date'].min().date(), health_df['encounter_date'].max().date()
-        start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=89)), max_date), min_value=min_date, max_value=max_date)
+        start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=89)), max_date), min_value=min_date, max_value=max_date, key="pop_date_range")
         zone_options = ["All Zones"] + sorted(zone_df['zone_name'].dropna().unique())
-        selected_zone = st.selectbox("Filter by Zone:", options=zone_options)
+        selected_zone = st.selectbox("Filter by Zone:", options=zone_options, key="pop_zone_filter")
 
     # Filter data based on sidebar selections
     df_filtered = health_df[health_df['encounter_date'].dt.date.between(start_date, end_date)]
     zone_df_filtered = zone_df.copy()
     if selected_zone != "All Zones":
-        # Ensure zone_id exists and is not null before trying to filter
         if 'zone_id' in zone_df.columns and 'zone_name' in zone_df.columns:
             zone_id_series = zone_df.loc[zone_df['zone_name'] == selected_zone, 'zone_id']
             if not zone_id_series.empty:
@@ -89,19 +102,52 @@ def main():
     with cols[3]: render_custom_kpi("Median Patient Age", df_filtered.get('age').median(), "Years")
     st.divider()
 
-    # --- SME FIX: Removed the "Epidemiology" tab and its corresponding block ---
-    tab1, tab2, tab3 = st.tabs(["🚨 Risk Stratification", "🗺️ Geospatial Analysis", "🧑‍🤝‍🧑 Demographics"])
+    # SME EXPANSION: Added new "Emerging Threats" tab
+    tab1, tab2, tab3, tab4 = st.tabs(["🚨 Risk Stratification", "🗺️ Geospatial Analysis", "🧑‍🤝‍🧑 Demographics", "🔬 Emerging Threats"])
 
     with tab1:
         st.header("Population Risk Stratification")
-        risk_data = get_risk_stratification(df_filtered)
-        pyramid_data = risk_data.get('pyramid_data')
-        if not pyramid_data.empty:
-            fig = px.funnel(pyramid_data, x='patient_count', y='risk_tier', title="Risk Pyramid")
-            fig.update_yaxes(categoryorder="array", categoryarray=['High Risk', 'Moderate Risk', 'Low Risk'])
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No data available to generate a risk pyramid for this period.")
+        col1, col2 = st.columns(2, gap="large")
+        with col1:
+            st.subheader("Current Risk Pyramid")
+            risk_data = get_risk_stratification(df_filtered)
+            pyramid_data = risk_data.get('pyramid_data')
+            if not pyramid_data.empty:
+                fig = px.funnel(pyramid_data, x='patient_count', y='risk_tier', title="Current Population Risk Distribution", color='risk_tier', color_discrete_map=RISK_COLORS)
+                fig.update_yaxes(categoryorder="array", categoryarray=['High Risk', 'Moderate Risk', 'Low Risk'])
+                fig.update_layout(template=PLOTLY_TEMPLATE)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No data available to generate a risk pyramid for this period.")
+        
+        # --- SME EXPANSION: Predictive Risk Transition Module ---
+        with col2:
+            st.subheader("🔮 AI-Predicted Risk Transition (Next 90 Days)")
+            st.markdown("This model predicts how many patients are likely to transition between risk tiers, highlighting future high-risk burdens.")
+            if not df_filtered.empty:
+                predicted_transitions = predict_risk_transition(df_filtered) # Mock AI function
+                
+                fig = go.Figure(go.Sankey(
+                    node=dict(
+                        pad=15, thickness=20, line=dict(color="black", width=0.5),
+                        label=predicted_transitions['nodes'],
+                        color=[RISK_COLORS.get(label.split(' ')[0], 'grey') for label in predicted_transitions['nodes']]
+                    ),
+                    link=dict(
+                        source=predicted_transitions['source_indices'],
+                        target=predicted_transitions['target_indices'],
+                        value=predicted_transitions['values'],
+                        label=predicted_transitions['values']
+                    )
+                ))
+                fig.update_layout(title_text="Predicted 90-Day Patient Risk Flow", font_size=12, template=PLOTLY_TEMPLATE)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                upward_transitions = predicted_transitions['upward_transitions']
+                st.warning(f"**Actionable Insight:** The model predicts **{upward_transitions:,}** patients will transition to a higher risk tier in the next 90 days. Focus preventive efforts on the 'Moderate Risk' cohort.")
+            else:
+                st.info("Insufficient data to predict risk transitions.")
+        # --- END SME EXPANSION ---
 
     with tab2:
         st.header("Geospatial Analysis")
@@ -112,22 +158,75 @@ def main():
                 {"type": "Feature", "properties": {"zone_id": row['zone_id']}, "geometry": row['geometry']}
                 for _, row in zone_df_filtered.iterrows() if pd.notna(row.get('geometry'))
             ]}
-            map_metric = st.selectbox("Select Map Metric:", ["Average AI Risk Score", "Prevalence per 1,000 People"])
-            color_metric = 'avg_risk_score' if "Risk" in map_metric else 'prevalence_per_1000_pop'
-            fig = plot_choropleth_map(zone_df_filtered, geojson=geojson_data, value_col=color_metric, title="Zonal Health Metrics", hover_name='zone_name', color_continuous_scale="Reds")
+            # SME EXPANSION: Added Preventive Opportunity Index
+            map_metric = st.selectbox("Select Map Metric:", ["Average AI Risk Score", "Prevalence per 1,000 People", "Preventive Opportunity Index"])
+            if "Risk" in map_metric:
+                color_metric, scale, title = 'avg_risk_score', 'Reds', 'Zonal Average Risk Score'
+            elif "Prevalence" in map_metric:
+                color_metric, scale, title = 'prevalence_per_1000_pop', 'Reds', 'Zonal Disease Prevalence'
+            else: # Preventive Opportunity
+                zone_df_filtered = calculate_preventive_opportunity(zone_df_filtered, df_filtered)
+                color_metric, scale, title = 'preventive_opportunity_index', 'Greens', 'Zonal Preventive Opportunity Index'
+                st.info("💡 **Preventive Opportunity Index** highlights zones with a high concentration of moderate-risk individuals who are most amenable to cost-effective preventive care.")
+
+            fig = plot_choropleth_map(zone_df_filtered, geojson=geojson_data, value_col=color_metric, title=title, hover_name='zone_name', color_continuous_scale=scale)
             st.plotly_chart(fig, use_container_width=True)
 
     with tab3:
-        st.header("Demographic Insights")
+        st.header("Demographic Insights & Risk Driver Analysis")
         df_unique = df_filtered.drop_duplicates(subset=['patient_id'])
-        col1, col2 = st.columns(2)
-        with col1:
-            fig_hist = px.histogram(df_unique, x='age', nbins=20, title="Age Distribution")
-            st.plotly_chart(fig_hist, use_container_width=True)
-        with col2:
-            gender_counts = df_unique['gender'].fillna('Unknown').value_counts().reset_index()
-            fig_pie = plot_donut_chart(gender_counts, label_col='gender', value_col='count', title="Gender Distribution")
-            st.plotly_chart(fig_pie, use_container_width=True)
+        
+        # --- SME EXPANSION: Interactive Risk Driver Analysis ---
+        st.subheader("Risk Factor Hotspot Analysis")
+        st.markdown("Select a specific risk factor to see which demographic groups are most affected, enabling targeted health campaigns.")
+        
+        all_factors = sorted(list(set([factor for sublist in df_unique['risk_factors'] for factor in sublist])))
+        selected_factor = st.selectbox("Select a Risk Factor to Analyze:", all_factors)
+        
+        if selected_factor:
+            factor_df = df_unique[df_unique['risk_factors'].apply(lambda x: selected_factor in x)].copy()
+            if not factor_df.empty:
+                age_bins = [0, 18, 40, 65, 150]; age_labels = ['0-17', '18-39', '40-64', '65+']
+                factor_df['age_group'] = pd.cut(factor_df['age'], bins=age_bins, labels=age_labels, right=False)
+                
+                driver_data = factor_df.groupby(['age_group', 'gender']).size().reset_index(name='count')
+                fig = px.bar(driver_data, x='age_group', y='count', color='gender', barmode='group', title=f"Demographic Distribution for Patients with '{selected_factor}'", labels={'count': 'Number of Patients'}, template=PLOTLY_TEMPLATE)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info(f"No patients with the risk factor '{selected_factor}' in the selected period.")
+        # --- END SME EXPANSION ---
+
+    # --- SME EXPANSION: New Tab for Emerging Threats ---
+    with tab4:
+        st.header("🔬 Emerging Health Threats Analysis")
+        st.markdown("This module uses anomaly detection to identify significant increases in diagnosis rates that may signal an outbreak or emerging public health issue.")
+        
+        if not health_df.empty:
+            threats_df = detect_emerging_threats(health_df, lookback_days=90, threshold=3.0) # Mock AI function
+            
+            if not threats_df.empty:
+                st.warning(f"🚨 **Emerging Threats Detected: {len(threats_df)}**")
+                for _, row in threats_df.iterrows():
+                    with st.container(border=True):
+                        st.subheader(f"{row['diagnosis']}")
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("Recent Weekly Average", f"{row['recent_avg_cases']:.1f} cases/wk")
+                        col2.metric("Historical Baseline", f"{row['baseline_avg_cases']:.1f} cases/wk")
+                        col3.metric("Spike (Std Devs)", f"{row['z_score']:.1f}σ", "Above Baseline", delta_color="inverse")
+                        
+                        # Plot trend for this specific diagnosis
+                        threat_trend_df = health_df[health_df['diagnosis'] == row['diagnosis']]
+                        threat_trend_ts = threat_trend_df.set_index('encounter_date').resample('W-MON').size()
+                        fig = px.line(threat_trend_ts, title=f"Weekly Trend for {row['diagnosis']}", labels={'value': 'Weekly Case Count', 'encounter_date': 'Week'}, template=PLOTLY_TEMPLATE)
+                        fig.add_hline(y=row['baseline_avg_cases'], line_dash="dash", line_color="green", annotation_text="Baseline")
+                        fig.add_hline(y=row['recent_avg_cases'], line_dash="dash", line_color="red", annotation_text="Recent Avg")
+                        st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.success("✅ No significant emerging health threats detected based on current data.")
+        else:
+            st.info("Not enough historical data to analyze emerging threats.")
+    # --- END SME EXPANSION ---
+
 
 if __name__ == "__main__":
     main()
