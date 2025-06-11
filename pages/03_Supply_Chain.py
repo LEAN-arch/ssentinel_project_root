@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/03_Supply_Chain.py
-# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V9 - DATA PIPELINE FIXED)
+# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V10 - FINAL STRUCTURE FIX)
 
 import logging
 from datetime import timedelta
@@ -33,14 +33,14 @@ SUPPLY_CATEGORIES = {
     },
     "Diagnostic Tests": {
         "items": list(settings.KEY_TEST_TYPES.keys()),
-        "source_df_name": "health_df", # We will process this directly from health_df now
+        "source_df_name": "health_df",
         "data_col": "test_type",
         "stock_col": "test_kit_stock",
         "date_col": "encounter_date"
     }
 }
 
-# --- Mock AI Functions (Unchanged) ---
+# --- Mock AI Functions ---
 def calculate_reorder_points(summary_df: pd.DataFrame) -> pd.DataFrame:
     if summary_df.empty: return pd.DataFrame()
     avg_lead_time, service_level_z = 14, 1.645
@@ -70,7 +70,6 @@ def get_data() -> dict:
     health_df = load_health_records()
     iot_df = load_iot_records()
     
-    # Mock data for demonstration if columns are missing
     if not health_df.empty:
         if 'medication_prescribed' not in health_df.columns:
             health_df['medication_prescribed'] = np.random.choice(settings.KEY_SUPPLY_ITEMS + [None], size=len(health_df), p=[0.1]*len(settings.KEY_SUPPLY_ITEMS) + [1 - 0.1*len(settings.KEY_SUPPLY_ITEMS)])
@@ -81,36 +80,26 @@ def get_data() -> dict:
     
     return {"health_df": health_df, "iot_df": iot_df}
 
-
-# --- SME FIX: This function now correctly processes consumption data for ANY category ---
 @st.cache_data(ttl=3600, show_spinner="Generating AI-powered supply chain forecasts...")
 def get_supply_forecasts(source_df: pd.DataFrame, category_config: dict, items: list, days: int) -> pd.DataFrame:
-    """Generates consumption forecasts and calculates Days of Supply (DoS)."""
     all_forecasts = []
     data_col, stock_col, date_col = category_config["data_col"], category_config["stock_col"], category_config["date_col"]
 
     for item in items:
-        # 1. Filter the source dataframe for the specific item
         item_df = source_df.dropna(subset=[data_col])
         item_df = item_df[item_df[data_col] == item]
         
         if not item_df.empty:
-            # 2. Create a clean daily time series of consumption
             history = item_df.groupby(pd.Grouper(key=date_col, freq='D')).size().reset_index(name='y')
             history = history.rename(columns={date_col: 'ds'})
 
-            # Ensure we have enough data points for Prophet
             if len(history[history['y'] > 0]) < 2:
-                continue # Skip items with insufficient data
+                continue
 
-            # 3. Generate forecast
             forecast = generate_prophet_forecast(history, forecast_days=days)
             
             if 'yhat' in forecast.columns:
-                # 4. Get the most recent stock level for this item
                 latest_stock = item_df.sort_values(by=date_col, ascending=False).iloc[0][stock_col]
-                
-                # 5. Calculate Days of Supply
                 future_forecast = forecast[forecast['ds'] > history['ds'].max()].copy()
                 avg_daily_consumption = future_forecast['yhat'].clip(lower=0).mean()
                 days_of_supply = latest_stock / avg_daily_consumption if avg_daily_consumption > 0 else float('inf')
@@ -124,7 +113,7 @@ def get_supply_forecasts(source_df: pd.DataFrame, category_config: dict, items: 
 
     return pd.DataFrame(all_forecasts) if all_forecasts else pd.DataFrame()
 
-# --- Rendering Components (Unchanged) ---
+# --- Rendering Components ---
 def render_supply_kpi_dashboard(summary_df: pd.DataFrame):
     st.header("📦 AI-Powered Inventory Status")
     st.markdown("At-a-glance view of current stock levels and predicted days of supply remaining.")
@@ -139,15 +128,9 @@ def render_supply_kpi_dashboard(summary_df: pd.DataFrame):
     for i, row in sorted_df.iterrows():
         with cols[i]:
             dos = row['days_of_supply']
-            if dos <= 7:
-                st.error(f"**{row['item']}**")
-                color = "#dc3545"
-            elif dos <= 21:
-                st.warning(f"**{row['item']}**")
-                color = "#ffc107"
-            else:
-                st.success(f"**{row['item']}**")
-                color = "#28a745"
+            if dos <= 7: st.error(f"**{row['item']}**"); color = "#dc3545"
+            elif dos <= 21: st.warning(f"**{row['item']}**"); color = "#ffc107"
+            else: st.success(f"**{row['item']}**"); color = "#28a745"
 
             fig = go.Figure(go.Indicator(
                 mode = "number", value = dos if dos != float('inf') else 999,
@@ -227,25 +210,27 @@ def main():
     if health_df.empty:
         st.error("No health data available. Dashboard cannot be rendered."); st.stop()
 
+    # --- SME FIX: Define all sidebar widgets *before* creating the tabs ---
+    with st.sidebar:
+        st.header("Dashboard Controls")
+        selected_category = st.radio("Select Supply Category:", list(SUPPLY_CATEGORIES.keys()), horizontal=True, key="supply_cat_radio")
+        category_config = SUPPLY_CATEGORIES[selected_category]
+        
+        source_df_for_list = all_data[category_config["source_df_name"]]
+        if not source_df_for_list.empty:
+            all_items_in_cat = sorted(source_df_for_list[category_config["data_col"]].dropna().unique())
+            default_items = [item for item in category_config["items"] if item in all_items_in_cat]
+            selected_items = st.multiselect(f"Select {selected_category} to Forecast:", options=all_items_in_cat, default=default_items[:3])
+        else:
+            selected_items = []
+            st.warning(f"No consumption data for {selected_category}.")
+        
+        forecast_days = st.slider("Days to Forecast Ahead:", 7, 90, 30, 7, key="main_forecast_slider")
+
+    # --- Now, create the tabs ---
     tab1, tab2, tab3 = st.tabs(["**📈 Supply Forecast**", "**🌡️ Cold Chain**", "**🚚 Supplier Performance**"])
 
     with tab1:
-        with st.sidebar:
-            st.header("Forecast Controls")
-            selected_category = st.radio("Select Supply Category:", list(SUPPLY_CATEGORIES.keys()), horizontal=True, key="supply_cat_radio")
-            category_config = SUPPLY_CATEGORIES[selected_category]
-            
-            source_df_for_list = all_data[category_config["source_df_name"]]
-            if not source_df_for_list.empty:
-                all_items_in_cat = sorted(source_df_for_list[category_config["data_col"]].dropna().unique())
-                default_items = [item for item in category_config["items"] if item in all_items_in_cat]
-                selected_items = st.multiselect(f"Select {selected_category} to Forecast:", options=all_items_in_cat, default=default_items[:3])
-            else:
-                selected_items = []
-                st.warning(f"No consumption data for {selected_category}.")
-            
-            forecast_days = st.slider("Days to Forecast Ahead:", 7, 90, 30, 7, key="main_forecast_slider")
-        
         if not selected_items:
             st.info(f"Select one or more {selected_category.lower()} from the sidebar to generate a forecast.")
         else:
@@ -276,10 +261,6 @@ def main():
             )
         else:
             st.info("Not enough procurement data to analyze supplier performance.")
-
-
-if __name__ == "__main__":
-    main()
 
 
 if __name__ == "__main__":
