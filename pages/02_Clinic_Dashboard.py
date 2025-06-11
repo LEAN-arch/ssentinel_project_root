@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V21 - VISUALIZATION ENHANCED)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V21 - VISUALIZATION ENHANCED AND FIXED)
 
 import logging
 from datetime import date, timedelta
@@ -28,6 +28,14 @@ logger = logging.getLogger(__name__)
 PLOTLY_TEMPLATE = "plotly_white"
 GENDER_COLORS = {"Female": "#E1396C", "Male": "#1f77b4", "Unknown": "#7f7f7f"}
 RISK_COLORS = {'Low Risk': '#28a745', 'Medium Risk': '#ffc107', 'High Risk': '#dc3545'}
+
+# --- SME FIX: Restore the missing PROGRAM_DEFINITIONS dictionary ---
+PROGRAM_DEFINITIONS = {
+    "Tuberculosis": {"icon": "🫁", "symptom": "cough", "test": "TB Screen"},
+    "Malaria": {"icon": "🦟", "symptom": "fever", "test": "Malaria RDT"},
+    "HIV": {"icon": "🎗️", "symptom": "fatigue", "test": "HIV Test"},
+    "Anemia": {"icon": "🩸", "symptom": "fatigue", "test": "CBC"},
+}
 
 def predict_diagnosis_hotspots(df: pd.DataFrame) -> pd.DataFrame:
     """MOCK AI FUNCTION: Predicts the case counts for the next week."""
@@ -86,7 +94,6 @@ def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: dat
         heatmap_data = df_top.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'diagnosis']).size().unstack(fill_value=0)
         if not heatmap_data.empty:
             heatmap_data.index = heatmap_data.index.strftime('%d-%b-%Y')
-            # --- SME VISUALIZATION UPGRADE: Heatmap Polish ---
             fig = px.imshow(heatmap_data.T, text_auto=True, aspect="auto",
                             color_continuous_scale=px.colors.sequential.Blues,
                             labels=dict(x="Week", y="Diagnosis", color="Cases"),
@@ -105,7 +112,6 @@ def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: dat
             comparison_df = pd.merge(last_week_actual.reset_index(), predicted_trends, on='diagnosis', how='outer').fillna(0)
             comparison_df.columns = ['Diagnosis', 'Last Week Actual', 'Predicted Next Week']
             
-            # --- SME VISUALIZATION UPGRADE: Comparison Bar Chart Polish ---
             fig = go.Figure()
             fig.add_trace(go.Bar(name='Last Week Actual', x=comparison_df['Diagnosis'], y=comparison_df['Last Week Actual'], marker_color='#6c757d', text=comparison_df['Last Week Actual'], textposition='auto'))
             fig.add_trace(go.Bar(name='Predicted Next Week', x=comparison_df['Diagnosis'], y=comparison_df['Predicted Next Week'], marker_color='#007bff', text=comparison_df['Predicted Next Week'], textposition='auto'))
@@ -147,7 +153,6 @@ def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
             untested['risk_group'] = pd.cut(untested['ai_risk_score'], bins=risk_bins, labels=risk_labels)
             risk_dist = untested['risk_group'].value_counts().reindex(risk_labels).fillna(0)
             
-            # --- SME VISUALIZATION UPGRADE: Donut Chart Polish ---
             fig_donut = go.Figure(data=[go.Pie(labels=risk_dist.index, values=risk_dist.values, hole=.6, marker_colors=[RISK_COLORS[label] for label in risk_dist.index], hoverinfo="label+percent", textinfo='value', textfont_size=16)])
             fig_donut.update_layout(
                 title_text="Who Are We Missing?<br><sup>Risk Profile of Untested Cohort</sup>",
@@ -159,20 +164,16 @@ def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
             st.caption("Actionability: Prioritize outreach to the high-risk symptomatic patients who have not yet been tested.")
 
     with col2:
-        # --- SME VISUALIZATION UPGRADE: Funnel Chart Polish ---
         funnel_data = pd.DataFrame([dict(stage="Symptomatic/At-Risk", count=len(symptomatic)), dict(stage="Tested", count=len(tested)), dict(stage="Positive", count=len(positive)), dict(stage="Linked to Care", count=len(linked))])
         if funnel_data['count'].sum() > 0:
             fig = go.Figure(go.Funnel(
-                y = funnel_data['stage'],
-                x = funnel_data['count'],
-                textposition = "inside",
-                textinfo = "value+percent initial",
+                y = funnel_data['stage'], x = funnel_data['count'],
+                textposition = "inside", textinfo = "value+percent initial",
                 marker = {"color": ["#007bff", "#17a2b8", "#ffc107", "#28a745"]}
             ))
             fig.update_layout(
                 title_text=f"Screening & Linkage Funnel: {program_name}",
-                template=PLOTLY_TEMPLATE,
-                title_x=0.5
+                template=PLOTLY_TEMPLATE, title_x=0.5
             )
             st.plotly_chart(fig, use_container_width=True, key=f"funnel_chart_{program_name}")
         else: 
@@ -208,7 +209,6 @@ def render_demographics_tab(df: pd.DataFrame):
         st.markdown("This treemap visualizes which demographic segments make up the largest portion of the high-risk patient cohort, guiding targeted intervention strategies.")
         high_risk_df = df_unique[df_unique['ai_risk_score'] >= settings.ANALYTICS.risk_score_moderate_threshold]
         if not high_risk_df.empty:
-            # --- SME VISUALIZATION UPGRADE: Treemap Polish ---
             fig = px.treemap(
                 high_risk_df, path=[px.Constant("All High-Risk Patients"), 'gender', 'age_group'],
                 title="Which Demographic Segments are Most At-Risk?",
@@ -252,7 +252,6 @@ def render_forecasting_tab(df: pd.DataFrame):
             capacity_fte = st.number_input("Current Available Clinical FTE:", min_value=1.0, value=5.0, step=0.5, key="capacity_fte")
             utilization = (required_fte / capacity_fte * 100) if capacity_fte > 0 else 0
             
-            # --- SME VISUALIZATION UPGRADE: Gauge Polish ---
             fig_gauge = go.Figure(go.Indicator(
                 mode = "gauge+number", value = utilization,
                 title = {'text': "Staff Utilization (%)", 'font': {'size': 20}},
@@ -297,7 +296,6 @@ def render_efficiency_tab(df: pd.DataFrame):
     col1, col2 = st.columns(2, gap="large")
     with col1:
         st.subheader("How long are patients waiting?")
-        # --- SME VISUALIZATION UPGRADE: Histogram Polish ---
         fig_hist = px.histogram(df, x="patient_wait_time", nbins=20, title="Distribution of Patient Wait Times", labels={'patient_wait_time': 'Wait Time (minutes)'}, template=PLOTLY_TEMPLATE, marginal="box")
         fig_hist.update_traces(marker_color='#007bff', opacity=0.7)
         fig_hist.add_vline(x=avg_wait_time, line_dash="dash", line_color="red", annotation_text=f"Avg: {avg_wait_time:.1f} min")
@@ -306,7 +304,6 @@ def render_efficiency_tab(df: pd.DataFrame):
 
     with col2:
         st.subheader("Do higher-risk patients take longer?")
-        # --- SME VISUALIZATION UPGRADE: Scatter Plot Polish ---
         fig_scatter = px.scatter(
             df, x="consultation_duration", y="ai_risk_score",
             title="Consultation Time vs. Patient AI Risk",
