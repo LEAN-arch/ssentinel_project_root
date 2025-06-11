@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/01_Field_Operations.py
-# FINAL, SELF-CONTAINED, AND CORRECTED VERSION
+# FINAL, SELF-CONTAINED, AND VISUALIZATION-ENHANCED VERSION
 
 import logging
 from datetime import date, timedelta
@@ -12,7 +12,6 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # --- Core Sentinel Imports ---
-# We will create our own plotting function internally to avoid dependency issues.
 from analytics import apply_ai_models, generate_chw_alerts, generate_prophet_forecast
 from config import settings
 from data_processing import load_health_records, load_iot_records
@@ -32,11 +31,11 @@ PROGRAM_DEFINITIONS = {
     "Anemia & NTDs": {"icon": "🩸", "symptom": "fatigue|weakness", "test": "CBC"},
 }
 
-# --- AI/ML & Visualization Constants ---
+# --- SME VISUALIZATION UPGRADE: Constants for professional, consistent styling ---
 PLOTLY_TEMPLATE = "plotly_white"
 RISK_BINS = [-np.inf, 0.4, 0.7, np.inf]
 RISK_LABELS = ["Low Risk", "Medium Risk", "High Risk"]
-RISK_COLOR_MAP = {"Low Risk": "#2ECC71", "Medium Risk": "#F39C12", "High Risk": "#E74C3C"}
+RISK_COLOR_MAP = {"Low Risk": "#28a745", "Medium Risk": "#ffc107", "High Risk": "#dc3545"}
 
 
 # --- Data Loading & Caching ---
@@ -56,11 +55,11 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
         enriched_df['risk_category'] = "Low Risk"
     return enriched_df, iot_df
 
-# --- SME FIX: Internalized Plotting and Fallback Model ---
+# --- SME VISUALIZATION UPGRADE: Internalized plotting function with enhanced styling ---
 def _plot_forecast_chart_internal(df: pd.DataFrame, title: str, y_title: str) -> go.Figure:
-    """Internal plotting function guaranteed to use correct column names."""
+    """Internal plotting function with enhanced styling for consistency."""
     fig = go.Figure()
-    # Use standard Prophet column names: 'ds', 'y', 'yhat', 'yhat_lower', 'yhat_upper'
+    # Uncertainty band
     if "yhat_lower" in df.columns and "yhat_upper" in df.columns:
         fig.add_trace(go.Scatter(
             x=df["ds"].tolist() + df["ds"].tolist()[::-1],
@@ -69,17 +68,24 @@ def _plot_forecast_chart_internal(df: pd.DataFrame, title: str, y_title: str) ->
             line=dict(color="rgba(255,255,255,0)"),
             hoverinfo="none", name="Uncertainty"
         ))
+    # Historical data points
     if "y" in df.columns:
         fig.add_trace(go.Scatter(
             x=df["ds"], y=df["y"], mode="markers",
-            marker=dict(color="#343A40"), name="Historical"
+            marker=dict(color="#343A40", size=5, opacity=0.7), name="Historical"
         ))
+    # Forecast line
     if "yhat" in df.columns:
         fig.add_trace(go.Scatter(
             x=df["ds"], y=df["yhat"], mode="lines",
-            line=dict(color="#007BFF"), name="Forecast"
+            line=dict(color="#007BFF", width=3), name="Forecast"
         ))
-    fig.update_layout(title=title, xaxis_title="Date", yaxis_title=y_title, template=PLOTLY_TEMPLATE)
+    fig.update_layout(
+        title=dict(text=title, x=0.5),
+        xaxis_title="Date", yaxis_title=y_title,
+        template=PLOTLY_TEMPLATE,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
     return fig
 
 def generate_moving_average_forecast(df: pd.DataFrame, days_to_forecast: int, window: int) -> pd.DataFrame:
@@ -112,16 +118,36 @@ def render_program_cascade(df: pd.DataFrame, config: Dict, key_prefix: str):
         if not symptomatic.empty and 'risk_category' in symptomatic.columns:
             st.subheader("AI Risk Profile of Symptomatic Cohort")
             risk_distribution = symptomatic['risk_category'].value_counts().reindex(RISK_LABELS).fillna(0)
+            
+            # --- SME VISUALIZATION UPGRADE: Stacked Bar Polish ---
             fig_risk = go.Figure()
             for risk_level, color in RISK_COLOR_MAP.items():
-                fig_risk.add_trace(go.Bar(x=[risk_distribution.get(risk_level, 0)], y=['Symptomatic'], name=risk_level, orientation='h', marker_color=color))
-            fig_risk.update_layout(barmode='stack', title_text="Actionability: Focus testing on high-risk individuals", title_x=0.5, xaxis_title="Patient Count", yaxis_title="", legend_title="AI Risk Level", template=PLOTLY_TEMPLATE, height=200, margin=dict(t=40, b=10, l=10, r=10))
+                fig_risk.add_trace(go.Bar(
+                    x=[risk_distribution.get(risk_level, 0)], y=['Symptomatic'],
+                    name=risk_level, orientation='h', marker_color=color,
+                    text=risk_distribution.get(risk_level, 0), textposition='inside'
+                ))
+            fig_risk.update_layout(
+                barmode='stack', title_text="Actionability: Who to Test First?", title_x=0.5,
+                xaxis=dict(visible=False), yaxis=dict(visible=False),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                template=PLOTLY_TEMPLATE, height=150, margin=dict(t=50, b=10, l=10, r=10)
+            )
             st.plotly_chart(fig_risk, use_container_width=True, key=f"risk_profile_chart_{key_prefix}")
+            
     with col2:
+        # --- SME VISUALIZATION UPGRADE: Funnel Chart Polish ---
         funnel_data = pd.DataFrame([dict(stage="Symptomatic/At-Risk", count=len(symptomatic)), dict(stage="Tested", count=len(tested)), dict(stage="Positive", count=len(positive)), dict(stage="Linked to Care", count=len(linked))])
         if funnel_data['count'].sum() > 0:
-            fig = px.funnel(funnel_data, x='count', y='stage', title=f"Screening & Linkage Funnel: {config['name']}", template=PLOTLY_TEMPLATE)
-            fig.update_yaxes(categoryorder="array", categoryarray=["Symptomatic/At-Risk", "Tested", "Positive", "Linked to Care"])
+            fig = go.Figure(go.Funnel(
+                y = funnel_data['stage'], x = funnel_data['count'],
+                textposition = "inside", textinfo = "value+percent initial",
+                marker = {"color": ["#007bff", "#17a2b8", "#ffc107", "#28a745"]}
+            ))
+            fig.update_layout(
+                title_text=f"Screening & Linkage Funnel: {config['name']}",
+                template=PLOTLY_TEMPLATE, title_x=0.5
+            )
             st.plotly_chart(fig, use_container_width=True, key=f"funnel_chart_{key_prefix}")
         else:
             st.info(f"No activity recorded for the {config['name']} program in this period.")
@@ -148,8 +174,20 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
             if 'lat' in analysis_df.columns and 'lon' in analysis_df.columns and not analysis_df[['lat', 'lon']].isnull().all().all():
                 map_df = analysis_df.dropna(subset=['lat', 'lon', 'risk_score'])
                 if not map_df.empty:
-                    fig_map = px.scatter_mapbox(map_df, lat="lat", lon="lon", color="risk_score", size=np.log1p(map_df["risk_score"] * 10), color_continuous_scale=px.colors.sequential.OrRd, mapbox_style="carto-positron", zoom=10, center={"lat": map_df.lat.mean(), "lon": map_df.lon.mean()}, hover_name="patient_id", hover_data={"risk_category": True, "chw_id": True}, title="Patient Risk Concentration", template=PLOTLY_TEMPLATE)
-                    fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0}, title_x=0.5)
+                    # --- SME VISUALIZATION UPGRADE: Mapbox Polish ---
+                    fig_map = px.scatter_mapbox(
+                        map_df, lat="lat", lon="lon", color="risk_score",
+                        size="risk_score", # Size also by risk for visual emphasis
+                        color_continuous_scale=px.colors.sequential.YlOrRd,
+                        mapbox_style="carto-positron", zoom=10,
+                        center={"lat": map_df.lat.mean(), "lon": map_df.lon.mean()},
+                        hover_name="patient_id", hover_data={"risk_category": True, "chw_id": True},
+                        title="Where are the highest-risk patients?"
+                    )
+                    fig_map.update_layout(
+                        margin={"r":0,"t":40,"l":0,"b":0}, title_x=0.5,
+                        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+                    )
                     st.plotly_chart(fig_map, use_container_width=True)
                     st.caption("Actionability: Deploy CHWs to high-density red and orange areas.")
                 else: st.info("No patients with complete location and risk data in this selection.")
@@ -168,9 +206,7 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
                 st.caption("This is the daily count of encounters used as input for the model.")
                 st.bar_chart(encounters_hist.rename(columns={'ds': 'Date', 'y': 'Encounters'}).set_index('Date'))
 
-            forecast_successful = False
-            model_used = None
-            final_forecast_df = pd.DataFrame()
+            forecast_successful, model_used, final_forecast_df = False, None, pd.DataFrame()
 
             if distinct_days_with_data < 2:
                 st.warning(f"⚠️ **Cannot Forecast:** Model requires at least 2 days with data, but found only **{distinct_days_with_data}**.")
@@ -180,22 +216,16 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
                 st.success(f"✅ **Pre-flight Checks Passed:** Found **{distinct_days_with_data}** days with sufficient variation (Std Dev: {std_dev:.2f}).")
                 prophet_forecast_df = generate_prophet_forecast(encounters_hist, forecast_days)
                 if not prophet_forecast_df.empty and 'yhat' in prophet_forecast_df.columns:
-                    final_forecast_df = prophet_forecast_df
-                    forecast_successful = True
-                    model_used = "Primary (Prophet AI)"
+                    final_forecast_df, forecast_successful, model_used = prophet_forecast_df, True, "Primary (Prophet AI)"
                 else:
                     st.warning("Primary forecast model failed to converge. Using fallback model...")
                     fallback_forecast_df = generate_moving_average_forecast(encounters_hist, forecast_days, window=7)
                     if not fallback_forecast_df.empty:
-                        final_forecast_df = fallback_forecast_df
-                        forecast_successful = True
-                        model_used = "Fallback (7-Day Moving Average)"
+                        final_forecast_df, forecast_successful, model_used = fallback_forecast_df, True, "Fallback (7-Day Moving Average)"
 
             if forecast_successful:
                 st.info(f"**Model Used:** `{model_used}`")
-                
                 plot_data = pd.merge(encounters_hist, final_forecast_df, on='ds', how='outer')
-
                 fig_forecast = _plot_forecast_chart_internal(plot_data, title="Forecasted Daily Patient Encounters", y_title="Patient Encounters")
                 st.plotly_chart(fig_forecast, use_container_width=True)
                 
@@ -203,10 +233,8 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_df: pd.DataF
                 st.subheader("📦 Predictive Supply Chain")
                 avg_tests_per_encounter = 0.6
                 current_stock = st.number_input("Current Test Kit Inventory:", min_value=0, value=5000, step=100, key="stock_input")
-                
                 future_df = final_forecast_df[final_forecast_df['ds'] > encounters_hist['ds'].max()]
                 predicted_encounters = future_df['yhat'].sum()
-
                 if predicted_encounters > 0:
                     daily_rate = predicted_encounters / forecast_days if forecast_days > 0 else 0
                     days_of_supply = current_stock / daily_rate if daily_rate > 0 else float('inf')
@@ -226,7 +254,9 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
         st.subheader("Clinic Environment")
         if not clinic_iot.empty:
             co2_trend = clinic_iot.set_index('timestamp')['avg_co2_ppm'].resample('D').mean()
-            fig_co2 = plot_line_chart(co2_trend, "Average Clinic CO₂ (Ventilation Proxy)", "CO₂ PPM")
+            # --- SME VISUALIZATION UPGRADE: Line Chart Polish ---
+            fig_co2 = plot_line_chart(co2_trend, "Average Clinic CO₂<br><sup>Proxy for Ventilation Quality</sup>", "CO₂ (PPM)")
+            fig_co2.update_traces(line=dict(width=3))
             st.plotly_chart(fig_co2, use_container_width=True)
             st.caption("High CO₂ indicates poor ventilation, a risk for airborne diseases.")
         else:
@@ -241,8 +271,9 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
             if not chw_burnout_df.empty:
                 chw_burnout_df['burnout_risk'] = (w_load * chw_burnout_df['patient_load'] / chw_burnout_df['patient_load'].max().clip(1) + w_risk * chw_burnout_df['high_risk_cases'] / chw_burnout_df['high_risk_cases'].max().clip(1) + w_stress * chw_burnout_df['avg_stress'] / 100) * 100
                 chw_burnout_df = chw_burnout_df.sort_values('burnout_risk', ascending=False).head(10)
-                fig_burnout = px.bar(chw_burnout_df, x='burnout_risk', y='chw_id', orientation='h', title="Top 10 CHWs by Predicted Burnout Risk", labels={'burnout_risk': 'Burnout Risk Index (0-100)', 'chw_id': 'CHW ID'}, template=PLOTLY_TEMPLATE, color='burnout_risk', color_continuous_scale=px.colors.sequential.Reds)
-                fig_burnout.update_layout(yaxis={'categoryorder':'total ascending'})
+                # --- SME VISUALIZATION UPGRADE: Burnout Bar Chart Polish ---
+                fig_burnout = px.bar(chw_burnout_df, x='burnout_risk', y='chw_id', orientation='h', title="Which CHWs are Most at Risk of Burnout?", labels={'burnout_risk': 'Burnout Risk Index (0-100)', 'chw_id': 'CHW ID'}, template=PLOTLY_TEMPLATE, color='burnout_risk', color_continuous_scale=px.colors.sequential.Reds)
+                fig_burnout.update_layout(yaxis={'categoryorder':'total ascending'}, title_x=0.5)
                 st.plotly_chart(fig_burnout, use_container_width=True)
                 st.caption("Actionability: Consider workload adjustments for high-risk CHWs.")
         elif chw_filter != "All CHWs": st.info(f"Burnout risk analysis is available when viewing 'All CHWs'.")
@@ -274,7 +305,14 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
         if len(correlation_series) > 1:
             corr_df = pd.concat(correlation_series, axis=1).corr()
             if not corr_df.empty:
-                fig_corr = px.imshow(corr_df, text_auto=True, aspect="auto", color_continuous_scale='RdBu_r', range_color=[-1, 1], title="Correlations: Environment, Stress & Cases", template=PLOTLY_TEMPLATE)
+                # --- SME VISUALIZATION UPGRADE: Heatmap Polish ---
+                fig_corr = px.imshow(
+                    corr_df, text_auto=".2f", aspect="auto",
+                    color_continuous_scale='RdBu_r', range_color=[-1, 1],
+                    title="What Factors Are Correlated?",
+                    labels=dict(color="Correlation")
+                )
+                fig_corr.update_layout(title_x=0.5, template=PLOTLY_TEMPLATE)
                 st.plotly_chart(fig_corr, use_container_width=True)
                 st.caption("Identifies potential relationships for further investigation.")
             else:
