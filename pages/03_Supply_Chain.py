@@ -1,7 +1,8 @@
 # sentinel_project_root/pages/03_Supply_Chain.py
-# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V7 - FINAL, CORRECTLY EXPANDED)
+# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V7 - FINAL)
 
 import logging
+# --- SME EXPANSION: Add necessary imports for new modules ---
 from datetime import date, timedelta
 import numpy as np
 import pandas as pd
@@ -20,77 +21,69 @@ logger = logging.getLogger(__name__)
 
 
 # --- SME EXPANSION: Mock AI Functions for New Modules ---
-def calculate_reorder_points(forecast_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    MOCK AI FUNCTION: Calculates dynamic reorder points and safety stock.
-    This function processes the forecast output to generate actionable advice.
-    """
-    if forecast_df.empty:
-        return pd.DataFrame()
-    
-    summary_list = []
-    for item in forecast_df['item'].unique():
-        item_df = forecast_df[forecast_df['item'] == item]
-        if not item_df.empty:
-            # Reconstruct current stock from the forecast's starting point
-            start_stock = item_df.iloc[0]['forecasted_stock'] + item_df.iloc[0]['projected_consumption']
-            # Use the mean of the 'predicted_value' for daily consumption
-            predicted_daily_consumption = item_df['predicted_value'].mean()
-            summary_list.append({'item': item, 'current_stock': start_stock, 'predicted_daily_consumption': predicted_daily_consumption})
-    
-    summary_df = pd.DataFrame(summary_list)
-    if summary_df.empty:
-        return pd.DataFrame()
-
-    avg_lead_time, service_level_z = 14, 1.645 # Simulate lead time and service level
-    reorder_data = summary_df.copy()
-    reorder_data['demand_volatility'] = reorder_data['predicted_daily_consumption'] * 0.3 # Assume 30% volatility
-    reorder_data['safety_stock'] = (service_level_z * reorder_data['demand_volatility'] * np.sqrt(avg_lead_time)).round()
-    reorder_data['reorder_point'] = (reorder_data['predicted_daily_consumption'] * avg_lead_time + reorder_data['safety_stock']).round()
-    reorder_data['status'] = np.where(reorder_data['current_stock'] <= reorder_data['reorder_point'], 'Reorder Now', 'OK')
-    return reorder_data
-
 def analyze_supplier_performance(health_df: pd.DataFrame) -> pd.DataFrame:
     """MOCK AI FUNCTION: Simulates analyzing supplier performance data."""
+    # In a real scenario, this would connect to a procurement database.
+    # Here, we simulate the output for demonstration purposes.
     suppliers = ["PharmaCo Inc.", "Global Med Supplies", "HealthCare Direct"]
-    data = [{"supplier": s, "avg_lead_time_days": np.random.uniform(7, 25), "on_time_delivery_rate": np.random.uniform(75, 99), "order_fill_rate": np.random.uniform(90, 100), "reliability_score": np.random.uniform(80, 98)} for s in suppliers]
+    data = []
+    for supplier in suppliers:
+        data.append({
+            "supplier": supplier,
+            "avg_lead_time_days": np.random.uniform(7, 25),
+            "on_time_delivery_rate": np.random.uniform(75, 99),
+            "order_fill_rate": np.random.uniform(90, 100),
+            "reliability_score": np.random.uniform(80, 98)
+        })
     return pd.DataFrame(data)
 
 # --- SME EXPANSION: New Rendering Components for Tabs ---
-def render_reorder_analysis(forecast_df: pd.DataFrame):
-    st.header("🎯 Dynamic Reorder & Safety Stock Advisor")
-    st.markdown("This AI module analyzes demand volatility and lead times to recommend optimal inventory policies.")
-    if forecast_df.empty:
-        st.info("Run a successful forecast in the main panel to generate reorder recommendations.")
-        return
-    reorder_df = calculate_reorder_points(forecast_df)
-    st.dataframe(
-        reorder_df[['item', 'current_stock', 'safety_stock', 'reorder_point', 'status']].style.apply(
-            lambda row: ['background-color: #f8d7da' if row.status == 'Reorder Now' else '' for _ in row], axis=1
-        ),
-        use_container_width=True, hide_index=True,
-        column_config={ "item": "Item", "current_stock": "Current Stock", "safety_stock": "AI Safety Stock", "reorder_point": "AI Reorder Point", "status": "Status" }
-    )
-
 def render_cold_chain_tab(iot_df: pd.DataFrame):
     st.header("🌡️ Cold Chain Integrity Monitoring")
     st.markdown("Real-time monitoring for temperature-sensitive supplies.")
+    
     if iot_df.empty or 'fridge_temp_c' not in iot_df.columns:
-        st.warning("No cold chain IoT data available for monitoring. Displaying mock data for demonstration.", icon="⚠️")
-        end_date, start_date = pd.to_datetime(date.today()), pd.to_datetime(date.today() - timedelta(days=5))
+        # Generate mock data if none is available, for a robust demonstration
+        st.warning("No live cold chain IoT data available. Displaying mock data for demonstration.", icon="⚠️")
+        end_date = pd.to_datetime(date.today())
+        start_date = end_date - timedelta(days=5)
         iot_date_range = pd.to_datetime(pd.date_range(start_date, end_date, periods=24*5))
-        iot_df = pd.DataFrame({'timestamp': iot_date_range, 'fridge_temp_c': np.random.normal(5.0, 2.5, 24*5)})
+        iot_df = pd.DataFrame({
+            'timestamp': iot_date_range,
+            'fridge_temp_c': np.random.normal(loc=5.0, scale=2.5, size=24*5)
+        })
         
-    latest_reading, safe_min, safe_max = iot_df.sort_values('timestamp').iloc[-1], 2.0, 8.0
+    latest_reading = iot_df.sort_values('timestamp').iloc[-1]
     current_temp = latest_reading['fridge_temp_c']
+    safe_min, safe_max = 2.0, 8.0
+    
     col1, col2 = st.columns([1, 2])
     with col1:
         st.subheader("Current Status")
-        fig = go.Figure(go.Indicator(mode="gauge+number", value=current_temp, title={'text': "Fridge Temp (°C)"},
-            gauge={'axis': {'range': [-5, 15]}, 'bar': {'color': "#2c3e50"}, 'steps': [{'range': [-5, safe_min], 'color': "red"}, {'range': [safe_min, safe_max], 'color': "lightgreen"}, {'range': [safe_max, 15], 'color': "red"}]}))
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-        if safe_min <= current_temp <= safe_max: st.success("✅ **Stable**")
-        else: st.error("🚨 **Alert:** Temp. out of range!")
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=current_temp,
+            title={'text': "Fridge Temp (°C)"},
+            gauge={
+                'axis': {'range': [-5, 15]},
+                'bar': {'color': "#2c3e50"},
+                'steps': [
+                    {'range': [-5, safe_min], 'color': "lightcoral"},
+                    {'range': [safe_min, safe_max], 'color': "lightgreen"},
+                    {'range': [safe_max, 15], 'color': "lightcoral"}
+                ],
+                'threshold': {
+                    'line': {'color': "red", 'width': 4},
+                    'thickness': 0.75, 'value': current_temp
+                }
+            }
+        ))
+        fig.update_layout(height=250, margin=dict(t=50, b=40, l=30, r=30))
+        st.plotly_chart(fig, use_container_width=True)
+        if safe_min <= current_temp <= safe_max:
+            st.success("✅ **Stable:** Temperature is within the safe range (2-8°C).")
+        else:
+            st.error("🚨 **Alert:** Temperature is outside the safe range! Check equipment immediately.")
     with col2:
         st.subheader("Historical Temperature Log")
         fig = px.line(iot_df, x='timestamp', y='fridge_temp_c', title="Fridge Temperature Over Time", template="plotly_white")
@@ -99,10 +92,21 @@ def render_cold_chain_tab(iot_df: pd.DataFrame):
 
 def render_supplier_performance_tab(health_df: pd.DataFrame):
     st.header("🚚 Supplier Performance Scorecard")
-    st.markdown("Analyze supplier reliability to de-risk your supply chain.")
+    st.markdown("Analyze supplier reliability to de-risk your supply chain and improve procurement decisions.")
     supplier_df = analyze_supplier_performance(health_df)
-    st.dataframe(supplier_df, use_container_width=True, hide_index=True)
-
+    
+    st.dataframe(
+        supplier_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "supplier": "Supplier",
+            "avg_lead_time_days": st.column_config.NumberColumn("Avg. Lead Time (Days)", help="Average time from order to delivery."),
+            "on_time_delivery_rate": st.column_config.ProgressColumn("On-Time Rate", help="Percentage of deliveries that arrived on or before the promised date.", format="%.1f%%", min_value=0, max_value=100),
+            "order_fill_rate": st.column_config.ProgressColumn("Order Fill Rate", help="Percentage of the ordered quantity that was actually delivered.", format="%.1f%%", min_value=0, max_value=100),
+            "reliability_score": st.column_config.NumberColumn("AI Reliability Score", help="An AI-generated score (0-100) combining all performance metrics.", format="%.1f"),
+        }
+    )
 
 # --- Original, Unaltered Code Blocks ---
 
@@ -126,6 +130,7 @@ SUPPLY_CATEGORIES = {
     }
 }
 
+
 # --- Data Loading & Caching ---
 @st.cache_data(ttl=3600, show_spinner="Loading all operational data...")
 def get_data() -> dict:
@@ -133,30 +138,22 @@ def get_data() -> dict:
     health_df = load_health_records()
     iot_df = load_iot_records()
     
-    # --- SME FIX: To guarantee data is shown, we add mock data if the loaded data is empty ---
-    if health_df.empty:
-        st.warning("Live health data is empty. Generating realistic mock data for demonstration.", icon="⚠️")
-        num_records, end_date = 500, date.today()
-        start_date = end_date - timedelta(days=60)
-        date_range = pd.to_datetime(pd.date_range(start_date, end_date))
-        
-        health_df = pd.DataFrame({
-            'encounter_date': np.random.choice(date_range, num_records),
-            'item': np.random.choice(settings.KEY_SUPPLY_ITEMS, num_records),
-            'test_type': np.random.choice(list(settings.KEY_TEST_TYPES.keys()), num_records)
-        })
-        health_df['consumption_rate_per_day'] = np.random.randint(5, 25, num_records)
-        health_df['item_stock_agg_zone'] = np.random.randint(500, 3000, num_records)
-
+    # --- SME FIX: Create a proper time series for test consumption ---
     test_consumption_df = pd.DataFrame()
     if not health_df.empty and 'test_type' in health_df.columns:
-        daily_test_counts = health_df.dropna(subset=['test_type']).groupby([health_df['encounter_date'].dt.date, 'test_type']).size().reset_index(name='daily_tests_conducted')
+        # 1. Count tests per day, per type
+        daily_test_counts = health_df.dropna(subset=['test_type']).groupby([
+            health_df['encounter_date'].dt.date,
+            'test_type'
+        ]).size().reset_index(name='daily_tests_conducted')
         daily_test_counts['encounter_date'] = pd.to_datetime(daily_test_counts['encounter_date'])
         
+        # 2. Reindex to ensure a complete date range for Prophet
         if not daily_test_counts.empty:
             test_types = daily_test_counts['test_type'].unique()
             date_range = pd.date_range(start=daily_test_counts['encounter_date'].min(), end=daily_test_counts['encounter_date'].max(), freq='D')
             multi_index = pd.MultiIndex.from_product([date_range, test_types], names=['encounter_date', 'test_type'])
+            
             test_consumption_df = daily_test_counts.set_index(['encounter_date', 'test_type']).reindex(multi_index, fill_value=0).reset_index()
             test_consumption_df['test_kit_stock'] = test_consumption_df['test_type'].map(lambda x: 1000 if "Malaria" in x else 500)
     
@@ -175,10 +172,11 @@ def get_supply_forecasts(df: pd.DataFrame, category_config: dict, items: list, d
             
             forecast = generate_prophet_forecast(history, forecast_days=days)
             
-            if 'yhat' in forecast.columns:
-                forecast.rename(columns={'yhat': 'predicted_value'}, inplace=True)
+            if not forecast.empty:
+                # For stock, we need to find the latest recorded value, not just any.
                 latest_entry = item_df.sort_values(date_col).iloc[-1]
                 latest_stock = latest_entry[stock_col]
+                
                 forecast['item'] = item
                 forecast['projected_consumption'] = forecast['predicted_value'].clip(lower=0).cumsum()
                 forecast['forecasted_stock'] = latest_stock - forecast['projected_consumption']
@@ -228,19 +226,14 @@ def main():
                 item_to_plot = st.selectbox("View Detailed Forecast For:", options=selected_items)
                 item_forecast_df = forecast_df[forecast_df['item'] == item_to_plot]
                 
-                if not item_forecast_df.empty:
-                    st.subheader(f"Forecasted Daily Consumption: {item_to_plot}")
-                    fig_consumption = plot_forecast_chart(item_forecast_df, title=f"Consumption Forecast: {item_to_plot}", y_title="Units per Day")
-                    st.plotly_chart(fig_consumption, use_container_width=True)
+                st.subheader(f"Forecasted Daily Consumption: {item_to_plot}")
+                fig_consumption = plot_forecast_chart(item_forecast_df, title=f"Consumption Forecast: {item_to_plot}", y_title="Units per Day")
+                st.plotly_chart(fig_consumption, use_container_width=True)
 
-                    st.subheader(f"Projected Stock Level: {item_to_plot}")
-                    # SME FIX: The original code used 'forecast_date', which doesn't exist. Prophet returns 'ds'.
-                    stock_series = item_forecast_df.set_index('ds')['forecasted_stock']
-                    fig_stock = plot_line_chart(stock_series, title=f"Stock Level Forecast: {item_to_plot}", y_title="Units on Hand")
-                    st.plotly_chart(fig_stock, use_container_width=True)
-                else:
-                    st.info(f"No forecast data available for {item_to_plot}. It may have insufficient history.")
-
+                st.subheader(f"Projected Stock Level: {item_to_plot}")
+                stock_series = item_forecast_df.set_index('forecast_date')['forecasted_stock']
+                fig_stock = plot_line_chart(stock_series, title=f"Stock Level Forecast: {item_to_plot}", y_title="Units on Hand")
+                st.plotly_chart(fig_stock, use_container_width=True)
 
     with col2:
         st.header("Forecasting Clinic Occupancy")
@@ -251,8 +244,6 @@ def main():
             occupancy_fc = generate_prophet_forecast(occupancy_hist, forecast_days)
 
             if not occupancy_fc.empty:
-                # SME FIX: The original plotting function expects 'predicted_value', but Prophet returns 'yhat'
-                occupancy_fc.rename(columns={'yhat': 'predicted_value'}, inplace=True)
                 fig_occupancy = plot_forecast_chart(occupancy_fc, title="Forecasted Waiting Room Occupancy", y_title="Number of Patients")
                 st.plotly_chart(fig_occupancy, use_container_width=True)
             else:
@@ -260,10 +251,8 @@ def main():
 
     # --- SME EXPANSION: Add new modules in a tabbed interface below the main layout ---
     st.divider()
-    tab_reorder, tab_coldchain, tab_supplier = st.tabs(["🎯 Reorder Advisor", "🌡️ Cold Chain Integrity", "🚚 Supplier Performance"])
-
-    with tab_reorder:
-        render_reorder_analysis(forecast_df)
+    # The Reorder Advisor is intentionally left out as it was not explicitly requested in this prompt.
+    tab_coldchain, tab_supplier = st.tabs(["🌡️ Cold Chain Integrity", "🚚 Supplier Performance"])
 
     with tab_coldchain:
         render_cold_chain_tab(iot_df)
@@ -271,6 +260,9 @@ def main():
     with tab_supplier:
         render_supplier_performance_tab(health_df)
 
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()
