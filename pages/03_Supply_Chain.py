@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/03_Supply_Chain.py
-# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V8 - AI ENHANCED AND FIXED)
+# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V9 - DATA PIPELINE FIXED)
 
 import logging
 from datetime import timedelta
@@ -11,7 +11,6 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from analytics import generate_prophet_forecast
-# SME FIX: The import for the 'logistics' module is removed. We will create mock functions locally.
 from config import settings
 from data_processing import load_health_records, load_iot_records
 from visualization import (create_empty_figure, plot_forecast_chart,
@@ -21,54 +20,38 @@ from visualization import (create_empty_figure, plot_forecast_chart,
 st.set_page_config(page_title="Logistics & Capacity", page_icon="📦", layout="wide")
 logger = logging.getLogger(__name__)
 
-# --- SME EXPANSION: Constants for better styling ---
 PLOTLY_TEMPLATE = "plotly_white"
 
 # --- Supply Category Definitions ---
 SUPPLY_CATEGORIES = {
     "Medications": {
         "items": settings.KEY_SUPPLY_ITEMS,
-        "source_df": "health_df",
+        "source_df_name": "health_df",
         "data_col": "medication_prescribed",
         "stock_col": "item_stock_agg_zone",
         "date_col": "encounter_date"
     },
     "Diagnostic Tests": {
         "items": list(settings.KEY_TEST_TYPES.keys()),
-        "source_df": "test_consumption_df",
+        "source_df_name": "health_df", # We will process this directly from health_df now
         "data_col": "test_type",
         "stock_col": "test_kit_stock",
         "date_col": "encounter_date"
     }
 }
 
-# --- SME FIX: Create Mock AI Functions Locally ---
+# --- Mock AI Functions (Unchanged) ---
 def calculate_reorder_points(summary_df: pd.DataFrame) -> pd.DataFrame:
-    """MOCK AI FUNCTION: Calculates dynamic reorder points and safety stock."""
-    if summary_df.empty:
-        return pd.DataFrame()
-    
-    # Simulate lead time and service level for calculations
-    avg_lead_time = 14 # days
-    service_level_z = 1.645 # Corresponds to a 95% service level
-    
+    if summary_df.empty: return pd.DataFrame()
+    avg_lead_time, service_level_z = 14, 1.645
     reorder_data = summary_df.copy()
-    
-    # Simulate demand volatility (standard deviation of daily use)
-    reorder_data['demand_volatility'] = reorder_data['predicted_daily_consumption'] * 0.3 # Assume 30% volatility
-    
-    # Calculate Safety Stock and Reorder Point
+    reorder_data['demand_volatility'] = reorder_data['predicted_daily_consumption'] * 0.3
     reorder_data['safety_stock'] = (service_level_z * reorder_data['demand_volatility'] * np.sqrt(avg_lead_time)).round()
     reorder_data['reorder_point'] = (reorder_data['predicted_daily_consumption'] * avg_lead_time + reorder_data['safety_stock']).round()
-    
-    # Determine status
     reorder_data['status'] = np.where(reorder_data['current_stock'] <= reorder_data['reorder_point'], 'Reorder Now', 'OK')
-    
     return reorder_data
 
 def analyze_supplier_performance(health_df: pd.DataFrame) -> pd.DataFrame:
-    """MOCK AI FUNCTION: Simulates analyzing supplier performance data."""
-    # This is a complete simulation as we don't have supplier data.
     suppliers = ["PharmaCo Inc.", "Global Med Supplies", "HealthCare Direct"]
     data = []
     for supplier in suppliers:
@@ -81,78 +64,73 @@ def analyze_supplier_performance(health_df: pd.DataFrame) -> pd.DataFrame:
         })
     return pd.DataFrame(data)
 
-# --- END SME FIX ---
-
-
 # --- Data Loading & Caching ---
 @st.cache_data(ttl=3600, show_spinner="Loading all operational data...")
 def get_data() -> dict:
-    """Loads and enriches all data for the dashboard, returning a dictionary of DataFrames."""
     health_df = load_health_records()
     iot_df = load_iot_records()
     
-    if 'medication_prescribed' not in health_df.columns:
-        health_df['medication_prescribed'] = np.random.choice(settings.KEY_SUPPLY_ITEMS + [None], size=len(health_df), p=[0.1]*len(settings.KEY_SUPPLY_ITEMS) + [1 - 0.1*len(settings.KEY_SUPPLY_ITEMS)])
-    if 'item_stock_agg_zone' not in health_df.columns:
-        health_df['item_stock_agg_zone'] = np.random.randint(100, 1000, size=len(health_df))
-
-    test_consumption_df = pd.DataFrame()
-    if not health_df.empty and 'test_type' in health_df.columns:
-        daily_test_counts = health_df.dropna(subset=['test_type']).groupby([health_df['encounter_date'].dt.date, 'test_type']).size().reset_index(name='daily_tests_conducted')
-        daily_test_counts['encounter_date'] = pd.to_datetime(daily_test_counts['encounter_date'])
-        
-        if not daily_test_counts.empty:
-            test_types = daily_test_counts['test_type'].unique()
-            date_range = pd.date_range(start=daily_test_counts['encounter_date'].min(), end=daily_test_counts['encounter_date'].max(), freq='D')
-            multi_index = pd.MultiIndex.from_product([date_range, test_types], names=['encounter_date', 'test_type'])
-            test_consumption_df = daily_test_counts.set_index(['encounter_date', 'test_type']).reindex(multi_index, fill_value=0).reset_index()
-            test_consumption_df['test_kit_stock'] = test_consumption_df['test_type'].map(lambda x: 1000 if "Malaria" in x else 500)
+    # Mock data for demonstration if columns are missing
+    if not health_df.empty:
+        if 'medication_prescribed' not in health_df.columns:
+            health_df['medication_prescribed'] = np.random.choice(settings.KEY_SUPPLY_ITEMS + [None], size=len(health_df), p=[0.1]*len(settings.KEY_SUPPLY_ITEMS) + [1 - 0.1*len(settings.KEY_SUPPLY_ITEMS)])
+        if 'item_stock_agg_zone' not in health_df.columns:
+            health_df['item_stock_agg_zone'] = health_df['medication_prescribed'].apply(lambda x: np.random.randint(500, 2000) if x else 0)
+        if 'test_kit_stock' not in health_df.columns:
+            health_df['test_kit_stock'] = health_df['test_type'].apply(lambda x: np.random.randint(200, 1000) if x else 0)
     
-    return {"health_df": health_df, "iot_df": iot_df, "test_consumption_df": test_consumption_df}
+    return {"health_df": health_df, "iot_df": iot_df}
 
+
+# --- SME FIX: This function now correctly processes consumption data for ANY category ---
 @st.cache_data(ttl=3600, show_spinner="Generating AI-powered supply chain forecasts...")
-def get_supply_forecasts(df: pd.DataFrame, category_config: dict, items: list, days: int) -> pd.DataFrame:
+def get_supply_forecasts(source_df: pd.DataFrame, category_config: dict, items: list, days: int) -> pd.DataFrame:
     """Generates consumption forecasts and calculates Days of Supply (DoS)."""
     all_forecasts = []
     data_col, stock_col, date_col = category_config["data_col"], category_config["stock_col"], category_config["date_col"]
 
     for item in items:
-        item_consumption = df.dropna(subset=[data_col])
-        item_consumption = item_consumption[item_consumption[data_col] == item]
+        # 1. Filter the source dataframe for the specific item
+        item_df = source_df.dropna(subset=[data_col])
+        item_df = item_df[item_df[data_col] == item]
         
-        if not item_consumption.empty:
-            history = item_consumption.groupby(pd.Grouper(key=date_col, freq='D')).size().reset_index(name='y')
+        if not item_df.empty:
+            # 2. Create a clean daily time series of consumption
+            history = item_df.groupby(pd.Grouper(key=date_col, freq='D')).size().reset_index(name='y')
             history = history.rename(columns={date_col: 'ds'})
-            
+
+            # Ensure we have enough data points for Prophet
+            if len(history[history['y'] > 0]) < 2:
+                continue # Skip items with insufficient data
+
+            # 3. Generate forecast
             forecast = generate_prophet_forecast(history, forecast_days=days)
             
             if 'yhat' in forecast.columns:
-                latest_stock = item_consumption.sort_values(date_col).iloc[-1][stock_col]
+                # 4. Get the most recent stock level for this item
+                latest_stock = item_df.sort_values(by=date_col, ascending=False).iloc[0][stock_col]
                 
-                future_forecast = forecast[forecast['ds'] > df[date_col].max()].copy()
-                future_forecast['predicted_consumption'] = future_forecast['yhat'].clip(lower=0)
-                
-                avg_daily_consumption = future_forecast['predicted_consumption'].mean()
+                # 5. Calculate Days of Supply
+                future_forecast = forecast[forecast['ds'] > history['ds'].max()].copy()
+                avg_daily_consumption = future_forecast['yhat'].clip(lower=0).mean()
                 days_of_supply = latest_stock / avg_daily_consumption if avg_daily_consumption > 0 else float('inf')
                 
-                summary = {
+                all_forecasts.append({
                     "item": item,
                     "current_stock": latest_stock,
                     "predicted_daily_consumption": avg_daily_consumption,
                     "days_of_supply": days_of_supply,
-                    "forecast_df": future_forecast[['ds', 'predicted_consumption']]
-                }
-                all_forecasts.append(summary)
+                })
 
     return pd.DataFrame(all_forecasts) if all_forecasts else pd.DataFrame()
 
+# --- Rendering Components (Unchanged) ---
 def render_supply_kpi_dashboard(summary_df: pd.DataFrame):
-    """Renders a dynamic grid of KPIs for each forecasted supply item."""
     st.header("📦 AI-Powered Inventory Status")
     st.markdown("At-a-glance view of current stock levels and predicted days of supply remaining.")
     
     if summary_df.empty:
-        st.info("No forecast data to display. Please select items from the sidebar.")
+        st.warning("Could not generate forecasts for the selected items. They may have insufficient historical consumption data (at least 2 days of activity are required).")
         return
 
     cols = st.columns(len(summary_df))
@@ -184,12 +162,11 @@ def render_supply_kpi_dashboard(summary_df: pd.DataFrame):
             st.metric(label="Predicted Daily Use", value=f"{row['predicted_daily_consumption']:.1f} units")
 
 def render_reorder_analysis(summary_df: pd.DataFrame):
-    """Renders the AI-driven reorder point and safety stock analysis."""
     st.header("🎯 Dynamic Reorder & Safety Stock Advisor")
     st.markdown("This AI module analyzes demand volatility and lead times to recommend optimal inventory policies, minimizing both stock-outs and holding costs.")
 
     if summary_df.empty:
-        st.info("Run a forecast to generate reorder recommendations.")
+        st.info("Run a successful forecast to generate reorder recommendations.")
         return
 
     reorder_df = calculate_reorder_points(summary_df)
@@ -217,7 +194,6 @@ def render_cold_chain_tab(iot_df: pd.DataFrame):
 
     latest_reading = iot_df.sort_values('timestamp').iloc[-1]
     current_temp = latest_reading['fridge_temp_c']
-    
     safe_min, safe_max = 2.0, 8.0
     
     col1, col2 = st.columns([1, 2])
@@ -225,19 +201,12 @@ def render_cold_chain_tab(iot_df: pd.DataFrame):
         st.subheader("Current Status")
         fig = go.Figure(go.Indicator(
             mode = "gauge+number", value = current_temp, title = {'text': "Current Fridge Temp (°C)"},
-            gauge = {
-                'axis': {'range': [-5, 15]}, 'bar': {'color': "#2c3e50"},
-                'steps' : [{'range': [-5, safe_min], 'color': "red"}, {'range': [safe_min, safe_max], 'color': "lightgreen"}, {'range': [safe_max, 15], 'color': "red"}],
-            }
+            gauge = {'axis': {'range': [-5, 15]}, 'bar': {'color': "#2c3e50"}, 'steps' : [{'range': [-5, safe_min], 'color': "red"}, {'range': [safe_min, safe_max], 'color': "lightgreen"}, {'range': [safe_max, 15], 'color': "red"}]}
         ))
         fig.update_layout(height=250, margin=dict(t=40, b=40, l=30, r=30))
         st.plotly_chart(fig, use_container_width=True)
-        
-        if safe_min <= current_temp <= safe_max:
-            st.success("✅ **Stable:** Temperature is within the safe range (2-8°C).")
-        else:
-            st.error("🚨 **Alert:** Temperature is outside the safe range! Check equipment immediately.")
-
+        if safe_min <= current_temp <= safe_max: st.success("✅ **Stable:** Temperature is within the safe range (2-8°C).")
+        else: st.error("🚨 **Alert:** Temperature is outside the safe range! Check equipment immediately.")
     with col2:
         st.subheader("Historical Temperature Log")
         temp_trend = iot_df.set_index('timestamp')['fridge_temp_c']
@@ -252,7 +221,11 @@ def main():
     st.divider()
 
     all_data = get_data()
+    health_df = all_data["health_df"]
     iot_df = all_data['iot_df']
+
+    if health_df.empty:
+        st.error("No health data available. Dashboard cannot be rendered."); st.stop()
 
     tab1, tab2, tab3 = st.tabs(["**📈 Supply Forecast**", "**🌡️ Cold Chain**", "**🚚 Supplier Performance**"])
 
@@ -262,7 +235,7 @@ def main():
             selected_category = st.radio("Select Supply Category:", list(SUPPLY_CATEGORIES.keys()), horizontal=True, key="supply_cat_radio")
             category_config = SUPPLY_CATEGORIES[selected_category]
             
-            source_df_for_list = all_data[category_config["source_df"]]
+            source_df_for_list = all_data[category_config["source_df_name"]]
             if not source_df_for_list.empty:
                 all_items_in_cat = sorted(source_df_for_list[category_config["data_col"]].dropna().unique())
                 default_items = [item for item in category_config["items"] if item in all_items_in_cat]
@@ -276,7 +249,7 @@ def main():
         if not selected_items:
             st.info(f"Select one or more {selected_category.lower()} from the sidebar to generate a forecast.")
         else:
-            source_df_for_fc = all_data[category_config["source_df"]]
+            source_df_for_fc = all_data[category_config["source_df_name"]]
             forecast_summary_df = get_supply_forecasts(source_df_for_fc, category_config, selected_items, forecast_days)
             
             render_supply_kpi_dashboard(forecast_summary_df)
@@ -289,7 +262,7 @@ def main():
     with tab3:
         st.header("🚚 Supplier Performance Scorecard")
         st.markdown("Analyze supplier reliability to de-risk your supply chain and improve procurement decisions.")
-        supplier_df = analyze_supplier_performance(all_data['health_df'])
+        supplier_df = analyze_supplier_performance(health_df)
         if not supplier_df.empty:
             st.dataframe(
                 supplier_df, use_container_width=True, hide_index=True,
@@ -303,6 +276,10 @@ def main():
             )
         else:
             st.info("Not enough procurement data to analyze supplier performance.")
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
