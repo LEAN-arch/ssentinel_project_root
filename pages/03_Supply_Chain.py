@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/03_Supply_Chain.py
-# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V17 - FINAL DATA PIPELINE FIX)
+# SME PLATINUM STANDARD - INTEGRATED LOGISTICS & CAPACITY DASHBOARD (V18 - FINAL DATA FIX)
 
 import logging
 from datetime import date, timedelta
@@ -37,19 +37,14 @@ def analyze_supplier_performance(health_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 # --- Supply Category Definitions ---
-# SME FIX: The source_df is now always 'health_df'. The logic will handle it.
 SUPPLY_CATEGORIES = {
     "Medications": {
-        "items": settings.KEY_SUPPLY_ITEMS,
-        "data_col": "medication_prescribed",
-        "stock_col": "item_stock_agg_zone",
-        "date_col": "encounter_date"
+        "items": settings.KEY_SUPPLY_ITEMS, "data_col": "medication_prescribed",
+        "stock_col": "item_stock_agg_zone", "date_col": "encounter_date"
     },
     "Diagnostic Tests": {
-        "items": list(settings.KEY_TEST_TYPES.keys()),
-        "data_col": "test_type",
-        "stock_col": "test_kit_stock",
-        "date_col": "encounter_date"
+        "items": list(settings.KEY_TEST_TYPES.keys()), "data_col": "test_type",
+        "stock_col": "test_kit_stock", "date_col": "encounter_date"
     }
 }
 
@@ -68,11 +63,19 @@ def get_data() -> dict:
         health_df = pd.DataFrame({'encounter_date': np.random.choice(date_range, num_records)})
         health_df['medication_prescribed'] = np.random.choice(settings.KEY_SUPPLY_ITEMS + [None], num_records, p=[0.1]*len(settings.KEY_SUPPLY_ITEMS) + [1 - 0.1*len(settings.KEY_SUPPLY_ITEMS)])
         health_df['test_type'] = np.random.choice(list(settings.KEY_TEST_TYPES.keys()) + [None], num_records, p=[0.2]*len(settings.KEY_TEST_TYPES) + [1 - 0.2*len(settings.KEY_TEST_TYPES)])
-        
-    # Guarantee all necessary columns exist
-    for col, default_val, generator in [('medication_prescribed', None, lambda: 0), ('item_stock_agg_zone', 0, lambda: np.random.randint(500, 2000)), ('test_type', None, lambda: 0), ('test_kit_stock', 0, lambda: np.random.randint(200, 1000))]:
-        if col not in health_df.columns: health_df[col] = default_val
-        if 'stock' in col: health_df[col] = health_df[col.replace('_stock', '')].apply(lambda x: generator() if pd.notna(x) else 0)
+    
+    # --- SME FIX: Replace flawed loop with explicit, robust column creation ---
+    # Ensure base columns exist
+    if 'medication_prescribed' not in health_df.columns:
+        health_df['medication_prescribed'] = None
+    if 'test_type' not in health_df.columns:
+        health_df['test_type'] = None
+
+    # Ensure stock columns exist and are correctly linked to their base columns
+    if 'item_stock_agg_zone' not in health_df.columns:
+        health_df['item_stock_agg_zone'] = health_df['medication_prescribed'].apply(lambda x: np.random.randint(500, 2000) if pd.notna(x) else 0)
+    if 'test_kit_stock' not in health_df.columns:
+        health_df['test_kit_stock'] = health_df['test_type'].apply(lambda x: np.random.randint(200, 1000) if pd.notna(x) else 0)
 
     if iot_df.empty or 'fridge_temp_c' not in iot_df.columns:
         start_date, end_date = health_df['encounter_date'].min(), health_df['encounter_date'].max()
@@ -80,6 +83,7 @@ def get_data() -> dict:
         iot_df = pd.DataFrame({'timestamp': iot_date_range, 'fridge_temp_c': np.random.normal(5.0, 1.5, 24*90), 'waiting_room_occupancy': np.random.randint(0, 25, 24*90)})
         
     return {"health_df": health_df, "iot_df": iot_df}
+
 
 @st.cache_data(ttl=3600, show_spinner="Generating AI-powered supply chain forecasts...")
 def get_supply_forecasts(source_df: pd.DataFrame, category_config: dict, items: list, days: int) -> tuple[pd.DataFrame, dict]:
