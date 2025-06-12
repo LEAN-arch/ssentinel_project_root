@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V25 - TIMEZONE FIX)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V26 - KEY FIX)
 
 import logging
 from datetime import date, timedelta
@@ -79,7 +79,7 @@ def _render_custom_indicator(title: str, value: str, state: str, help_text: str)
     st.markdown(f"""<div style="border: 1px solid #e1e4e8; border-left: 5px solid {border_color}; border-radius: 5px; padding: 10px; margin-bottom: 10px;"><div style="font-size: 0.9em; color: #586069;">{title}</div><div style="font-size: 1.5em; font-weight: bold; color: {border_color};">{value}</div></div>""", unsafe_allow_html=True)
 
 # --- UI Rendering Components for Tabs ---
-# ... (render_overview_tab, render_program_analysis_tab, render_demographics_tab are unchanged) ...
+# ... (render_overview_tab, render_program_analysis_tab, render_demographics_tab, render_forecasting_tab, render_environment_tab are unchanged)...
 def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: date, end_date: date):
     st.header("🚀 Clinic Overview")
     with st.container(border=True):
@@ -216,18 +216,13 @@ def render_demographics_tab(df: pd.DataFrame):
 def render_forecasting_tab(df: pd.DataFrame):
     st.header("🔮 AI-Powered Capacity Planning")
     st.markdown("Use predictive forecasts to anticipate future patient load and ensure adequate staffing and appointment availability.")
-    
     forecast_days = st.slider("Days to Forecast Ahead:", 7, 90, 30, 7, key="clinic_forecast_days")
     encounters_hist = df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
-    
     final_forecast_df, model_used = pd.DataFrame(), "None"
     if len(encounters_hist) > 1 and encounters_hist['y'].std() > 0:
         prophet_fc = generate_prophet_forecast(encounters_hist, forecast_days=forecast_days)
-        if 'yhat' in prophet_fc.columns:
-            final_forecast_df, model_used = prophet_fc, "Primary (Prophet AI)"
-        else:
-            final_forecast_df, model_used = generate_moving_average_forecast(encounters_hist, forecast_days, 7), "Fallback (7-Day Avg)"
-    
+        if 'yhat' in prophet_fc.columns: final_forecast_df, model_used = prophet_fc, "Primary (Prophet AI)"
+        else: final_forecast_df, model_used = generate_moving_average_forecast(encounters_hist, forecast_days, 7), "Fallback (7-Day Avg)"
     col1, col2 = st.columns([1.5, 1], gap="large")
     with col1:
         st.subheader("Forecasted Patient Demand")
@@ -239,23 +234,15 @@ def render_forecasting_tab(df: pd.DataFrame):
             fig.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, yaxis_title="Patient Encounters", xaxis_title="Date", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             st.plotly_chart(fig, use_container_width=True)
         else: st.warning("Could not generate forecast. Data may be too sparse or lack variation.")
-
     with col2:
         st.subheader("Capacity & Staffing Scorecard")
         if not final_forecast_df.empty:
             avg_consult_time_min, staff_hours_per_day = 20, 8
-            
-            # --- SME FIX: Standardize timezones before comparison ---
-            # Ensure both datetimes are tz-naive before comparing
-            if final_forecast_df['ds'].dt.tz is not None:
-                final_forecast_df['ds'] = final_forecast_df['ds'].dt.tz_localize(None)
-            
+            if final_forecast_df['ds'].dt.tz is not None: final_forecast_df['ds'] = final_forecast_df['ds'].dt.tz_localize(None)
             last_historical_date = df['encounter_date'].max().to_pydatetime().replace(tzinfo=None)
-            
             future_fc = final_forecast_df[final_forecast_df['ds'] > last_historical_date]
             total_predicted_patients, total_workload_hours = future_fc['yhat'].sum(), (future_fc['yhat'].sum() * avg_consult_time_min) / 60
             required_fte = total_workload_hours / (staff_hours_per_day * forecast_days) if forecast_days > 0 else 0
-            
             capacity_fte = st.number_input("Current Available Clinical FTE:", min_value=1.0, value=5.0, step=0.5, key="capacity_fte")
             utilization = (required_fte / capacity_fte * 100) if capacity_fte > 0 else 0
             surplus_deficit = capacity_fte - required_fte
@@ -276,8 +263,7 @@ def render_environment_tab(iot_df: pd.DataFrame):
     st.header("🌿 Facility Environmental Safety")
     if iot_df.empty: st.info("No environmental sensor data available for this period.", icon="📡"); return
     st.subheader("Real-Time Environmental Indicators")
-    avg_co2 = iot_df['avg_co2_ppm'].mean()
-    high_noise_rooms = iot_df[iot_df.get('avg_noise_db', pd.Series(0)) > 70]['room_id'].nunique()
+    avg_co2, high_noise_rooms = iot_df['avg_co2_ppm'].mean(), iot_df[iot_df.get('avg_noise_db', pd.Series(0)) > 70]['room_id'].nunique()
     co2_state = "HIGH_RISK" if avg_co2 > 1500 else "MODERATE_CONCERN" if avg_co2 > 1000 else "ACCEPTABLE"
     noise_state = "HIGH_RISK" if high_noise_rooms > 0 else "ACCEPTABLE"
     col1, col2 = st.columns(2)
@@ -295,6 +281,10 @@ def render_efficiency_tab(df: pd.DataFrame):
     st.header("⏱️ Operational Efficiency Analysis")
     st.markdown("Monitor and predict key efficiency metrics to improve patient flow and reduce wait times.")
     if df.empty: st.info("No data available for efficiency analysis."); return
+    
+    # --- SME FIX: Address the SettingWithCopyWarning by creating a safe copy ---
+    df = df.copy()
+
     avg_wait, avg_consult = df['patient_wait_time'].mean(), df['consultation_duration'].mean()
     long_wait_count = df[df['patient_wait_time'] > 45]['patient_id'].nunique()
     col1, col2, col3 = st.columns(3)
@@ -328,7 +318,8 @@ def main():
     with st.sidebar:
         st.header("Filters")
         min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
-        start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=29)), max_date), min_value=min_date, max_value=max_date, key="date_range")
+        # --- SME FIX: Use a page-specific key to prevent duplication errors ---
+        start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=29)), max_date), min_value=min_date, max_value=max_date, key="clinic_date_range")
     period_health_df = full_health_df[full_health_df['encounter_date'].dt.date.between(start_date, end_date)]
     period_iot_df = full_iot_df[full_iot_df['timestamp'].dt.date.between(start_date, end_date)] if not full_iot_df.empty else pd.DataFrame()
     st.info(f"**Displaying Clinic Data For:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}`")
@@ -343,9 +334,6 @@ def main():
     for i, (name, conf) in enumerate(all_tabs_config):
         with tabs[i]:
             conf["func"](*conf["args"])
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
