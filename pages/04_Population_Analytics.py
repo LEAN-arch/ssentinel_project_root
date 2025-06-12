@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/04_Population_Analytics.py
-# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V15 - IMPORT FIX)
+# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V16 - ATTRIBUTE & HASHING FIX)
 
 import logging
 from datetime import date, timedelta
@@ -12,7 +12,6 @@ import streamlit as st
 # --- Core Sentinel Imports (Assumed to exist) ---
 from analytics import apply_ai_models
 from config import settings
-# SME FIX: Correct the imports to include load_zone_data
 from data_processing.loaders import load_health_records, load_zone_data
 from data_processing.enrichment import enrich_zone_data_with_aggregates
 from data_processing.helpers import convert_to_numeric
@@ -56,7 +55,7 @@ def detect_emerging_threats(health_df: pd.DataFrame, lookback_days: int = 90, th
     top_diagnoses = recent_df['diagnosis'].value_counts().nlargest(10).index
     if top_diagnoses.empty: return pd.DataFrame()
     threats = []
-    for diag in top_diagnoses: # Check top 10 for potential threats
+    for diag in top_diagnoses:
         diag_ts = health_df[health_df['diagnosis'] == diag].set_index('encounter_date').resample('W-MON').size()
         if len(diag_ts) < 4: continue
         mean, std = diag_ts.mean(), diag_ts.std()
@@ -70,10 +69,8 @@ def detect_emerging_threats(health_df: pd.DataFrame, lookback_days: int = 90, th
 # --- SME RESILIENCE UPGRADE: Robust Data Loading ---
 @st.cache_data(ttl=3600, show_spinner="Loading population datasets...")
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    # SME FIX: Correct data loading logic
     health_df = load_health_records()
     zone_df = load_zone_data()
-
     if health_df.empty: return pd.DataFrame(), pd.DataFrame()
     
     health_df, _ = apply_ai_models(health_df)
@@ -87,6 +84,10 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
         logger.warning("Column 'risk_factors' not found. Generating dummy data.")
         factors = ['Hypertension', 'Diabetes', 'Smoking', 'Obesity', 'Malnutrition']
         health_df['risk_factors'] = health_df['patient_id'].apply(lambda _: list(np.random.choice(factors, size=np.random.randint(0, 4), replace=False)))
+
+    # --- SME HASHING FIX: Convert unhashable list to hashable tuple for caching ---
+    if 'risk_factors' in health_df.columns:
+        health_df['risk_factors'] = health_df['risk_factors'].apply(tuple)
 
     if zone_df.empty:
         logger.warning("Zone data is empty. Creating a dummy zone for dashboard functionality.")
@@ -110,7 +111,6 @@ def get_risk_stratification(df: pd.DataFrame) -> dict:
     return {'pyramid_data': pyramid_data}
 
 # --- UI Rendering Components ---
-# ... (All render_* functions are unchanged) ...
 def render_overview(df_filtered: pd.DataFrame, health_df: pd.DataFrame, start_date: date):
     st.subheader("Population Health Scorecard")
     cols = st.columns(4)
@@ -128,6 +128,16 @@ def render_risk_stratification(df_filtered: pd.DataFrame):
     st.header("🚨 Strategic Risk & Intervention Planning")
     st.markdown("Analyze current risk, predict future burdens, and quantify the value of preventive action.")
     st.divider()
+
+    # --- SME ATTRIBUTE FIX: Define cost assumptions locally or pass as argument ---
+    COST_ASSUMPTIONS = {
+        'avg_encounter_cost_high_risk': 250,
+        'avg_encounter_cost_moderate_risk': 120,
+        'preventive_intervention_cost': 500,
+        'annual_encounters_high_risk': 4,
+        'annual_encounters_moderate_risk': 2
+    }
+
     st.subheader("Part 1: What is our current risk distribution?")
     risk_data = get_risk_stratification(df_filtered)
     pyramid_data = risk_data.get('pyramid_data')
@@ -157,20 +167,19 @@ def render_risk_stratification(df_filtered: pd.DataFrame):
         st.markdown("##### **Projected Annual Burden of Illness**")
         with st.container(border=True):
             high_risk_patients = pyramid_data[pyramid_data['risk_tier'] == 'High Risk']['patient_count'].sum()
-            # Assuming settings.COST_ASSUMPTIONS is available
-            projected_encounters = high_risk_patients * settings.COST_ASSUMPTIONS['annual_encounters_high_risk']
-            projected_cost = projected_encounters * settings.COST_ASSUMPTIONS['avg_encounter_cost_high_risk']
+            projected_encounters = high_risk_patients * COST_ASSUMPTIONS['annual_encounters_high_risk']
+            projected_cost = projected_encounters * COST_ASSUMPTIONS['avg_encounter_cost_high_risk']
             st.metric("Projected High-Risk Encounters/Year", f"{projected_encounters:,.0f} visits")
             st.metric("Projected Annual Cost of High-Risk Care", f"${projected_cost:,.0f}")
             st.caption(f"Based on {high_risk_patients:,} high-risk patients.")
     st.divider()
     st.subheader("Part 3: What is the Return on Investment for Prevention?")
     st.markdown("This analysis quantifies the financial impact of a preventive care program targeting moderate-risk patients predicted to transition.")
-    if not df_filtered.empty:
+    if not df_filtered.empty and 'predicted_transitions' in locals():
         target_patients = predicted_transitions['mod_to_high_count']
-        cost_if_high_risk = target_patients * settings.COST_ASSUMPTIONS['annual_encounters_high_risk'] * settings.COST_ASSUMPTIONS['avg_encounter_cost_high_risk']
-        cost_of_intervention = target_patients * settings.COST_ASSUMPTIONS['preventive_intervention_cost']
-        cost_if_stabilized = target_patients * settings.COST_ASSUMPTIONS['annual_encounters_moderate_risk'] * settings.COST_ASSUMPTIONS['avg_encounter_cost_moderate_risk']
+        cost_if_high_risk = target_patients * COST_ASSUMPTIONS['annual_encounters_high_risk'] * COST_ASSUMPTIONS['avg_encounter_cost_high_risk']
+        cost_of_intervention = target_patients * COST_ASSUMPTIONS['preventive_intervention_cost']
+        cost_if_stabilized = target_patients * COST_ASSUMPTIONS['annual_encounters_moderate_risk'] * COST_ASSUMPTIONS['avg_encounter_cost_moderate_risk']
         total_intervention_cost = cost_of_intervention + cost_if_stabilized
         net_savings = cost_if_high_risk - total_intervention_cost
         with st.container(border=True):
