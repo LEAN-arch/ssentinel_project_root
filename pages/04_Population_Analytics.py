@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/04_Population_Analytics.py
-# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V10 - ACTION-FOCUSED AND RESILIENT)
+# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V11 - DATE COMPARISON FIX)
 
 import logging
 from datetime import date, timedelta
@@ -78,7 +78,6 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
         logger.warning("Zone data is empty. Creating a dummy zone for dashboard functionality.")
         zone_ids = health_df['zone_id'].unique()
         zone_df = pd.DataFrame({'zone_id': zone_ids, 'zone_name': [f"Zone {zid}" for zid in zone_ids]})
-        # Mock geometry for mapping
         if 'geometry' not in zone_df.columns: zone_df['geometry'] = None
     
     enriched_zone_df = enrich_zone_data_with_aggregates(zone_df, health_df)
@@ -100,17 +99,19 @@ def get_risk_stratification(df: pd.DataFrame) -> dict:
 def render_overview(df_filtered: pd.DataFrame, health_df: pd.DataFrame, start_date: date):
     st.subheader("Population Health Scorecard")
     cols = st.columns(4)
-    # KPI 1: Unique Patients
     unique_patients = df_filtered['patient_id'].nunique()
     cols[0].metric("Unique Patients in Period", f"{unique_patients:,}")
-    # KPI 2: Avg. Risk Score
     avg_risk = df_filtered['ai_risk_score'].mean()
     cols[1].metric("Avg. Risk Score", f"{avg_risk:.1f}")
-    # KPI 3: High Risk Count
     high_risk_count = df_filtered[df_filtered['ai_risk_score'] >= 65]['patient_id'].nunique()
     cols[2].metric("High-Risk Patients", f"{high_risk_count:,}", help="Count of unique patients with risk score >= 65")
-    # SME KPI UPGRADE: Care Gap Analysis
-    high_risk_no_contact = health_df[(health_df['ai_risk_score'] >= 65) & (health_df['encounter_date'] < (start_date - timedelta(days=90)))]['patient_id'].nunique()
+
+    # --- SME FIX: Standardize date types before comparison ---
+    care_gap_date_threshold = start_date - timedelta(days=90)
+    high_risk_no_contact = health_df[
+        (health_df['ai_risk_score'] >= 65) & 
+        (health_df['encounter_date'].dt.date < care_gap_date_threshold)
+    ]['patient_id'].nunique()
     cols[3].metric("Care Gap: High-Risk", f"{high_risk_no_contact:,}", help="High-risk patients with no clinic encounter in the last 90 days", delta_color="inverse")
 
 def render_risk_stratification(df_filtered: pd.DataFrame):
