@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V26 - KEY FIX)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V27 - NO-DEAD-ENDS UI)
 
 import logging
 from datetime import date, timedelta
@@ -79,7 +79,7 @@ def _render_custom_indicator(title: str, value: str, state: str, help_text: str)
     st.markdown(f"""<div style="border: 1px solid #e1e4e8; border-left: 5px solid {border_color}; border-radius: 5px; padding: 10px; margin-bottom: 10px;"><div style="font-size: 0.9em; color: #586069;">{title}</div><div style="font-size: 1.5em; font-weight: bold; color: {border_color};">{value}</div></div>""", unsafe_allow_html=True)
 
 # --- UI Rendering Components for Tabs ---
-# ... (render_overview_tab, render_program_analysis_tab, render_demographics_tab, render_forecasting_tab, render_environment_tab are unchanged)...
+# ... (render_overview_tab, render_program_analysis_tab are unchanged) ...
 def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: date, end_date: date):
     st.header("🚀 Clinic Overview")
     with st.container(border=True):
@@ -166,16 +166,20 @@ def render_demographics_tab(df: pd.DataFrame):
     if df.empty:
         st.info("No patient data available for demographic analysis.")
         return
+
+    # --- Data Preparation ---
     df_unique = df.drop_duplicates(subset=['patient_id']).copy()
     df_unique['gender'] = df_unique['gender'].fillna('Unknown').astype(str)
     age_bins, age_labels = [0, 5, 15, 25, 50, 150], ['0-4', '5-14', '15-24', '25-49', '50+']
     df_unique['age_group'] = pd.cut(df_unique['age'], bins=age_bins, labels=age_labels, right=False).astype(str).replace('nan', 'Not Recorded')
+    
     gender_dist = df_unique['gender'].value_counts(normalize=True).mul(100)
     col1, col2, col3 = st.columns(3)
     col1.metric("Median Patient Age", f"{df_unique['age'].median():.1f} years")
     col2.metric("Female Patients", f"{gender_dist.get('Female', 0):.1f}%")
     col3.metric("Male Patients", f"{gender_dist.get('Male', 0):.1f}%")
     st.divider()
+
     col1, col2 = st.columns(2, gap="large")
     with col1:
         st.subheader("Comparative Breakdown")
@@ -183,35 +187,68 @@ def render_demographics_tab(df: pd.DataFrame):
         fig_vol = px.bar(demo_counts, x='age_group', y='count', color='gender', barmode='group', title="<b>Patient Volume by Age & Gender</b>", category_orders={'age_group': age_labels + ['Not Recorded']}, color_discrete_map=GENDER_COLORS)
         fig_vol.update_layout(template=PLOTLY_TEMPLATE, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig_vol, use_container_width=True)
+        
         risk_by_demo = df_unique.groupby(['age_group', 'gender'])['ai_risk_score'].mean().reset_index()
         fig_risk = px.bar(risk_by_demo, x='age_group', y='ai_risk_score', color='gender', barmode='group', title="<b>Average AI Risk Score by Age & Gender</b>", category_orders={'age_group': age_labels + ['Not Recorded']}, color_discrete_map=GENDER_COLORS)
         fig_risk.update_layout(template=PLOTLY_TEMPLATE, yaxis_title="Avg. Risk Score", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         fig_risk.update_yaxes(range=[0, 100])
         st.plotly_chart(fig_risk, use_container_width=True)
+
     with col2:
         st.subheader("🎯 Actionable Insight Engine")
-        demo_agg = df_unique.groupby(['age_group', 'gender']).agg(patient_volume=('patient_id', 'count'), avg_risk_score=('ai_risk_score', 'mean'), high_risk_count=('ai_risk_score', lambda x: (x >= 65).sum())).reset_index()
+        
+        demo_agg = df_unique.groupby(['age_group', 'gender']).agg(
+            patient_volume=('patient_id', 'count'),
+            avg_risk_score=('ai_risk_score', 'mean'),
+            high_risk_count=('ai_risk_score', lambda x: (x >= 65).sum())
+        ).reset_index()
         demo_agg['segment'] = demo_agg['gender'] + ', ' + demo_agg['age_group']
+
         if not demo_agg.empty:
-            fig_bubble = px.scatter(demo_agg, x='patient_volume', y='avg_risk_score', size='high_risk_count', color='gender', hover_name='segment', size_max=60, color_discrete_map=GENDER_COLORS, title='<b>Risk/Volume Quadrant Analysis</b>', labels={'patient_volume': 'Patient Volume (Count)', 'avg_risk_score': 'Average Risk Score'})
+            fig_bubble = px.scatter(
+                demo_agg, x='patient_volume', y='avg_risk_score', size='high_risk_count', color='gender',
+                hover_name='segment', size_max=60, color_discrete_map=GENDER_COLORS,
+                title='<b>Risk/Volume Quadrant Analysis</b>',
+                labels={'patient_volume': 'Patient Volume (Count)', 'avg_risk_score': 'Average Risk Score'}
+            )
             avg_vol, avg_risk = demo_agg['patient_volume'].mean(), demo_agg['avg_risk_score'].mean()
             fig_bubble.add_vline(x=avg_vol, line_dash="dash", line_color="grey")
             fig_bubble.add_hline(y=avg_risk, line_dash="dash", line_color="grey")
             fig_bubble.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             st.plotly_chart(fig_bubble, use_container_width=True)
             st.caption("Actionability: Focus on segments in the top-right quadrant (High Volume, High Risk). Bubble size indicates total high-risk patient impact.")
+
+            # --- SME UPGRADE: Add transparent data view and robust drill-down logic ---
+            with st.expander("Show Population Health Data Engine"):
+                st.dataframe(demo_agg.sort_values('high_risk_count', ascending=False).set_index('segment'))
+            
             st.subheader("Clinical Deep Dive on Critical Segment")
-            critical_segment = demo_agg.loc[demo_agg['high_risk_count'].idxmax()]
-            critical_age, critical_gender = critical_segment['age_group'], critical_segment['gender']
-            st.info(f"Most critical segment identified: **{critical_gender}, {critical_age}** (based on highest number of high-risk patients).")
-            critical_patients_df = df_unique[(df_unique['age_group'] == critical_age) & (df_unique['gender'] == critical_gender) & (df_unique['ai_risk_score'] >= 65)]
-            if not critical_patients_df.empty:
-                diagnoses_in_critical_segment = df[df['patient_id'].isin(critical_patients_df['patient_id'])]['diagnosis'].value_counts().nlargest(5)
-                fig_drill = px.bar(diagnoses_in_critical_segment, y=diagnoses_in_critical_segment.index, x=diagnoses_in_critical_segment.values, orientation='h', title=f"<b>Top Diagnoses for High-Risk {critical_gender}, {critical_age}</b>", labels={'y': 'Diagnosis', 'x': 'Number of Cases'})
-                fig_drill.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, yaxis={'categoryorder':'total ascending'})
-                st.plotly_chart(fig_drill, use_container_width=True)
-                st.caption("Actionability: Use this to guide targeted screening and resource allocation for your most vulnerable group.")
-        else: st.info("Not enough aggregated data to perform quadrant analysis.")
+            
+            # Master pre-check
+            if demo_agg['high_risk_count'].sum() > 0:
+                critical_segment = demo_agg.loc[demo_agg['high_risk_count'].idxmax()]
+                critical_age, critical_gender = critical_segment['age_group'], critical_segment['gender']
+                
+                st.info(f"Most critical segment identified: **{critical_gender}, {critical_age}** (based on highest number of high-risk patients).")
+
+                critical_patients_df = df_unique[(df_unique['age_group'] == critical_age) & (df_unique['gender'] == critical_gender) & (df_unique['ai_risk_score'] >= 65)]
+                
+                # Check if the specific critical segment has high-risk patients
+                if not critical_patients_df.empty:
+                    diagnoses_in_critical_segment = df[df['patient_id'].isin(critical_patients_df['patient_id'])]['diagnosis'].value_counts().nlargest(5)
+                    fig_drill = px.bar(diagnoses_in_critical_segment, y=diagnoses_in_critical_segment.index, x=diagnoses_in_critical_segment.values, orientation='h', title=f"<b>Top Diagnoses for High-Risk {critical_gender}, {critical_age}</b>", labels={'y': 'Diagnosis', 'x': 'Number of Cases'})
+                    fig_drill.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, yaxis={'categoryorder':'total ascending'})
+                    st.plotly_chart(fig_drill, use_container_width=True)
+                    st.caption("Actionability: Use this to guide targeted screening and resource allocation for your most vulnerable group.")
+                else:
+                    # Graceful failure message
+                    st.warning("The identified critical segment does not have any high-risk patients **in the currently filtered date range**. A specific diagnosis breakdown cannot be generated for this segment.")
+            else:
+                # Positive message when no high-risk patients exist at all
+                st.success("✅ No high-risk patients (score >= 65) were found in this period. All demographic segments are currently low-risk.")
+        else:
+            st.info("Not enough aggregated data to perform quadrant analysis.")
+
 
 def render_forecasting_tab(df: pd.DataFrame):
     st.header("🔮 AI-Powered Capacity Planning")
@@ -281,10 +318,7 @@ def render_efficiency_tab(df: pd.DataFrame):
     st.header("⏱️ Operational Efficiency Analysis")
     st.markdown("Monitor and predict key efficiency metrics to improve patient flow and reduce wait times.")
     if df.empty: st.info("No data available for efficiency analysis."); return
-    
-    # --- SME FIX: Address the SettingWithCopyWarning by creating a safe copy ---
     df = df.copy()
-
     avg_wait, avg_consult = df['patient_wait_time'].mean(), df['consultation_duration'].mean()
     long_wait_count = df[df['patient_wait_time'] > 45]['patient_id'].nunique()
     col1, col2, col3 = st.columns(3)
@@ -318,7 +352,6 @@ def main():
     with st.sidebar:
         st.header("Filters")
         min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
-        # --- SME FIX: Use a page-specific key to prevent duplication errors ---
         start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=29)), max_date), min_value=min_date, max_value=max_date, key="clinic_date_range")
     period_health_df = full_health_df[full_health_df['encounter_date'].dt.date.between(start_date, end_date)]
     period_iot_df = full_iot_df[full_iot_df['timestamp'].dt.date.between(start_date, end_date)] if not full_iot_df.empty else pd.DataFrame()
