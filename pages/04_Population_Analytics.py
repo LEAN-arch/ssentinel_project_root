@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/04_Population_Analytics.py
-# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V11 - DATE COMPARISON FIX)
+# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V12 - STRATEGIC RISK DRIVER ENGINE)
 
 import logging
 from datetime import date, timedelta
@@ -62,7 +62,7 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     health_df, zone_df = load_health_records(), load_zone_data()
     if health_df.empty: return pd.DataFrame(), pd.DataFrame()
     
-    health_df, _ = apply_ai_models(health_df) # Should create 'ai_risk_score'
+    health_df, _ = apply_ai_models(health_df)
     if 'ai_risk_score' not in health_df.columns:
         logger.warning("Column 'ai_risk_score' not found. Generating dummy data.")
         st.session_state['using_dummy_risk'] = True
@@ -74,7 +74,7 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
         factors = ['Hypertension', 'Diabetes', 'Smoking', 'Obesity', 'Malnutrition']
         health_df['risk_factors'] = health_df['patient_id'].apply(lambda _: list(np.random.choice(factors, size=np.random.randint(0, 4), replace=False)))
 
-    if zone_df.empty: # Gracefully handle missing zone data
+    if zone_df.empty:
         logger.warning("Zone data is empty. Creating a dummy zone for dashboard functionality.")
         zone_ids = health_df['zone_id'].unique()
         zone_df = pd.DataFrame({'zone_id': zone_ids, 'zone_name': [f"Zone {zid}" for zid in zone_ids]})
@@ -105,13 +105,8 @@ def render_overview(df_filtered: pd.DataFrame, health_df: pd.DataFrame, start_da
     cols[1].metric("Avg. Risk Score", f"{avg_risk:.1f}")
     high_risk_count = df_filtered[df_filtered['ai_risk_score'] >= 65]['patient_id'].nunique()
     cols[2].metric("High-Risk Patients", f"{high_risk_count:,}", help="Count of unique patients with risk score >= 65")
-
-    # --- SME FIX: Standardize date types before comparison ---
     care_gap_date_threshold = start_date - timedelta(days=90)
-    high_risk_no_contact = health_df[
-        (health_df['ai_risk_score'] >= 65) & 
-        (health_df['encounter_date'].dt.date < care_gap_date_threshold)
-    ]['patient_id'].nunique()
+    high_risk_no_contact = health_df[(health_df['ai_risk_score'] >= 65) & (health_df['encounter_date'].dt.date < care_gap_date_threshold)]['patient_id'].nunique()
     cols[3].metric("Care Gap: High-Risk", f"{high_risk_no_contact:,}", help="High-risk patients with no clinic encounter in the last 90 days", delta_color="inverse")
 
 def render_risk_stratification(df_filtered: pd.DataFrame):
@@ -163,38 +158,76 @@ def render_geospatial_analysis(zone_df_filtered: pd.DataFrame, df_filtered: pd.D
     st.plotly_chart(fig, use_container_width=True)
 
 def render_population_segmentation(df_filtered: pd.DataFrame):
-    st.header("🧑‍🤝‍🧑 Population Segmentation & Risk Drivers")
-    st.markdown("Analyze demographic segments and the underlying factors driving health risk to enable targeted public health campaigns.")
+    st.header("🧑‍🤝‍🧑 Risk Driver & Comorbidity Engine")
+    st.markdown("Proactively identify and analyze the key risk factors driving poor health outcomes across your population.")
     
     df_unique = df_filtered.drop_duplicates(subset=['patient_id'])
-    if df_unique.empty: st.info("No unique patient data in this period for segmentation."); return
-    
-    all_factors = sorted(list(set([factor for sublist in df_unique.get('risk_factors', []) for factor in sublist])))
-    if not all_factors: st.warning("No risk factor data available. This analysis will be limited."); return
+    if df_unique.empty:
+        st.info("No unique patient data in this period for segmentation.")
+        return
 
-    selected_factor = st.selectbox("Select a Primary Risk Factor to Analyze:", all_factors, help="Choose a risk factor to see which demographic groups are most affected.")
+    all_factors = sorted(list(set([factor for sublist in df_unique.get('risk_factors', []) for factor in sublist])))
+    if not all_factors:
+        st.warning("No risk factor data available. This analysis cannot be performed.")
+        return
+
+    # --- SME UPGRADE: Section 1 - The "Big Picture" Risk Factor Landscape ---
+    st.subheader("Overall Risk Factor Landscape")
+    st.markdown("Identify the most prevalent and most severe risk factors in your population at a glance. Bar length shows prevalence; color shows the average risk of patients with that factor.")
+    
+    prevalence = df_unique['risk_factors'].explode().value_counts()
+    avg_risk_by_factor = {
+        factor: df_unique[df_unique['risk_factors'].apply(lambda x: factor in x)]['ai_risk_score'].mean()
+        for factor in prevalence.index
+    }
+    risk_factor_summary = pd.DataFrame({
+        'factor': prevalence.index,
+        'prevalence': prevalence.values,
+        'avg_risk_score': [avg_risk_by_factor[f] for f in prevalence.index]
+    }).sort_values('prevalence', ascending=True)
+
+    fig_landscape = px.bar(
+        risk_factor_summary,
+        x='prevalence', y='factor', orientation='h',
+        color='avg_risk_score',
+        color_continuous_scale=px.colors.sequential.Reds,
+        title="<b>Prevalence vs. Severity of Top Risk Factors</b>",
+        labels={'prevalence': 'Number of Patients (Prevalence)', 'factor': 'Risk Factor', 'avg_risk_score': 'Avg. Risk Score'},
+        text='prevalence'
+    )
+    fig_landscape.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, coloraxis_colorbar_title_text='Avg. Risk')
+    st.plotly_chart(fig_landscape, use_container_width=True)
+    st.caption("Actionability: High-prevalence, high-risk (dark red) factors are top priorities for broad-based campaigns.")
+
+    st.divider()
+
+    # --- SME UPGRADE: Section 2 - Guided Deep Dive (Reusing Existing Components) ---
+    st.subheader("🎯 Targeted Deep Dive into Specific Risk Factors")
+    selected_factor = st.selectbox("Select a Risk Factor for a detailed breakdown:", all_factors, help="Choose a risk factor to see which demographic groups are most affected and what other conditions are common.")
     
     col1, col2 = st.columns(2, gap="large")
     with col1:
-        st.subheader(f"Demographic Hotspots for '{selected_factor}'")
+        st.markdown(f"##### Demographic Hotspots for '{selected_factor}'")
         factor_df = df_unique[df_unique['risk_factors'].apply(lambda x: selected_factor in x)].copy()
         if not factor_df.empty:
             age_bins, age_labels = [0, 18, 40, 65, 150], ['0-17', '18-39', '40-64', '65+']
             factor_df['age_group'] = pd.cut(factor_df['age'], bins=age_bins, labels=age_labels, right=False)
             driver_data = factor_df.groupby(['age_group', 'gender']).size().reset_index(name='count')
-            fig = px.bar(driver_data, x='age_group', y='count', color='gender', barmode='group', title=f"<b>Who is most affected by '{selected_factor}'?</b>", labels={'count': 'Number of Patients'}, category_orders={'age_group': age_labels}, color_discrete_map=GENDER_COLORS, template=PLOTLY_TEMPLATE, text='count')
-            fig.update_traces(textposition='outside').update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), title_x=0.5)
-            st.plotly_chart(fig, use_container_width=True)
-        else: st.info(f"No patients with the risk factor '{selected_factor}' in the selected period.")
+            fig_demo = px.bar(driver_data, x='age_group', y='count', color='gender', barmode='group', title=f"<b>Who is most affected by '{selected_factor}'?</b>", labels={'count': 'Number of Patients'}, category_orders={'age_group': age_labels}, color_discrete_map=GENDER_COLORS, template=PLOTLY_TEMPLATE, text='count')
+            fig_demo.update_traces(textposition='outside').update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), title_x=0.5)
+            st.plotly_chart(fig_demo, use_container_width=True)
+        else:
+            st.info(f"No patients with the risk factor '{selected_factor}' in the selected period.")
     with col2:
-        st.subheader("Co-Occurring Risk Factors")
+        st.markdown("##### Top Co-morbidities")
         if not factor_df.empty:
             co_factors = factor_df['risk_factors'].explode().value_counts().drop(selected_factor, errors='ignore').nlargest(5)
             fig_cofactor = px.bar(co_factors, x=co_factors.values, y=co_factors.index, orientation='h', title=f"<b>Top Co-morbidities with '{selected_factor}'</b>", labels={'x': 'Number of Patients', 'y': 'Co-occurring Factor'})
             fig_cofactor.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_cofactor, use_container_width=True)
             st.caption("Actionability: Patients with the primary risk factor often have these other conditions. Screen accordingly.")
-        else: st.info("Select a factor with patient data to see co-morbidities.")
+        else:
+            st.info("Select a factor with patient data to see co-morbidities.")
 
 def render_emerging_threats(health_df: pd.DataFrame, zone_df: pd.DataFrame):
     st.header("🔬 Emerging Health Threats Analysis")
@@ -225,7 +258,6 @@ def render_emerging_threats(health_df: pd.DataFrame, zone_df: pd.DataFrame):
                 fig.update_layout(title=f"<b>Weekly Trend for '{row['diagnosis']}'</b>", yaxis_title='Number of Cases', template=PLOTLY_TEMPLATE, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), title_x=0.5)
                 st.plotly_chart(fig, use_container_width=True)
             with col2:
-                # SME UPGRADE: Geospatial Threat Hotspot
                 if not zone_df.empty and 'geometry' in zone_df.columns:
                     threat_geo_df = threat_trend_df.groupby('zone_id').size().reset_index(name='case_count')
                     zone_threat_df = pd.merge(zone_df, threat_geo_df, on='zone_id', how='left').fillna(0)
@@ -262,7 +294,7 @@ def main():
     render_overview(df_filtered, health_df, start_date)
     st.divider()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["🚨 Risk Stratification", "🗺️ Geospatial Intelligence", "🧑‍🤝‍🧑 Population Segmentation", "🔬 Emerging Threats"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🚨 Risk Stratification", "🗺️ Geospatial Intelligence", "🧑‍🤝‍🧑 Risk Drivers", "🔬 Emerging Threats"])
 
     with tab1: render_risk_stratification(df_filtered)
     with tab2: render_geospatial_analysis(zone_df_filtered, df_filtered)
