@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/04_Population_Analytics.py
-# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V12 - STRATEGIC RISK DRIVER ENGINE)
+# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V13 - STRATEGIC RISK & ROI ENGINE)
 
 import logging
 from datetime import date, timedelta
@@ -26,12 +26,22 @@ PLOTLY_TEMPLATE = "plotly_white"
 RISK_COLORS = {'Low Risk': '#28a745', 'Moderate Risk': '#ffc107', 'High Risk': '#dc3545'}
 GENDER_COLORS = {"Female": "#E1396C", "Male": "#1f77b4", "Unknown": "#7f7f7f"}
 
+# --- SME KPI UPGRADE: Add cost assumptions for ROI calculations ---
+COST_ASSUMPTIONS = {
+    'avg_encounter_cost_high_risk': 250,  # Avg cost per encounter for a high-risk patient
+    'avg_encounter_cost_moderate_risk': 120, # Avg cost for moderate-risk
+    'preventive_intervention_cost': 500,  # One-time cost for a comprehensive preventive program per person
+    'annual_encounters_high_risk': 4,      # High-risk patients average 4 visits/year
+    'annual_encounters_moderate_risk': 2   # Moderate-risk patients average 2 visits/year
+}
+
+
 # --- Mock AI & Helper Functions ---
 def predict_risk_transition(df: pd.DataFrame) -> dict:
-    if df.empty: return {'nodes': [], 'source_indices': [], 'target_indices': [], 'values': [], 'upward_transitions': 0}
+    if df.empty: return {'nodes': [], 'source_indices': [], 'target_indices': [], 'values': [], 'upward_transitions': 0, 'mod_to_high_count': 0}
     low_to_mod = int(df[df['ai_risk_score'] < 40].shape[0] * np.random.uniform(0.08, 0.12))
     mod_to_high = int(df[df['ai_risk_score'].between(40, 64, inclusive='both')].shape[0] * np.random.uniform(0.04, 0.06))
-    return {'nodes': ['Low Risk', 'Moderate Risk', 'High Risk', 'Low Risk (Future)', 'Moderate Risk (Future)', 'High Risk (Future)'], 'source_indices': [0, 1], 'target_indices': [4, 5], 'values': [low_to_mod, mod_to_high], 'upward_transitions': low_to_mod + mod_to_high}
+    return {'nodes': ['Low Risk', 'Moderate Risk', 'High Risk', 'Low Risk (Future)', 'Moderate Risk (Future)', 'High Risk (Future)'], 'source_indices': [0, 1], 'target_indices': [4, 5], 'values': [low_to_mod, mod_to_high], 'upward_transitions': low_to_mod + mod_to_high, 'mod_to_high_count': mod_to_high}
 
 def calculate_preventive_opportunity(zone_df: pd.DataFrame, health_df: pd.DataFrame) -> pd.DataFrame:
     if health_df.empty:
@@ -110,32 +120,84 @@ def render_overview(df_filtered: pd.DataFrame, health_df: pd.DataFrame, start_da
     cols[3].metric("Care Gap: High-Risk", f"{high_risk_no_contact:,}", help="High-risk patients with no clinic encounter in the last 90 days", delta_color="inverse")
 
 def render_risk_stratification(df_filtered: pd.DataFrame):
-    st.header("🚨 Population Risk Stratification")
+    st.header("🚨 Strategic Risk & Intervention Planning")
+    st.markdown("Analyze current risk, predict future burdens, and quantify the value of preventive action.")
+    st.divider()
+
+    # --- Section 1: Current State ---
+    st.subheader("Part 1: What is our current risk distribution?")
+    risk_data = get_risk_stratification(df_filtered)
+    pyramid_data = risk_data.get('pyramid_data')
+    if not pyramid_data.empty:
+        pyramid_data = pyramid_data.set_index('risk_tier').reindex(['High Risk', 'Moderate Risk', 'Low Risk']).reset_index()
+        fig = px.bar(pyramid_data, y='risk_tier', x='patient_count', orientation='h', color='risk_tier', color_discrete_map=RISK_COLORS, text='patient_count', title="<b>Current Population Risk Distribution</b>")
+        fig.update_traces(texttemplate='%{text:,.0f}', textposition='inside').update_layout(template=PLOTLY_TEMPLATE, xaxis_title="Number of Patients", yaxis_title=None, showlegend=False, title_x=0.5)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No data available to generate a risk pyramid for this period.")
+        return # Cannot proceed without this data
+    
+    st.divider()
+
+    # --- Section 2: Future State & Projected Burden ---
+    st.subheader("Part 2: What is the predicted future burden?")
     col1, col2 = st.columns(2, gap="large")
     with col1:
-        st.subheader("Current Risk Pyramid")
-        risk_data = get_risk_stratification(df_filtered)
-        pyramid_data = risk_data.get('pyramid_data')
-        if not pyramid_data.empty:
-            pyramid_data = pyramid_data.set_index('risk_tier').reindex(['High Risk', 'Moderate Risk', 'Low Risk']).reset_index()
-            fig = px.bar(pyramid_data, y='risk_tier', x='patient_count', orientation='h', color='risk_tier', color_discrete_map=RISK_COLORS, text='patient_count', title="<b>Current Population Risk Distribution</b>")
-            fig.update_traces(texttemplate='%{text:,.0f}', textposition='inside').update_layout(template=PLOTLY_TEMPLATE, xaxis_title="Number of Patients", yaxis_title=None, showlegend=False, title_x=0.5)
-            st.plotly_chart(fig, use_container_width=True)
-        else: st.info("No data available to generate a risk pyramid for this period.")
-    with col2:
-        st.subheader("🔮 AI-Predicted Risk Transition")
-        st.markdown("This model predicts how many patients are likely to transition to a higher risk tier in the next 90 days.")
+        st.markdown("##### **Predicted 90-Day Risk Flow**")
         if not df_filtered.empty:
             predicted_transitions = predict_risk_transition(df_filtered)
-            fig = go.Figure(go.Sankey(
+            fig_sankey = go.Figure(go.Sankey(
                 node=dict(pad=25, thickness=20, line=dict(color="black", width=0.5), label=predicted_transitions['nodes'], color=[RISK_COLORS.get(label.split(' ')[0], '#7f7f7f') for label in predicted_transitions['nodes']]),
                 link=dict(source=predicted_transitions['source_indices'], target=predicted_transitions['target_indices'], value=predicted_transitions['values'], color='rgba(0, 123, 255, 0.5)', hovertemplate='Predicted Transitions: %{value:,.0f}<extra></extra>')
             ))
-            fig.update_layout(title_text="<b>Predicted 90-Day Patient Risk Flow</b>", font_size=12, template=PLOTLY_TEMPLATE, title_x=0.5)
-            st.plotly_chart(fig, use_container_width=True)
-            upward_transitions = predicted_transitions['upward_transitions']
-            st.warning(f"**Actionable Insight:** The model predicts **{upward_transitions:,}** patients will transition to a higher risk tier. Focus preventive efforts on the 'Moderate Risk' cohort to mitigate this.")
-        else: st.info("Insufficient data to predict risk transitions.")
+            fig_sankey.update_layout(font_size=12, template=PLOTLY_TEMPLATE, margin=dict(t=30, l=10, r=10, b=10))
+            st.plotly_chart(fig_sankey, use_container_width=True)
+        else:
+            st.info("Insufficient data to predict risk transitions.")
+    
+    with col2:
+        st.markdown("##### **Projected Annual Burden of Illness**")
+        with st.container(border=True):
+            high_risk_patients = pyramid_data[pyramid_data['risk_tier'] == 'High Risk']['patient_count'].sum()
+            projected_encounters = high_risk_patients * COST_ASSUMPTIONS['annual_encounters_high_risk']
+            projected_cost = projected_encounters * COST_ASSUMPTIONS['avg_encounter_cost_high_risk']
+            
+            st.metric("Projected High-Risk Encounters/Year", f"{projected_encounters:,.0f} visits")
+            st.metric("Projected Annual Cost of High-Risk Care", f"${projected_cost:,.0f}")
+            st.caption(f"Based on {high_risk_patients:,} high-risk patients, each averaging {COST_ASSUMPTIONS['annual_encounters_high_risk']} visits/year at ${COST_ASSUMPTIONS['avg_encounter_cost_high_risk']}/visit.")
+
+    st.divider()
+
+    # --- Section 3: The Business Case for Prevention ---
+    st.subheader("Part 3: What is the Return on Investment for Prevention?")
+    st.markdown("This analysis quantifies the financial impact of a preventive care program targeting moderate-risk patients predicted to transition.")
+    
+    if not df_filtered.empty:
+        target_patients = predicted_transitions['mod_to_high_count']
+        
+        # Cost of Inaction: What happens if we do nothing?
+        cost_if_high_risk = target_patients * COST_ASSUMPTIONS['annual_encounters_high_risk'] * COST_ASSUMPTIONS['avg_encounter_cost_high_risk']
+        
+        # Cost of Action: What does the intervention cost?
+        cost_of_intervention = target_patients * COST_ASSUMPTIONS['preventive_intervention_cost']
+        cost_if_stabilized = target_patients * COST_ASSUMPTIONS['annual_encounters_moderate_risk'] * COST_ASSUMPTIONS['avg_encounter_cost_moderate_risk']
+        total_intervention_cost = cost_of_intervention + cost_if_stabilized
+
+        net_savings = cost_if_high_risk - total_intervention_cost
+
+        with st.container(border=True):
+            st.markdown("##### **ROI on Preventive Care for At-Risk Cohort**")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Patients to Target", f"{target_patients:,}", "Predicted to become High-Risk")
+            c2.metric("Annual Cost of Inaction", f"${cost_if_high_risk:,.0f}")
+            c3.metric("Annual Cost of Intervention", f"${total_intervention_cost:,.0f}")
+            
+            st.metric("Potential Net Savings (1 Year)", f"${net_savings:,.0f}", "Savings from preventing escalation")
+
+            if net_savings > 0:
+                st.success(f"**Recommendation:** Investing in preventive care for the **{target_patients:,}** moderate-risk patients is projected to yield a net saving of **${net_savings:,.0f}** in the next year.")
+            else:
+                st.warning(f"**Recommendation:** The model projects a net cost of **${-net_savings:,.0f}** for this intervention. Review cost assumptions or focus on higher-impact programs.")
 
 def render_geospatial_analysis(zone_df_filtered: pd.DataFrame, df_filtered: pd.DataFrame):
     st.header("🗺️ Geospatial Intelligence")
@@ -171,7 +233,6 @@ def render_population_segmentation(df_filtered: pd.DataFrame):
         st.warning("No risk factor data available. This analysis cannot be performed.")
         return
 
-    # --- SME UPGRADE: Section 1 - The "Big Picture" Risk Factor Landscape ---
     st.subheader("Overall Risk Factor Landscape")
     st.markdown("Identify the most prevalent and most severe risk factors in your population at a glance. Bar length shows prevalence; color shows the average risk of patients with that factor.")
     
@@ -187,21 +248,15 @@ def render_population_segmentation(df_filtered: pd.DataFrame):
     }).sort_values('prevalence', ascending=True)
 
     fig_landscape = px.bar(
-        risk_factor_summary,
-        x='prevalence', y='factor', orientation='h',
-        color='avg_risk_score',
-        color_continuous_scale=px.colors.sequential.Reds,
-        title="<b>Prevalence vs. Severity of Top Risk Factors</b>",
-        labels={'prevalence': 'Number of Patients (Prevalence)', 'factor': 'Risk Factor', 'avg_risk_score': 'Avg. Risk Score'},
-        text='prevalence'
+        risk_factor_summary, x='prevalence', y='factor', orientation='h', color='avg_risk_score',
+        color_continuous_scale=px.colors.sequential.Reds, title="<b>Prevalence vs. Severity of Top Risk Factors</b>",
+        labels={'prevalence': 'Number of Patients (Prevalence)', 'factor': 'Risk Factor', 'avg_risk_score': 'Avg. Risk Score'}, text='prevalence'
     )
     fig_landscape.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, coloraxis_colorbar_title_text='Avg. Risk')
     st.plotly_chart(fig_landscape, use_container_width=True)
     st.caption("Actionability: High-prevalence, high-risk (dark red) factors are top priorities for broad-based campaigns.")
-
     st.divider()
 
-    # --- SME UPGRADE: Section 2 - Guided Deep Dive (Reusing Existing Components) ---
     st.subheader("🎯 Targeted Deep Dive into Specific Risk Factors")
     selected_factor = st.selectbox("Select a Risk Factor for a detailed breakdown:", all_factors, help="Choose a risk factor to see which demographic groups are most affected and what other conditions are common.")
     
@@ -216,8 +271,7 @@ def render_population_segmentation(df_filtered: pd.DataFrame):
             fig_demo = px.bar(driver_data, x='age_group', y='count', color='gender', barmode='group', title=f"<b>Who is most affected by '{selected_factor}'?</b>", labels={'count': 'Number of Patients'}, category_orders={'age_group': age_labels}, color_discrete_map=GENDER_COLORS, template=PLOTLY_TEMPLATE, text='count')
             fig_demo.update_traces(textposition='outside').update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), title_x=0.5)
             st.plotly_chart(fig_demo, use_container_width=True)
-        else:
-            st.info(f"No patients with the risk factor '{selected_factor}' in the selected period.")
+        else: st.info(f"No patients with the risk factor '{selected_factor}' in the selected period.")
     with col2:
         st.markdown("##### Top Co-morbidities")
         if not factor_df.empty:
@@ -226,8 +280,7 @@ def render_population_segmentation(df_filtered: pd.DataFrame):
             fig_cofactor.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_cofactor, use_container_width=True)
             st.caption("Actionability: Patients with the primary risk factor often have these other conditions. Screen accordingly.")
-        else:
-            st.info("Select a factor with patient data to see co-morbidities.")
+        else: st.info("Select a factor with patient data to see co-morbidities.")
 
 def render_emerging_threats(health_df: pd.DataFrame, zone_df: pd.DataFrame):
     st.header("🔬 Emerging Health Threats Analysis")
@@ -294,7 +347,7 @@ def main():
     render_overview(df_filtered, health_df, start_date)
     st.divider()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["🚨 Risk Stratification", "🗺️ Geospatial Intelligence", "🧑‍🤝‍🧑 Risk Drivers", "🔬 Emerging Threats"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🚨 Risk & ROI Planning", "🗺️ Geospatial Intelligence", "🧑‍🤝‍🧑 Risk Drivers", "🔬 Emerging Threats"])
 
     with tab1: render_risk_stratification(df_filtered)
     with tab2: render_geospatial_analysis(zone_df_filtered, df_filtered)
