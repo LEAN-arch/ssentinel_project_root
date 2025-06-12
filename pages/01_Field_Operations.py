@@ -1,6 +1,6 @@
 # sentinel_project_root/pages/01_Field_Operations.py
 # FINAL, SELF-CONTAINED, AND VISUALIZATION-ENHANCED VERSION
-# SME UPGRADE: Added intelligent data augmentation for missing location data.
+# SME UPGRADE: Added intelligent "empty state" handling for the Operations tab.
 
 import logging
 from datetime import date, timedelta
@@ -37,7 +37,7 @@ PROGRAM_DEFINITIONS = {
     "Anemia & NTDs": {"icon": "🩸", "symptom": "fatigue|weakness", "test": "CBC"},
 }
 
-# --- SME VISUALIZATION & KPI UPGRADE: Constants for professional, consistent styling and logic ---
+# --- SME VISUALIZATION & KPI UPGRADE: Constants ---
 PLOTLY_TEMPLATE = "plotly_white"
 RISK_BINS = [-np.inf, 0.4, 0.7, np.inf]
 RISK_LABELS = ["Low Risk", "Medium Risk", "High Risk"]
@@ -48,25 +48,18 @@ RISK_COLOR_MAP = {"Low Risk": "#28a745", "Medium Risk": "#ffc107", "High Risk": 
 @st.cache_data(ttl=3600)
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Loads and enriches data.
-    SME UPGRADE: Intelligently augments missing location data for demonstration
-    and robustness, while flagging the issue.
+    Loads and enriches data, augmenting missing location data for robustness.
     """
     raw_health_df = load_health_records()
     iot_df = load_iot_records()
     if raw_health_df.empty:
         return pd.DataFrame(), iot_df
 
-    # --- SME ROBUSTNESS UPGRADE: Handle missing location data ---
     if 'lat' not in raw_health_df.columns or 'lon' not in raw_health_df.columns:
-        logger.warning("Location columns ('lat', 'lon') not found in source data. Generating dummy locations for demonstration.")
-        st.session_state['using_dummy_locations'] = True # Flag for the UI
-        
-        # Generate plausible coordinates (e.g., around Nairobi, Kenya)
-        NBO_LAT_RANGE = (-1.4, -1.2)
-        NBO_LON_RANGE = (36.7, 37.0)
+        logger.warning("Location columns ('lat', 'lon') not found. Generating dummy locations.")
+        st.session_state['using_dummy_locations'] = True
+        NBO_LAT_RANGE, NBO_LON_RANGE = (-1.4, -1.2), (36.7, 37.0)
         num_records = len(raw_health_df)
-        
         raw_health_df['lat'] = np.random.uniform(NBO_LAT_RANGE[0], NBO_LAT_RANGE[1], num_records)
         raw_health_df['lon'] = np.random.uniform(NBO_LON_RANGE[0], NBO_LON_RANGE[1], num_records)
     else:
@@ -82,8 +75,9 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
         enriched_df['risk_category'] = "Low Risk"
     return enriched_df, iot_df
 
-# --- SME FUNCTIONALITY UPGRADE: Internalized plotting & robust forecasting logic ---
-# ... (This section remains unchanged from the previous version) ...
+# --- Helper and UI Functions ---
+# ... (Functions _plot_forecast_chart_internal, generate_moving_average_forecast, render_program_cascade, render_decision_support_tab remain unchanged from the previous version) ...
+
 def _plot_forecast_chart_internal(df: pd.DataFrame, title: str, y_title: str) -> go.Figure:
     fig = go.Figure()
     if "yhat_lower" in df.columns and "yhat_upper" in df.columns:
@@ -116,8 +110,6 @@ def generate_moving_average_forecast(df: pd.DataFrame, days_to_forecast: int, wi
     forecast_df['yhat_upper'] = moving_avg
     return forecast_df
 
-# --- UI Rendering Components ---
-# ... (render_program_cascade remains unchanged) ...
 def render_program_cascade(df: pd.DataFrame, config: Dict, key_prefix: str):
     symptomatic = df[df['patient_reported_symptoms'].str.contains(config['symptom'], case=False, na=False)]
     tested = symptomatic[symptomatic['test_type'] == config['test']]
@@ -160,53 +152,33 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_source_df: p
     st.header("🎯 AI Predictive Analytics Hub")
     st.markdown("""This hub provides forward-looking intelligence to guide strategic decisions, from individual patient prioritization to resource planning.""")
     st.divider()
-
     with st.container(border=True):
         st.subheader("🚨 Priority Patient Alerts")
         alerts = generate_chw_alerts(patient_df=analysis_df)
         if not alerts:
             st.success("✅ No high-priority patient alerts for this selection.")
         for i, alert in enumerate(alerts):
-            level, icon = ("CRITICAL", "🔴") if alert.get('alert_level') == 'CRITICAL' else \
-                          (("WARNING", "🟠") if alert.get('alert_level') == 'WARNING' else ("INFO", "ℹ️"))
+            level, icon = ("CRITICAL", "🔴") if alert.get('alert_level') == 'CRITICAL' else (("WARNING", "🟠") if alert.get('alert_level') == 'WARNING' else ("INFO", "ℹ️"))
             with st.expander(f"**{icon} {level}: {alert.get('reason')} for Patient {alert.get('patient_id')}**", expanded=level=="CRITICAL"):
                 st.markdown(f"> {alert.get('details', 'N/A')}")
                 st.markdown(f"**AI Priority Score:** `{alert.get('priority', 0):.2f}` | **Assigned CHW:** `{alert.get('chw_id', 'N/A')}`")
-
     st.divider()
     col1, col2 = st.columns(2, gap="large")
-
     with col1:
         with st.container(border=True):
             st.subheader("🗺️ Geospatial Risk Hotspots")
-            
-            # --- SME DIAGNOSTIC UPGRADE: This logic now handles the case where data exists but is null for the filter ---
             map_df = analysis_df.dropna(subset=['lat', 'lon', 'risk_score'])
             if map_df.empty:
                 st.info("ℹ️ **No geographic data to display for the current filter selection.**")
-                # Add an empty map figure to maintain layout consistency
                 st.plotly_chart(create_empty_figure("No location data available"), use_container_width=True)
             else:
-                fig_map = px.scatter_mapbox(
-                    map_df, lat="lat", lon="lon", color="risk_score",
-                    size="risk_score",
-                    color_continuous_scale=px.colors.sequential.YlOrRd,
-                    mapbox_style="carto-positron", zoom=9, # Zoom out slightly for generated data
-                    center={"lat": map_df.lat.mean(), "lon": map_df.lon.mean()},
-                    hover_name="patient_id", hover_data={"risk_category": True, "chw_id": True},
-                    title="<b>Where are the highest-risk patients?</b>"
-                )
-                fig_map.update_layout(
-                    margin={"r":0,"t":40,"l":0,"b":0}, title_x=0.5,
-                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
-                )
+                fig_map = px.scatter_mapbox(map_df, lat="lat", lon="lon", color="risk_score", size="risk_score", color_continuous_scale=px.colors.sequential.YlOrRd, mapbox_style="carto-positron", zoom=9, center={"lat": map_df.lat.mean(), "lon": map_df.lon.mean()}, hover_name="patient_id", hover_data={"risk_category": True, "chw_id": True}, title="<b>Where are the highest-risk patients?</b>")
+                fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0}, title_x=0.5, legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
                 st.plotly_chart(fig_map, use_container_width=True)
                 st.caption("Actionability: Deploy CHWs to high-density red and orange areas.")
-    
     with col2:
         with st.container(border=True):
             st.subheader("🔮 Patient Load Forecast")
-            # ... (Rest of the forecast logic remains unchanged) ...
             forecast_days = st.slider("Forecast Horizon (Days):", 7, 30, 14, 7, key="forecast_slider")
             st.markdown("##### Forecast Model Health Check")
             encounters_hist = forecast_source_df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
@@ -254,13 +226,22 @@ def render_decision_support_tab(analysis_df: pd.DataFrame, forecast_source_df: p
             else:
                 st.error("All forecast models failed. The data is likely too sparse or erratic for a reliable prediction. Please broaden your date/zone filters.")
 
-
-# --- The rest of the file (render_iot_wearable_tab, main) remains largely unchanged ---
-# ... (render_iot_wearable_tab is unchanged) ...
 def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame, chw_filter: str, health_df: pd.DataFrame):
     st.header("🛰️ Operations, Environment & Team Well-being")
     st.markdown("Monitor environmental factors, team performance, and leading indicators of burnout.")
+
+    # --- SME UX UPGRADE: Handle the "all-empty" state gracefully at the top level ---
+    if clinic_iot.empty and wearable_iot.empty:
+        st.info(
+            "**No operational sensor data found for this period.**\n\n"
+            "This tab visualizes data from environmental sensors (like clinic CO₂) and CHW wearables (like stress monitors). "
+            "To populate these charts, please ensure the IoT data pipeline is active and that data exists for the selected date range.",
+            icon="📡"
+        )
+        return  # Exit the function to avoid rendering empty components.
+
     col1, col2 = st.columns(2, gap="large")
+
     with col1:
         st.subheader("🏥 Clinic Environment (Ventilation)")
         if not clinic_iot.empty:
@@ -272,28 +253,46 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
             st.caption("Consistently high CO₂ (>1000 PPM) indicates poor ventilation, a key risk factor for airborne disease transmission.")
         else:
             st.info("No clinic environmental sensor data for this period.")
+
         st.subheader("❤️‍🩹 CHW Well-being & Burnout Risk")
         if not health_df.empty and chw_filter == "All CHWs":
-            chw_metrics = health_df.groupby('chw_id').agg(patient_load=('patient_id', 'nunique'), high_risk_cases=('risk_score', lambda x: (x > 0.7).sum())).reset_index()
+            chw_metrics = health_df.groupby('chw_id').agg(
+                patient_load=('patient_id', 'nunique'),
+                high_risk_cases=('risk_score', lambda x: (x > 0.7).sum())
+            ).reset_index()
             if not wearable_iot.empty:
                 stress_metrics = wearable_iot.groupby('chw_id').agg(avg_stress=('chw_stress_score', 'mean')).reset_index()
                 chw_burnout_df = pd.merge(chw_metrics, stress_metrics, on='chw_id', how='inner')
                 w_load, w_risk, w_stress = 0.3, 0.4, 0.3
                 if not chw_burnout_df.empty:
-                    chw_burnout_df['burnout_risk'] = (w_load * chw_burnout_df['patient_load'] / chw_burnout_df['patient_load'].max().clip(1) + w_risk * chw_burnout_df['high_risk_cases'] / chw_burnout_df['high_risk_cases'].max().clip(1) + w_stress * chw_burnout_df['avg_stress'] / 100) * 100
+                    chw_burnout_df['burnout_risk'] = (
+                        w_load * chw_burnout_df['patient_load'] / chw_burnout_df['patient_load'].max().clip(1) +
+                        w_risk * chw_burnout_df['high_risk_cases'] / chw_burnout_df['high_risk_cases'].max().clip(1) +
+                        w_stress * chw_burnout_df['avg_stress'] / 100
+                    ) * 100
                     chw_burnout_df = chw_burnout_df.sort_values('burnout_risk', ascending=False).head(10)
-                    fig_burnout = px.bar(chw_burnout_df, x='burnout_risk', y='chw_id', orientation='h', title="<b>Top 10 CHWs at Risk of Burnout</b>", labels={'burnout_risk': 'Burnout Risk Index (0-100)', 'chw_id': 'CHW ID'}, template=PLOTLY_TEMPLATE, color='burnout_risk', color_continuous_scale=px.colors.sequential.Reds)
+                    fig_burnout = px.bar(chw_burnout_df, x='burnout_risk', y='chw_id', orientation='h',
+                                         title="<b>Top 10 CHWs at Risk of Burnout</b>",
+                                         labels={'burnout_risk': 'Burnout Risk Index (0-100)', 'chw_id': 'CHW ID'},
+                                         template=PLOTLY_TEMPLATE, color='burnout_risk',
+                                         color_continuous_scale=px.colors.sequential.Reds)
                     fig_burnout.update_layout(yaxis={'categoryorder':'total ascending'}, title_x=0.5)
                     st.plotly_chart(fig_burnout, use_container_width=True)
                     st.caption("Actionability: Proactively support CHWs with the highest risk index through workload adjustments, check-ins, or additional resources.")
-                else: st.info("Not enough overlapping health and wearable data to calculate CHW burnout risk.")
-            else: st.info("No CHW wearable data available for burnout calculation.")
-        elif chw_filter != "All CHWs": st.info("Burnout risk analysis is available only when viewing 'All CHWs'.")
-        else: st.info("Not enough data to calculate CHW burnout risk.")
+                else:
+                    st.info("No overlapping health and wearable data to calculate CHW burnout risk.")
+            else:
+                st.info("No CHW wearable data available for burnout calculation.")
+        elif chw_filter != "All CHWs":
+            st.info("Burnout risk analysis is available only when viewing 'All CHWs'.")
+        else:
+            st.info("Not enough data to calculate CHW burnout risk.")
+
     with col2:
         st.subheader("🧑‍⚕️ Team Wearable Data")
         if chw_filter != "All CHWs":
             wearable_iot = wearable_iot[wearable_iot['chw_id'] == chw_filter]
+
         if not wearable_iot.empty:
             stress_trend = wearable_iot.set_index('timestamp')['chw_stress_score'].resample('D').mean()
             fig_stress = plot_line_chart(stress_trend.dropna(), f"Average Stress Index for {chw_filter}", "Stress Index (0-100)")
@@ -302,6 +301,7 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
             st.caption("Monitors team stress, which can impact performance and patient care quality.")
         else:
             st.info(f"No wearable data available for {chw_filter} in this period.")
+
         st.subheader("🔍 Exploratory Correlation Analysis")
         correlation_series = []
         if not health_df.empty:
@@ -313,16 +313,23 @@ def render_iot_wearable_tab(clinic_iot: pd.DataFrame, wearable_iot: pd.DataFrame
         if not clinic_iot.empty:
             daily_co2 = clinic_iot.set_index('timestamp').resample('D')['avg_co2_ppm'].mean()
             correlation_series.append(daily_co2)
+
         if len(correlation_series) > 1:
             corr_df = pd.concat(correlation_series, axis=1).corr()
             if not corr_df.empty and len(corr_df) > 1:
-                fig_corr = px.imshow(corr_df, text_auto=".2f", aspect="auto", color_continuous_scale='RdBu_r', range_color=[-1, 1], title="<b>What Operational Factors Are Correlated?</b>", labels=dict(color="Correlation"))
+                fig_corr = px.imshow(
+                    corr_df, text_auto=".2f", aspect="auto",
+                    color_continuous_scale='RdBu_r', range_color=[-1, 1],
+                    title="<b>What Operational Factors Are Correlated?</b>",
+                    labels=dict(color="Correlation")
+                )
                 fig_corr.update_layout(title_x=0.5, template=PLOTLY_TEMPLATE)
                 st.plotly_chart(fig_corr, use_container_width=True)
                 st.caption("Identifies potential relationships (not causation) for further investigation or hypothesis generation.")
-            else: st.info("Could not compute a meaningful correlation matrix.")
-        else: st.info("Not enough overlapping data sources for a correlation matrix.")
-
+            else:
+                st.info("Could not compute a meaningful correlation matrix.")
+        else:
+            st.info("Not enough overlapping data sources for a correlation matrix.")
 
 def main():
     st.title("📡 Field Operations Command Center")
@@ -330,7 +337,6 @@ def main():
     health_df, iot_df = get_data()
     if health_df.empty: st.error("CRITICAL: No health record data available. The system cannot function."); st.stop()
 
-    # --- SME UX UPGRADE: Display a persistent warning if using dummy data ---
     if st.session_state.get('using_dummy_locations', False):
         st.warning(
             "⚠️ **Demonstration Mode:** The map is displaying randomized location data because "
@@ -359,7 +365,6 @@ def main():
         else:
             start_date, end_date = date(today.year, 1, 1), today
 
-    # --- Data Filtering Logic ---
     analysis_df = health_df[health_df['encounter_date'].dt.date.between(start_date, end_date)]
     forecast_source_df = health_df[health_df['encounter_date'].dt.date <= end_date]
     iot_filtered = iot_df[iot_df['timestamp'].dt.date.between(start_date, end_date)] if not iot_df.empty else pd.DataFrame()
@@ -378,7 +383,6 @@ def main():
     st.info(f"**Displaying Data For:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}` | **Zone:** `{selected_zone}` | **CHW:** `{selected_chw}`")
     st.divider()
 
-    # --- Main Tab Layout ---
     program_tab_list = [f"{p['icon']} {name}" for name, p in PROGRAM_DEFINITIONS.items()]
     tabs = st.tabs(["**📊 Program Performance**", "**🎯 AI Decision Support**", "**🛰️ Operations & Well-being**"])
 
