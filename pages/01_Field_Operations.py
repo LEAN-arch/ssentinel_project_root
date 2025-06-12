@@ -22,6 +22,13 @@ from visualization import (create_empty_figure, plot_bar_chart,
 
 # --- Page Setup ---
 st.set_page_config(page_title="Field Command Center", page_icon="📡", layout="wide")
+
+# --- SME ACTIONABILITY UPGRADE: Logging Configuration ---
+# Suppress verbose informational logs from underlying libraries (Prophet/CmdStanPy)
+# This makes the console output cleaner and focuses on actual warnings or errors.
+logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
+logging.getLogger("prophet").setLevel(logging.WARNING)
+# Set up a logger for our own application for debugging if needed
 logger = logging.getLogger(__name__)
 
 
