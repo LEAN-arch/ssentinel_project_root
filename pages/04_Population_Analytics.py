@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/04_Population_Analytics.py
-# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V14 - EARLY WARNING & RESPONSE SYSTEM)
+# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V15 - IMPORT FIX)
 
 import logging
 from datetime import date, timedelta
@@ -12,6 +12,7 @@ import streamlit as st
 # --- Core Sentinel Imports (Assumed to exist) ---
 from analytics import apply_ai_models
 from config import settings
+# SME FIX: Correct the imports to include load_zone_data
 from data_processing.loaders import load_health_records, load_zone_data
 from data_processing.enrichment import enrich_zone_data_with_aggregates
 from data_processing.helpers import convert_to_numeric
@@ -55,7 +56,7 @@ def detect_emerging_threats(health_df: pd.DataFrame, lookback_days: int = 90, th
     top_diagnoses = recent_df['diagnosis'].value_counts().nlargest(10).index
     if top_diagnoses.empty: return pd.DataFrame()
     threats = []
-    for diag in top_diagnoses:
+    for diag in top_diagnoses: # Check top 10 for potential threats
         diag_ts = health_df[health_df['diagnosis'] == diag].set_index('encounter_date').resample('W-MON').size()
         if len(diag_ts) < 4: continue
         mean, std = diag_ts.mean(), diag_ts.std()
@@ -69,20 +70,26 @@ def detect_emerging_threats(health_df: pd.DataFrame, lookback_days: int = 90, th
 # --- SME RESILIENCE UPGRADE: Robust Data Loading ---
 @st.cache_data(ttl=3600, show_spinner="Loading population datasets...")
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    health_df, zone_df = load_health_records(), load_iot_records()
+    # SME FIX: Correct data loading logic
+    health_df = load_health_records()
+    zone_df = load_zone_data()
+
     if health_df.empty: return pd.DataFrame(), pd.DataFrame()
     
     health_df, _ = apply_ai_models(health_df)
     if 'ai_risk_score' not in health_df.columns:
+        logger.warning("Column 'ai_risk_score' not found. Generating dummy data.")
         st.session_state['using_dummy_risk'] = True
         health_df['ai_risk_score'] = np.random.uniform(0, 100, len(health_df))
     else: st.session_state['using_dummy_risk'] = False
         
     if 'risk_factors' not in health_df.columns:
+        logger.warning("Column 'risk_factors' not found. Generating dummy data.")
         factors = ['Hypertension', 'Diabetes', 'Smoking', 'Obesity', 'Malnutrition']
         health_df['risk_factors'] = health_df['patient_id'].apply(lambda _: list(np.random.choice(factors, size=np.random.randint(0, 4), replace=False)))
 
     if zone_df.empty:
+        logger.warning("Zone data is empty. Creating a dummy zone for dashboard functionality.")
         zone_ids = health_df['zone_id'].unique()
         zone_df = pd.DataFrame({'zone_id': zone_ids, 'zone_name': [f"Zone {zid}" for zid in zone_ids]})
         if 'geometry' not in zone_df.columns: zone_df['geometry'] = None
@@ -103,6 +110,7 @@ def get_risk_stratification(df: pd.DataFrame) -> dict:
     return {'pyramid_data': pyramid_data}
 
 # --- UI Rendering Components ---
+# ... (All render_* functions are unchanged) ...
 def render_overview(df_filtered: pd.DataFrame, health_df: pd.DataFrame, start_date: date):
     st.subheader("Population Health Scorecard")
     cols = st.columns(4)
@@ -149,6 +157,7 @@ def render_risk_stratification(df_filtered: pd.DataFrame):
         st.markdown("##### **Projected Annual Burden of Illness**")
         with st.container(border=True):
             high_risk_patients = pyramid_data[pyramid_data['risk_tier'] == 'High Risk']['patient_count'].sum()
+            # Assuming settings.COST_ASSUMPTIONS is available
             projected_encounters = high_risk_patients * settings.COST_ASSUMPTIONS['annual_encounters_high_risk']
             projected_cost = projected_encounters * settings.COST_ASSUMPTIONS['avg_encounter_cost_high_risk']
             st.metric("Projected High-Risk Encounters/Year", f"{projected_encounters:,.0f} visits")
@@ -235,40 +244,26 @@ def render_population_segmentation(df_filtered: pd.DataFrame):
 def render_emerging_threats(health_df: pd.DataFrame, zone_df: pd.DataFrame):
     st.header("🔬 Early Warning & Response System")
     st.markdown("Detect and analyze emerging health threats in real-time to guide a rapid and targeted public health response.")
-
     if health_df.empty: st.info("Not enough historical data to analyze emerging threats."); return
     threats_df = detect_emerging_threats(health_df, lookback_days=90, threshold=1.5)
-    
-    # --- SME UPGRADE: Overall Threat Level Indicator ---
     num_threats = len(threats_df)
     if num_threats == 0: threat_level = 0
     elif num_threats <= 2: threat_level = 1
     elif num_threats <= 4: threat_level = 2
     else: threat_level = 3
-    
     level_config = THREAT_LEVEL_CONFIG[threat_level]
-    st.markdown(f"""<div style="background-color: {level_config['color']}; color: white; padding: 10px; border-radius: 5px; text-align: center; margin-bottom: 15px;">
-        <h3 style="color: white; margin: 0;">OVERALL THREAT: {level_config['label']}</h3>
-    </div>""", unsafe_allow_html=True)
-
+    st.markdown(f"""<div style="background-color: {level_config['color']}; color: white; padding: 10px; border-radius: 5px; text-align: center; margin-bottom: 15px;"><h3 style="color: white; margin: 0;">OVERALL THREAT: {level_config['label']}</h3></div>""", unsafe_allow_html=True)
     if not threats_df.empty:
         selected_threat = st.selectbox("Select Detected Threat for Deep Dive:", threats_df.sort_values('z_score', ascending=False)['diagnosis'].unique())
-        
         threat_data = threats_df[threats_df['diagnosis'] == selected_threat].iloc[0]
         threat_cases_df = health_df[health_df['diagnosis'] == selected_threat]
-
         with st.container(border=True):
             st.subheader(f"Epi-Brief: {threat_data['diagnosis']}")
-            
-            # --- SME UPGRADE: "The What" - Anomaly Metrics ---
             c1, c2, c3 = st.columns(3)
             c1.metric("Anomaly Score (Z-score)", f"{threat_data['z_score']:.1f}σ", "Above Baseline")
             c2.metric("Last Week's Cases", f"{threat_data['recent_avg_cases']:.0f}")
             c3.metric("Weekly Baseline", f"{threat_data['baseline_avg_cases']:.1f}")
-            
-            # --- SME UPGRADE: "The When, Where, and Who" ---
             tab_when, tab_where, tab_who = st.tabs(["📈 Trend (When)", "🗺️ Hotspots (Where)", "🧑‍🤝‍🧑 Demographics (Who)"])
-            
             with tab_when:
                 threat_trend_ts = threat_cases_df.set_index('encounter_date').resample('W-MON').size()
                 fig_trend = go.Figure()
@@ -276,7 +271,6 @@ def render_emerging_threats(health_df: pd.DataFrame, zone_df: pd.DataFrame):
                 fig_trend.add_trace(go.Scatter(x=threat_trend_ts.index, y=threat_trend_ts.values, mode='lines+markers', line_color='#dc3545', name='Weekly Cases', fill='tozeroy', fillcolor='rgba(220, 53, 69, 0.2)'))
                 fig_trend.update_layout(title=f"<b>Weekly Trend for '{threat_data['diagnosis']}'</b>", yaxis_title='Number of Cases', template=PLOTLY_TEMPLATE, showlegend=False, title_x=0.5)
                 st.plotly_chart(fig_trend, use_container_width=True)
-
             with tab_where:
                 if not zone_df.empty and 'geometry' in zone_df.columns:
                     threat_geo_df = threat_cases_df.groupby('zone_id').size().reset_index(name='case_count')
@@ -285,55 +279,44 @@ def render_emerging_threats(health_df: pd.DataFrame, zone_df: pd.DataFrame):
                     fig_map = plot_choropleth_map(zone_threat_df, geojson=geojson_data, value_col='case_count', title=f"<b>Where is '{threat_data['diagnosis']}' emerging?</b>", hover_name='zone_name', color_continuous_scale='OrRd')
                     st.plotly_chart(fig_map, use_container_width=True)
                     st.caption("Actionability: Deploy targeted testing and awareness campaigns to the highlighted red zones.")
-
             with tab_who:
-                threat_cases_df = threat_cases_df.copy() # Avoid SettingWithCopyWarning
+                threat_cases_df = threat_cases_df.copy()
                 age_bins, age_labels = [0, 18, 40, 65, 150], ['0-17', '18-39', '40-64', '65+']
                 threat_cases_df['age_group'] = pd.cut(threat_cases_df['age'], bins=age_bins, labels=age_labels, right=False)
                 demo_breakdown = threat_cases_df.groupby(['age_group', 'gender']).size().reset_index(name='count')
                 fig_demo = px.bar(demo_breakdown, x='age_group', y='count', color='gender', barmode='group', title=f"<b>Who is most affected by '{threat_data['diagnosis']}'?</b>", labels={'count': 'Number of Cases'}, category_orders={'age_group': age_labels}, color_discrete_map=GENDER_COLORS)
                 st.plotly_chart(fig_demo, use_container_width=True)
                 st.caption("Actionability: Tailor public health messaging and clinical alerts to the most affected demographic groups.")
-
-            # --- SME UPGRADE: Response Capacity ---
             st.subheader("Operational Response Capacity")
             c1, c2, c3 = st.columns(3)
             c1.metric("Relevant Test Kits", f"{np.random.randint(50, 500):,}", "In stock")
             c2.metric("Available Specialists", f"{np.random.randint(1, 5)}", "On duty")
             c3.metric("Bed Capacity (Affected Zones)", f"{np.random.randint(60, 95)}%")
             st.caption("Note: Response capacity data is illustrative.")
-
     else: st.success("✅ No significant emerging health threats detected based on current data.")
 
 # --- Main Page Execution ---
 def main():
     st.title("🌍 Population Health Command Center")
     st.markdown("A strategic console for understanding population dynamics, predicting future health trends, and targeting interventions.")
-    
     health_df, zone_df = get_data()
     if health_df.empty: st.error("CRITICAL: No health record data available. Dashboard cannot be rendered."); st.stop()
-
     if st.session_state.get('using_dummy_risk', False): st.warning("⚠️ **Risk Demo Mode:** `ai_risk_score` was not found and has been simulated.", icon="🤖")
-
     with st.sidebar:
         st.header("Filters")
         min_date, max_date = health_df['encounter_date'].min().date(), health_df['encounter_date'].max().date()
         start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=89)), max_date), min_value=min_date, max_value=max_date, key="pop_date_range")
         zone_options = ["All Zones"] + sorted(zone_df['zone_name'].dropna().unique())
         selected_zone = st.selectbox("Filter by Zone:", options=zone_options, key="pop_zone_filter")
-
     df_filtered = health_df[health_df['encounter_date'].dt.date.between(start_date, end_date)]
     zone_df_filtered = zone_df.copy()
     if selected_zone != "All Zones":
         zone_id = zone_df.loc[zone_df['zone_name'] == selected_zone, 'zone_id'].iloc[0]
         df_filtered = df_filtered[df_filtered['zone_id'] == zone_id]
         zone_df_filtered = zone_df[zone_df['zone_id'] == zone_id]
-
     render_overview(df_filtered, health_df, start_date)
     st.divider()
-
     tab1, tab2, tab3, tab4 = st.tabs(["🚨 Risk & ROI Planning", "🗺️ Geospatial Intelligence", "🧑‍🤝‍🧑 Risk Drivers", "🔬 Early Warning System"])
-
     with tab1: render_risk_stratification(df_filtered)
     with tab2: render_geospatial_analysis(zone_df_filtered, df_filtered)
     with tab3: render_population_segmentation(df_filtered)
