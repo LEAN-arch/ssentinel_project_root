@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/04_Population_Analytics.py
-# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V16 - ATTRIBUTE & HASHING FIX)
+# SME PLATINUM STANDARD - POPULATION STRATEGIC COMMAND CENTER (V17 - FUTURE-PROOFED)
 
 import logging
 from datetime import date, timedelta
@@ -75,22 +75,17 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     
     health_df, _ = apply_ai_models(health_df)
     if 'ai_risk_score' not in health_df.columns:
-        logger.warning("Column 'ai_risk_score' not found. Generating dummy data.")
         st.session_state['using_dummy_risk'] = True
         health_df['ai_risk_score'] = np.random.uniform(0, 100, len(health_df))
     else: st.session_state['using_dummy_risk'] = False
         
     if 'risk_factors' not in health_df.columns:
-        logger.warning("Column 'risk_factors' not found. Generating dummy data.")
         factors = ['Hypertension', 'Diabetes', 'Smoking', 'Obesity', 'Malnutrition']
         health_df['risk_factors'] = health_df['patient_id'].apply(lambda _: list(np.random.choice(factors, size=np.random.randint(0, 4), replace=False)))
-
-    # --- SME HASHING FIX: Convert unhashable list to hashable tuple for caching ---
     if 'risk_factors' in health_df.columns:
         health_df['risk_factors'] = health_df['risk_factors'].apply(tuple)
 
     if zone_df.empty:
-        logger.warning("Zone data is empty. Creating a dummy zone for dashboard functionality.")
         zone_ids = health_df['zone_id'].unique()
         zone_df = pd.DataFrame({'zone_id': zone_ids, 'zone_name': [f"Zone {zid}" for zid in zone_ids]})
         if 'geometry' not in zone_df.columns: zone_df['geometry'] = None
@@ -128,16 +123,7 @@ def render_risk_stratification(df_filtered: pd.DataFrame):
     st.header("🚨 Strategic Risk & Intervention Planning")
     st.markdown("Analyze current risk, predict future burdens, and quantify the value of preventive action.")
     st.divider()
-
-    # --- SME ATTRIBUTE FIX: Define cost assumptions locally or pass as argument ---
-    COST_ASSUMPTIONS = {
-        'avg_encounter_cost_high_risk': 250,
-        'avg_encounter_cost_moderate_risk': 120,
-        'preventive_intervention_cost': 500,
-        'annual_encounters_high_risk': 4,
-        'annual_encounters_moderate_risk': 2
-    }
-
+    COST_ASSUMPTIONS = { 'avg_encounter_cost_high_risk': 250, 'avg_encounter_cost_moderate_risk': 120, 'preventive_intervention_cost': 500, 'annual_encounters_high_risk': 4, 'annual_encounters_moderate_risk': 2 }
     st.subheader("Part 1: What is our current risk distribution?")
     risk_data = get_risk_stratification(df_filtered)
     pyramid_data = risk_data.get('pyramid_data')
@@ -235,7 +221,8 @@ def render_population_segmentation(df_filtered: pd.DataFrame):
         if not factor_df.empty:
             age_bins, age_labels = [0, 18, 40, 65, 150], ['0-17', '18-39', '40-64', '65+']
             factor_df['age_group'] = pd.cut(factor_df['age'], bins=age_bins, labels=age_labels, right=False)
-            driver_data = factor_df.groupby(['age_group', 'gender']).size().reset_index(name='count')
+            # SME FIX: Add observed=False to groupby to silence FutureWarning
+            driver_data = factor_df.groupby(['age_group', 'gender'], observed=False).size().reset_index(name='count')
             fig_demo = px.bar(driver_data, x='age_group', y='count', color='gender', barmode='group', title=f"<b>Who is most affected by '{selected_factor}'?</b>", labels={'count': 'Number of Patients'}, category_orders={'age_group': age_labels}, color_discrete_map=GENDER_COLORS, template=PLOTLY_TEMPLATE, text='count')
             fig_demo.update_traces(textposition='outside').update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), title_x=0.5)
             st.plotly_chart(fig_demo, use_container_width=True)
@@ -292,7 +279,8 @@ def render_emerging_threats(health_df: pd.DataFrame, zone_df: pd.DataFrame):
                 threat_cases_df = threat_cases_df.copy()
                 age_bins, age_labels = [0, 18, 40, 65, 150], ['0-17', '18-39', '40-64', '65+']
                 threat_cases_df['age_group'] = pd.cut(threat_cases_df['age'], bins=age_bins, labels=age_labels, right=False)
-                demo_breakdown = threat_cases_df.groupby(['age_group', 'gender']).size().reset_index(name='count')
+                # SME FIX: Add observed=False to groupby to silence FutureWarning
+                demo_breakdown = threat_cases_df.groupby(['age_group', 'gender'], observed=False).size().reset_index(name='count')
                 fig_demo = px.bar(demo_breakdown, x='age_group', y='count', color='gender', barmode='group', title=f"<b>Who is most affected by '{threat_data['diagnosis']}'?</b>", labels={'count': 'Number of Cases'}, category_orders={'age_group': age_labels}, color_discrete_map=GENDER_COLORS)
                 st.plotly_chart(fig_demo, use_container_width=True)
                 st.caption("Actionability: Tailor public health messaging and clinical alerts to the most affected demographic groups.")
