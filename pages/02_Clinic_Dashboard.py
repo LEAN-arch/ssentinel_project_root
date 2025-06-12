@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V23 - POPULATION HEALTH INTELLIGENCE)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V24 - PYTHONIC FIX)
 
 import logging
 from datetime import date, timedelta
@@ -79,7 +79,6 @@ def _render_custom_indicator(title: str, value: str, state: str, help_text: str)
     st.markdown(f"""<div style="border: 1px solid #e1e4e8; border-left: 5px solid {border_color}; border-radius: 5px; padding: 10px; margin-bottom: 10px;"><div style="font-size: 0.9em; color: #586069;">{title}</div><div style="font-size: 1.5em; font-weight: bold; color: {border_color};">{value}</div></div>""", unsafe_allow_html=True)
 
 # --- UI Rendering Components for Tabs ---
-# ... (render_overview_tab, render_program_analysis_tab are unchanged) ...
 def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: date, end_date: date):
     st.header("🚀 Clinic Overview")
     with st.container(border=True):
@@ -166,98 +165,63 @@ def render_demographics_tab(df: pd.DataFrame):
     if df.empty:
         st.info("No patient data available for demographic analysis.")
         return
-
-    # --- Data Preparation ---
     df_unique = df.drop_duplicates(subset=['patient_id']).copy()
     df_unique['gender'] = df_unique['gender'].fillna('Unknown').astype(str)
     age_bins, age_labels = [0, 5, 15, 25, 50, 150], ['0-4', '5-14', '15-24', '25-49', '50+']
     df_unique['age_group'] = pd.cut(df_unique['age'], bins=age_bins, labels=age_labels, right=False).astype(str).replace('nan', 'Not Recorded')
-    
-    # --- SME UPGRADE: High-Impact "At a Glance" Metrics ---
     gender_dist = df_unique['gender'].value_counts(normalize=True).mul(100)
     col1, col2, col3 = st.columns(3)
     col1.metric("Median Patient Age", f"{df_unique['age'].median():.1f} years")
     col2.metric("Female Patients", f"{gender_dist.get('Female', 0):.1f}%")
     col3.metric("Male Patients", f"{gender_dist.get('Male', 0):.1f}%")
     st.divider()
-
     col1, col2 = st.columns(2, gap="large")
     with col1:
         st.subheader("Comparative Breakdown")
-        # Kept original bar charts for foundational analysis
         demo_counts = df_unique.groupby(['age_group', 'gender']).size().reset_index(name='count')
         fig_vol = px.bar(demo_counts, x='age_group', y='count', color='gender', barmode='group', title="<b>Patient Volume by Age & Gender</b>", category_orders={'age_group': age_labels + ['Not Recorded']}, color_discrete_map=GENDER_COLORS)
         fig_vol.update_layout(template=PLOTLY_TEMPLATE, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig_vol, use_container_width=True)
-        
         risk_by_demo = df_unique.groupby(['age_group', 'gender'])['ai_risk_score'].mean().reset_index()
         fig_risk = px.bar(risk_by_demo, x='age_group', y='ai_risk_score', color='gender', barmode='group', title="<b>Average AI Risk Score by Age & Gender</b>", category_orders={'age_group': age_labels + ['Not Recorded']}, color_discrete_map=GENDER_COLORS)
         fig_risk.update_layout(template=PLOTLY_TEMPLATE, yaxis_title="Avg. Risk Score", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         fig_risk.update_yaxes(range=[0, 100])
         st.plotly_chart(fig_risk, use_container_width=True)
-
     with col2:
         st.subheader("🎯 Actionable Insight Engine")
-        
-        # --- SME UPGRADE: Risk/Volume Quadrant Analysis ---
-        demo_agg = df_unique.groupby(['age_group', 'gender']).agg(
-            patient_volume=('patient_id', 'count'),
-            avg_risk_score=('ai_risk_score', 'mean'),
-            high_risk_count=('ai_risk_score', lambda x: (x >= 65).sum())
-        ).reset_index()
+        demo_agg = df_unique.groupby(['age_group', 'gender']).agg(patient_volume=('patient_id', 'count'), avg_risk_score=('ai_risk_score', 'mean'), high_risk_count=('ai_risk_score', lambda x: (x >= 65).sum())).reset_index()
         demo_agg['segment'] = demo_agg['gender'] + ', ' + demo_agg['age_group']
-
         if not demo_agg.empty:
-            fig_bubble = px.scatter(
-                demo_agg, x='patient_volume', y='avg_risk_score', size='high_risk_count', color='gender',
-                hover_name='segment', size_max=60, color_discrete_map=GENDER_COLORS,
-                title='<b>Risk/Volume Quadrant Analysis</b>',
-                labels={'patient_volume': 'Patient Volume (Count)', 'avg_risk_score': 'Average Risk Score'}
-            )
-            # Add quadrant lines
-            avg_vol = demo_agg['patient_volume'].mean()
-            avg_risk = demo_agg['avg_risk_score'].mean()
+            fig_bubble = px.scatter(demo_agg, x='patient_volume', y='avg_risk_score', size='high_risk_count', color='gender', hover_name='segment', size_max=60, color_discrete_map=GENDER_COLORS, title='<b>Risk/Volume Quadrant Analysis</b>', labels={'patient_volume': 'Patient Volume (Count)', 'avg_risk_score': 'Average Risk Score'})
+            avg_vol, avg_risk = demo_agg['patient_volume'].mean(), demo_agg['avg_risk_score'].mean()
             fig_bubble.add_vline(x=avg_vol, line_dash="dash", line_color="grey")
             fig_bubble.add_hline(y=avg_risk, line_dash="dash", line_color="grey")
             fig_bubble.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             st.plotly_chart(fig_bubble, use_container_width=True)
             st.caption("Actionability: Focus on segments in the top-right quadrant (High Volume, High Risk). Bubble size indicates total high-risk patient impact.")
-
-            # --- SME UPGRADE: Automated Drill-Down Analysis ---
             st.subheader("Clinical Deep Dive on Critical Segment")
             critical_segment = demo_agg.loc[demo_agg['high_risk_count'].idxmax()]
-            critical_age = critical_segment['age_group']
-            critical_gender = critical_segment['gender']
-            
+            critical_age, critical_gender = critical_segment['age_group'], critical_segment['gender']
             st.info(f"Most critical segment identified: **{critical_gender}, {critical_age}** (based on highest number of high-risk patients).")
-
             critical_patients_df = df_unique[(df_unique['age_group'] == critical_age) & (df_unique['gender'] == critical_gender) & (df_unique['ai_risk_score'] >= 65)]
             if not critical_patients_df.empty:
                 diagnoses_in_critical_segment = df[df['patient_id'].isin(critical_patients_df['patient_id'])]['diagnosis'].value_counts().nlargest(5)
-                
                 fig_drill = px.bar(diagnoses_in_critical_segment, y=diagnoses_in_critical_segment.index, x=diagnoses_in_critical_segment.values, orientation='h', title=f"<b>Top Diagnoses for High-Risk {critical_gender}, {critical_age}</b>", labels={'y': 'Diagnosis', 'x': 'Number of Cases'})
                 fig_drill.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_drill, use_container_width=True)
                 st.caption("Actionability: Use this to guide targeted screening and resource allocation for your most vulnerable group.")
-        else:
-            st.info("Not enough aggregated data to perform quadrant analysis.")
+        else: st.info("Not enough aggregated data to perform quadrant analysis.")
 
-# ... (render_forecasting_tab, render_environment_tab, render_efficiency_tab, and main function are unchanged) ...
 def render_forecasting_tab(df: pd.DataFrame):
     st.header("🔮 AI-Powered Capacity Planning")
     st.markdown("Use predictive forecasts to anticipate future patient load and ensure adequate staffing and appointment availability.")
-    
     forecast_days = st.slider("Days to Forecast Ahead:", 7, 90, 30, 7, key="clinic_forecast_days")
     encounters_hist = df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'})
-    
     final_forecast_df, model_used = pd.DataFrame(), "None"
     if len(encounters_hist) > 1 and encounters_hist['y'].std() > 0:
         prophet_fc = generate_prophet_forecast(encounters_hist, forecast_days=forecast_days)
-        if 'yhat' in prophet_fc.columns:
-            final_forecast_df, model_used = prophet_fc, "Primary (Prophet AI)"
-        else:
-            final_forecast_df, model_used = generate_moving_average_forecast(encounters_hist, forecast_days, 7), "Fallback (7-Day Avg)"
-    
+        if 'yhat' in prophet_fc.columns: final_forecast_df, model_used = prophet_fc, "Primary (Prophet AI)"
+        else: final_forecast_df, model_used = generate_moving_average_forecast(encounters_hist, forecast_days, 7), "Fallback (7-Day Avg)"
     col1, col2 = st.columns([1.5, 1], gap="large")
     with col1:
         st.subheader("Forecasted Patient Demand")
@@ -269,7 +233,6 @@ def render_forecasting_tab(df: pd.DataFrame):
             fig.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, yaxis_title="Patient Encounters", xaxis_title="Date", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             st.plotly_chart(fig, use_container_width=True)
         else: st.warning("Could not generate forecast. Data may be too sparse or lack variation.")
-
     with col2:
         st.subheader("Capacity & Staffing Scorecard")
         if not final_forecast_df.empty:
@@ -297,8 +260,7 @@ def render_environment_tab(iot_df: pd.DataFrame):
     st.header("🌿 Facility Environmental Safety")
     if iot_df.empty: st.info("No environmental sensor data available for this period.", icon="📡"); return
     st.subheader("Real-Time Environmental Indicators")
-    avg_co2 = iot_df['avg_co2_ppm'].mean()
-    high_noise_rooms = iot_df[iot_df['avg_noise_db'] > 70]['room_id'].nunique()
+    avg_co2, high_noise_rooms = iot_df['avg_co2_ppm'].mean(), iot_df[iot_df['avg_noise_db'] > 70]['room_id'].nunique()
     co2_state = "HIGH_RISK" if avg_co2 > 1500 else "MODERATE_CONCERN" if avg_co2 > 1000 else "ACCEPTABLE"
     noise_state = "HIGH_RISK" if high_noise_rooms > 0 else "ACCEPTABLE"
     col1, col2 = st.columns(2)
@@ -354,10 +316,16 @@ def main():
     period_iot_df = full_iot_df[full_iot_df['timestamp'].dt.date.between(start_date, end_date)] if not full_iot_df.empty else pd.DataFrame()
     st.info(f"**Displaying Clinic Data For:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}`")
     st.divider()
+    
+    # --- SME DX UPGRADE: Dynamic Tab Configuration ---
     TABS_CONFIG = { "Overview": {"icon": "🚀", "func": render_overview_tab, "args": [period_health_df, full_health_df, start_date, end_date]}, "Demographics": {"icon": "🧑‍🤝‍🧑", "func": render_demographics_tab, "args": [period_health_df]}, "Efficiency": {"icon": "⏱️", "func": render_efficiency_tab, "args": [period_health_df]}, "Capacity Planning": {"icon": "🔮", "func": render_forecasting_tab, "args": [full_health_df]}, "Environment": {"icon": "🌿", "func": render_environment_tab, "args": [period_iot_df]} }
     program_tabs = {name: {"icon": conf['icon'], "func": render_program_analysis_tab, "args": [period_health_df, {**conf, 'name': name}]} for name, conf in PROGRAM_DEFINITIONS.items()}
     all_tabs_config = list(TABS_CONFIG.items())
-    all_tabs_config.insert(1, *program_tabs.items())
+    
+    # --- SME FIX: Replace faulty insert with Pythonic list slicing ---
+    program_items = list(program_tabs.items())
+    all_tabs_config[1:1] = program_items
+
     tab_titles = [f"{conf['icon']} {name}" for name, conf in all_tabs_config]
     tabs = st.tabs(tab_titles)
     for i, (name, conf) in enumerate(all_tabs_config):
