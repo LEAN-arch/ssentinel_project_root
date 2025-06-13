@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V31 - SYNTAX FIX)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V32 - SYNTAX REPAIR)
 # FULLY ENABLED VERSION - All original code is preserved and expanded with new strategic content.
 
 import logging
@@ -69,7 +69,7 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
         logger.warning("Health records empty. Generating dummy data for demonstration.")
         dates = pd.to_datetime(pd.date_range(start=date.today() - timedelta(days=365), end=date.today()))
         health_df = pd.DataFrame({'encounter_date': np.random.choice(dates, size=1000), 'patient_id': [f'PAT_{i}' for i in np.random.randint(1000, 2000, 1000)]})
-    required_cols = {'ai_risk_score': np.random.uniform(0, 100, len(health_df)),'patient_wait_time': np.random.uniform(5, 60, len(health_df)),'consultation_duration': np.random.uniform(10, 30, len(health_df)),'patient_satisfaction': np.random.uniform(1, 5, len(health_df)),'diagnosis': np.random.choice(list(PROGRAM_DEFINITIONS.keys()) + ['Other'], len(health_df)),'gender': np.random.choice(['Female', 'Male', 'Unknown'], len(health_df)),'age': np.random.randint(1, 80, len(health_df)),'referral_status': np.random.choice(['Completed', 'Pending', 'Not Applicable'], len(health_df)),'patient_reported_symptoms': 'fever|cough|fatigue','test_type': 'Malaria RDT','test_result': 'Positive','temperature': np.random.uniform(1, 10, len(health_df)),'avg_noise_db': np.random.uniform(50, 80, len(health_df)),'room_id': [f'Room_{i}' for i in np.random.randint(1, 5, len(health_df))],'avg_co2_ppm': np.random.randint(400, 1500, len(health_df))}
+    required_cols = {'ai_risk_score': np.random.uniform(0, 100, len(health_df)),'patient_wait_time': np.random.uniform(5, 60, len(health_df)),'consultation_duration': np.random.uniform(10, 30, len(health_df)),'patient_satisfaction': np.random.uniform(1, 5, len(health_df)),'diagnosis': np.random.choice(list(PROGRAM_DEFINITIONS.keys()) + ['Other'], len(health_df)),'gender': np.random.choice(['Female', 'Male', 'Unknown'], len(health_df)),'age': np.random.randint(1, 80, len(health_df)),'referral_status': np.random.choice(['Completed', 'Pending', 'Not Applicable'], len(health_df)),'patient_reported_symptoms': 'fever|cough|fatigue','test_type': 'Malaria RDT','test_result': 'Positive','temperature': np.random.uniform(2, 10, len(health_df)),'avg_noise_db': np.random.uniform(50, 80, len(health_df)),'room_id': [f'Room_{i}' for i in np.random.randint(1, 5, len(health_df))],'avg_co2_ppm': np.random.randint(400, 1500, len(health_df))}
     for col, dummy_data in required_cols.items():
         if col not in health_df.columns:
             health_df[col] = dummy_data
@@ -89,7 +89,7 @@ def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: dat
         period_duration = max(1, (end_date - start_date).days); prev_start_date, prev_end_date = start_date - timedelta(days=period_duration), start_date - timedelta(days=1)
         prev_df = full_df[full_df['encounter_date'].dt.date.between(prev_start_date, prev_end_date)]
         unique_patients, prev_unique_patients = df['patient_id'].nunique(), prev_df['patient_id'].nunique() if not prev_df.empty else 0
-        avg_risk, prev_avg_risk = df['ai_risk_score'].mean() if not df.empty else 0, prev_df['ai_risk_score'].mean() if not prev_df.empty else 0
+        avg_risk = df['ai_risk_score'].mean() if not df.empty else 0; prev_avg_risk = prev_df['ai_risk_score'].mean() if not prev_df.empty else 0
         high_risk_patients = df[df['ai_risk_score'] >= 65]['patient_id'].nunique()
         prev_high_risk = prev_df[prev_df['ai_risk_score'] >= 65]['patient_id'].nunique() if not prev_df.empty else 0
         avg_wait_time = df['patient_wait_time'].mean() if 'patient_wait_time' in df.columns else 0
@@ -214,20 +214,24 @@ def render_forecasting_tab(df: pd.DataFrame):
             surplus_deficit = locals().get('surplus_deficit', 0)
             if surplus_deficit < 0:
                 cost_per_fte_monthly = 2000; investment_needed = abs(surplus_deficit) * cost_per_fte_monthly; cost_of_inaction = 0.10 * 50000; roi = ((cost_of_inaction - investment_needed) / investment_needed) * 100 if investment_needed > 0 else 0
-                st.markdown(f"The model predicts a staffing deficit of **{abs(surplus_deficit):.2f} FTEs**..."); st.markdown(f"To maintain quality of care, an investment of **${investment_needed:,.0f}** is recommended..."); st.markdown(f"The estimated 'cost of inaction' is **~${cost_of_inaction:,.0f}**."); st.metric("Projected ROI on Staffing Investment", f"{roi:.1f}%"); st.caption("Investing in adequate staffing strengthens the health system.")
-            else: st.success("Staffing levels are sufficient...")
+                st.markdown(f"The model predicts a staffing deficit of **{abs(surplus_deficit):.2f} FTEs**."); st.markdown(f"To maintain quality of care, an investment of **${investment_needed:,.0f}** is recommended."); st.markdown(f"The estimated 'cost of inaction' is **~${cost_of_inaction:,.0f}**."); st.metric("Projected ROI on Staffing Investment", f"{roi:.1f}%"); st.caption("Investing in adequate staffing strengthens the health system.")
+            else: st.success("Staffing levels are sufficient.")
         else: st.info("Run a forecast to enable ROI analysis.")
 
 def render_environment_tab(iot_df: pd.DataFrame):
     st.header("🌿 Facility Environmental Safety");
     if iot_df.empty: st.info("No environmental sensor data available...", icon="📡"); return
     st.subheader("Real-Time Environmental Indicators"); avg_co2, high_noise_rooms = iot_df['avg_co2_ppm'].mean(), iot_df.get('avg_noise_db', pd.Series(0))[iot_df.get('avg_noise_db', pd.Series(0)) > 70].nunique(); co2_state = "HIGH_RISK" if avg_co2 > 1500 else "MODERATE_CONCERN" if avg_co2 > 1000 else "ACCEPTABLE"; noise_state = "HIGH_RISK" if high_noise_rooms > 0 else "ACCEPTABLE"
-    col1, col2 = st.columns(2); with col1: _render_custom_indicator("Average CO₂ Levels", f"{avg_co2:.0f} PPM", co2_state, "CO₂ levels are a proxy..."); with col2: _render_custom_indicator("Rooms with High Noise (>70dB)", f"{high_noise_rooms} rooms", noise_state, "High noise levels can impact...")
+    col1, col2 = st.columns(2)
+    with col1:
+        _render_custom_indicator("Average CO₂ Levels", f"{avg_co2:.0f} PPM", co2_state, "CO₂ levels are a proxy for ventilation quality. High levels increase airborne transmission risk.")
+    with col2:
+        _render_custom_indicator("Rooms with High Noise (>70dB)", f"{high_noise_rooms} rooms", noise_state, "High noise levels can impact patient comfort and staff communication.")
     st.divider(); st.subheader("Hourly CO₂ Trend (Ventilation Proxy)"); iot_df['timestamp'] = pd.to_datetime(iot_df['timestamp']); co2_trend = iot_df.set_index('timestamp').resample('h')['avg_co2_ppm'].mean().dropna(); fig = px.line(co2_trend, title="<b>Hourly Average CO₂ Trend</b>", labels={'value': 'CO₂ (PPM)', 'timestamp': 'Time'}); fig.add_hline(y=1000, line_dash="dot", line_color="orange", annotation_text="High Risk Threshold"); fig.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, showlegend=False); st.plotly_chart(fig, use_container_width=True)
     st.divider(); st.subheader("📄 Scalability & Replication Blueprint"); st.info("This section summarizes the key environmental and operational parameters...", icon="📋")
     if not iot_df.empty:
         with st.container(border=True):
-            st.markdown("#### Optimal Environmental Parameters for Replication:"); st.markdown(f"- **Target Average CO₂:** < {iot_df['avg_co2_ppm'].quantile(0.25):.0f} PPM...");
+            st.markdown("#### Optimal Environmental Parameters for Replication:"); st.markdown(f"- **Target Average CO₂:** < {iot_df['avg_co2_ppm'].quantile(0.25):.0f} PPM...")
             if 'avg_noise_db' in iot_df.columns: st.markdown(f"- **Target Max Noise Level:** < {iot_df['avg_noise_db'].quantile(0.25):.0f} dB")
             st.markdown("#### Key Success Factors for a Resilient Facility:"); st.markdown("- **Cold Chain:** Real-time monitoring..."); st.markdown("- **Staffing:** AI-driven capacity planning..."); st.markdown("- **Supply Chain:** Predictive modeling...")
 
