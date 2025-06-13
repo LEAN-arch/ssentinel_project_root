@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V30 - LIST INSERTION FIX)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V31 - SYNTAX FIX)
 # FULLY ENABLED VERSION - All original code is preserved and expanded with new strategic content.
 
 import logging
@@ -86,35 +86,31 @@ def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: dat
     st.header("🚀 Clinic Overview")
     with st.container(border=True):
         st.subheader("Clinic at a Glance")
-        period_duration = max(1, (end_date - start_date).days)
-        prev_start_date, prev_end_date = start_date - timedelta(days=period_duration), start_date - timedelta(days=1)
+        period_duration = max(1, (end_date - start_date).days); prev_start_date, prev_end_date = start_date - timedelta(days=period_duration), start_date - timedelta(days=1)
         prev_df = full_df[full_df['encounter_date'].dt.date.between(prev_start_date, prev_end_date)]
         unique_patients, prev_unique_patients = df['patient_id'].nunique(), prev_df['patient_id'].nunique() if not prev_df.empty else 0
-        avg_risk = df['ai_risk_score'].mean() if not df.empty else 0
-        prev_avg_risk = prev_df['ai_risk_score'].mean() if not prev_df.empty else 0
+        avg_risk, prev_avg_risk = df['ai_risk_score'].mean() if not df.empty else 0, prev_df['ai_risk_score'].mean() if not prev_df.empty else 0
         high_risk_patients = df[df['ai_risk_score'] >= 65]['patient_id'].nunique()
         prev_high_risk = prev_df[prev_df['ai_risk_score'] >= 65]['patient_id'].nunique() if not prev_df.empty else 0
         avg_wait_time = df['patient_wait_time'].mean() if 'patient_wait_time' in df.columns else 0
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Unique Patients", f"{unique_patients:,}", f"{unique_patients - prev_unique_patients:+,}" if prev_unique_patients > 0 else "N/A")
-        col2.metric("High-Risk Patients (>65)", f"{high_risk_patients:,}", f"{high_risk_patients - prev_high_risk:+,}" if prev_high_risk > 0 else "N/A", delta_color="inverse")
-        col3.metric("Avg. Patient Risk Score", f"{avg_risk:.1f}", f"{avg_risk - prev_avg_risk:+.1f}" if prev_avg_risk > 0 else "N/A", delta_color="inverse")
+        col1.metric("Total Unique Patients", f"{unique_patients:,}", f"{unique_patients - prev_unique_patients:+,}" if prev_unique_patients > 0 else None)
+        col2.metric("High-Risk Patients (>65)", f"{high_risk_patients:,}", f"{high_risk_patients - prev_high_risk:+,}" if prev_high_risk > 0 else None, delta_color="inverse")
+        col3.metric("Avg. Patient Risk Score", f"{avg_risk:.1f}", f"{avg_risk - prev_avg_risk:+.1f}" if prev_avg_risk > 0 else None, delta_color="inverse")
         col4.metric("Avg. Patient Wait Time", f"{avg_wait_time:.1f} min")
     st.divider()
     col1, col2 = st.columns(2, gap="large")
     with col1:
         st.subheader("Diagnosis Heatmap")
         st.markdown("Monitor weekly case volumes for common diagnoses.")
-        top_diagnoses = df['diagnosis'].value_counts().nlargest(7).index
-        df_top = df[df['diagnosis'].isin(top_diagnoses)]
-        if not df_top.empty:
-            heatmap_data = df_top.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'diagnosis']).size().unstack(fill_value=0)
-            if not heatmap_data.empty:
-                heatmap_data.index = heatmap_data.index.strftime('%d-%b-%Y')
-                fig = px.imshow(heatmap_data.T, text_auto=True, aspect="auto", color_continuous_scale=px.colors.sequential.Blues, labels=dict(x="Week Start Date", y="Diagnosis", color="Cases"), title="<b>Weekly Case Volume by Diagnosis</b>")
-                fig.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5)
-                st.plotly_chart(fig, use_container_width=True)
-            else: st.info("Not enough weekly data to generate a heatmap.")
+        if not df.empty and 'diagnosis' in df.columns:
+            top_diagnoses = df['diagnosis'].value_counts().nlargest(7).index; df_top = df[df['diagnosis'].isin(top_diagnoses)]
+            if not df_top.empty:
+                heatmap_data = df_top.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'diagnosis']).size().unstack(fill_value=0)
+                if not heatmap_data.empty:
+                    heatmap_data.index = heatmap_data.index.strftime('%d-%b-%Y'); fig = px.imshow(heatmap_data.T, text_auto=True, aspect="auto", color_continuous_scale=px.colors.sequential.Blues, labels=dict(x="Week Start Date", y="Diagnosis", color="Cases"), title="<b>Weekly Case Volume by Diagnosis</b>"); fig.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5); st.plotly_chart(fig, use_container_width=True)
+                else: st.info("Not enough weekly data to generate a heatmap.")
+            else: st.info("No data for top diagnoses in this period.")
         else: st.info("No diagnosis data available for this period.")
     with col2:
         st.subheader("🔬 AI-Predicted Resource Hotspots")
@@ -122,9 +118,7 @@ def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: dat
         if not df.empty:
             predicted_trends = predict_diagnosis_hotspots(df)
             if not predicted_trends.empty:
-                fig = px.bar(predicted_trends, x='diagnosis', y='predicted_cases', color='resource_needed', text='predicted_cases', title="<b>Predicted Cases & Resource Needs for Next Week</b>", labels={'predicted_cases': 'Predicted Case Count', 'diagnosis': 'Diagnosis', 'resource_needed': 'Key Resource'})
-                fig.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, yaxis_title='Case Count', xaxis_title=None, showlegend=True, legend_title_text='Key Resource')
-                st.plotly_chart(fig, use_container_width=True)
+                fig = px.bar(predicted_trends, x='diagnosis', y='predicted_cases', color='resource_needed', text='predicted_cases', title="<b>Predicted Cases & Resource Needs for Next Week</b>", labels={'predicted_cases': 'Predicted Case Count', 'diagnosis': 'Diagnosis', 'resource_needed': 'Key Resource'}); fig.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, yaxis_title='Case Count', xaxis_title=None, showlegend=True, legend_title_text='Key Resource'); st.plotly_chart(fig, use_container_width=True)
                 with st.expander("📝 Show Recommended Actions"):
                     if predicted_trends['predicted_cases'].sum() > 0:
                         for _, row in predicted_trends.nlargest(3, 'predicted_cases').iterrows():
@@ -136,36 +130,18 @@ def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: dat
         else: st.info("No data available to generate diagnosis predictions.")
 
 def render_program_analysis_tab(df: pd.DataFrame, program_config: Dict):
-    program_name = program_config['name']
-    st.header(f"{program_config['icon']} {program_name} Program Analysis")
-    st.markdown(f"Analyze the screening-to-treatment cascade for **{program_name}** to identify bottlenecks.")
-    symptomatic = df[df['patient_reported_symptoms'].str.contains(program_config['symptom'], case=False, na=False)]
-    tested = symptomatic[symptomatic['test_type'] == program_config['test']]
-    positive = tested[tested['test_result'] == 'Positive']
-    linked = positive[positive['referral_status'] == 'Completed']
+    program_name = program_config['name']; st.header(f"{program_config['icon']} {program_name} Program Analysis"); st.markdown(f"Analyze the screening-to-treatment cascade for **{program_name}** to identify bottlenecks.")
+    symptomatic = df[df['patient_reported_symptoms'].str.contains(program_config['symptom'], case=False, na=False)]; tested = symptomatic[symptomatic['test_type'] == program_config['test']]; positive = tested[tested['test_result'] == 'Positive']; linked = positive[positive['referral_status'] == 'Completed']
     col1, col2 = st.columns([1, 1.5], gap="large")
     with col1:
-        st.subheader("Screening Funnel Metrics")
-        st.metric("Symptomatic/At-Risk Cohort", f"{len(symptomatic):,}")
-        st.metric("Patients Tested", f"{len(tested):,}")
-        st.metric("Positive Cases Detected", f"{len(positive):,}")
-        st.metric("Successfully Linked to Care", f"{len(linked):,}")
-        st.divider()
-        screening_rate = (len(tested) / len(symptomatic) * 100) if len(symptomatic) > 0 else 0
-        linkage_rate = (len(linked) / len(positive) * 100) if len(positive) > 0 else 100
-        st.progress(int(screening_rate), text=f"Screening Rate: {screening_rate:.1f}%")
-        st.progress(int(linkage_rate), text=f"Linkage to Care Rate: {linkage_rate:.1f}%")
+        st.subheader("Screening Funnel Metrics"); st.metric("Symptomatic/At-Risk Cohort", f"{len(symptomatic):,}"); st.metric("Patients Tested", f"{len(tested):,}"); st.metric("Positive Cases Detected", f"{len(positive):,}"); st.metric("Successfully Linked to Care", f"{len(linked):,}"); st.divider()
+        screening_rate = (len(tested) / len(symptomatic) * 100) if len(symptomatic) > 0 else 0; linkage_rate = (len(linked) / len(positive) * 100) if len(positive) > 0 else 100
+        st.progress(int(screening_rate), text=f"Screening Rate: {screening_rate:.1f}%"); st.progress(int(linkage_rate), text=f"Linkage to Care Rate: {linkage_rate:.1f}%")
     with col2:
-        st.subheader("💡 AI Opportunity Analysis")
-        untested = symptomatic[~symptomatic['patient_id'].isin(tested['patient_id'])]
+        st.subheader("💡 AI Opportunity Analysis"); untested = symptomatic[~symptomatic['patient_id'].isin(tested['patient_id'])]
         if not untested.empty:
-            risk_labels, risk_bins = ['Low Risk', 'Medium Risk', 'High Risk'], [-np.inf, 40, 65, np.inf]
-            untested['risk_group'] = pd.cut(untested['ai_risk_score'], bins=risk_bins, labels=risk_labels)
-            risk_dist = untested['risk_group'].value_counts().reindex(risk_labels).fillna(0)
-            fig_donut = go.Figure(data=[go.Pie(labels=risk_dist.index, values=risk_dist.values, hole=.6, marker_colors=[RISK_COLORS[label] for label in risk_dist.index], hoverinfo="label+percent", textinfo='value', textfont_size=16)])
-            fig_donut.update_layout(title_text="<b>Who Are We Missing?</b><br><sup>Risk Profile of Untested Cohort</sup>", template=PLOTLY_TEMPLATE, showlegend=True, title_x=0.5, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5), annotations=[dict(text=f'{int(risk_dist.get("High Risk", 0))}<br>High-Risk', x=0.5, y=0.5, font_size=16, showarrow=False)])
-            st.plotly_chart(fig_donut, use_container_width=True, key=f"donut_chart_{program_name}")
-            st.caption("Actionability: Prioritize outreach to high-risk symptomatic patients who have not yet been tested.")
+            risk_labels, risk_bins = ['Low Risk', 'Medium Risk', 'High Risk'], [-np.inf, 40, 65, np.inf]; untested['risk_group'] = pd.cut(untested['ai_risk_score'], bins=risk_bins, labels=risk_labels); risk_dist = untested['risk_group'].value_counts().reindex(risk_labels).fillna(0)
+            fig_donut = go.Figure(data=[go.Pie(labels=risk_dist.index, values=risk_dist.values, hole=.6, marker_colors=[RISK_COLORS[label] for label in risk_dist.index], hoverinfo="label+percent", textinfo='value', textfont_size=16)]); fig_donut.update_layout(title_text="<b>Who Are We Missing?</b><br><sup>Risk Profile of Untested Cohort</sup>", template=PLOTLY_TEMPLATE, showlegend=True, title_x=0.5, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5), annotations=[dict(text=f'{int(risk_dist.get("High Risk", 0))}<br>High-Risk', x=0.5, y=0.5, font_size=16, showarrow=False)]); st.plotly_chart(fig_donut, use_container_width=True, key=f"donut_chart_{program_name}"); st.caption("Actionability: Prioritize outreach to high-risk symptomatic patients who have not yet been tested.")
         else: st.success("✅ Excellent! All symptomatic patients in this cohort have been tested.")
 
 def render_efficiency_tab(df: pd.DataFrame):
@@ -199,12 +175,15 @@ def render_demographics_tab(df: pd.DataFrame):
                 if not critical_patients_df.empty:
                     diagnoses_in_critical_segment = df[df['patient_id'].isin(critical_patients_df['patient_id'])]['diagnosis'].value_counts().nlargest(3)
                     with st.container(border=True):
-                        st.markdown("#### Generated Recommendations:");
-                        if len(diagnoses_in_critical_segment) >= 2: st.markdown(f"- **Policy Consideration:** Launch a targeted public health awareness campaign for **{diagnoses_in_critical_segment.index[0]}** prevention...); st.markdown(f"- **Programmatic Action:** Allocate additional CHW resources for proactive screening..."); st.markdown(f"- **Supply Chain:** Pre-position test kits...")
-                        else: st.warning("Not enough diagnosis diversity...")
-                else: st.warning("Could not generate specific diagnosis breakdown...")
-            else: st.success("✅ No high-risk patients (score >= 65) were found...")
-        else: st.info("Not enough aggregated data...")
+                        st.markdown("#### Generated Recommendations:")
+                        if len(diagnoses_in_critical_segment) >= 2:
+                            st.markdown(f"- **Policy Consideration:** Launch a targeted public health awareness campaign for **{diagnoses_in_critical_segment.index[0]}** prevention, specifically aimed at the **{critical_gender}, {critical_age}** demographic in this region.")
+                            st.markdown(f"- **Programmatic Action:** Allocate additional CHW resources for proactive screening within the **{critical_gender}, {critical_age}** cohort, focusing on symptoms related to **{diagnoses_in_critical_segment.index[0]}** and **{diagnoses_in_critical_segment.index[1]}**.")
+                            st.markdown(f"- **Supply Chain:** Pre-position test kits and treatments for **{diagnoses_in_critical_segment.index[0]}** at clinics serving this demographic to preempt stockouts.")
+                        else: st.warning("Not enough diagnosis diversity in the critical segment to generate multi-faceted recommendations.")
+                else: st.warning("Could not generate specific diagnosis breakdown for the critical segment.")
+            else: st.success("✅ No high-risk patients (score >= 65) were found in this period. All demographic segments are currently low-risk.")
+        else: st.info("Not enough aggregated data to perform quadrant analysis.")
 
 def render_forecasting_tab(df: pd.DataFrame):
     st.header("🔮 AI-Powered Capacity Planning"); st.markdown("Use predictive forecasts to anticipate future patient load..."); forecast_days = st.slider("Days to Forecast Ahead:", 7, 90, 30, 7, key="clinic_forecast_days"); encounters_hist = df.set_index('encounter_date').resample('D').size().reset_index(name='count').rename(columns={'encounter_date': 'ds', 'count': 'y'}); final_forecast_df, model_used = pd.DataFrame(), "None"
@@ -235,7 +214,7 @@ def render_forecasting_tab(df: pd.DataFrame):
             surplus_deficit = locals().get('surplus_deficit', 0)
             if surplus_deficit < 0:
                 cost_per_fte_monthly = 2000; investment_needed = abs(surplus_deficit) * cost_per_fte_monthly; cost_of_inaction = 0.10 * 50000; roi = ((cost_of_inaction - investment_needed) / investment_needed) * 100 if investment_needed > 0 else 0
-                st.markdown(f"The model predicts a staffing deficit..."); st.markdown(f"To maintain quality of care, an investment of **${investment_needed:,.0f}** is recommended..."); st.markdown(f"The estimated 'cost of inaction' is **~${cost_of_inaction:,.0f}**."); st.metric("Projected ROI on Staffing Investment", f"{roi:.1f}%"); st.caption("Investing in adequate staffing strengthens the health system.")
+                st.markdown(f"The model predicts a staffing deficit of **{abs(surplus_deficit):.2f} FTEs**..."); st.markdown(f"To maintain quality of care, an investment of **${investment_needed:,.0f}** is recommended..."); st.markdown(f"The estimated 'cost of inaction' is **~${cost_of_inaction:,.0f}**."); st.metric("Projected ROI on Staffing Investment", f"{roi:.1f}%"); st.caption("Investing in adequate staffing strengthens the health system.")
             else: st.success("Staffing levels are sufficient...")
         else: st.info("Run a forecast to enable ROI analysis.")
 
