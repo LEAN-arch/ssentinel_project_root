@@ -12,18 +12,23 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+# ==============================================================================
+# CORRECTED ORDER: Page setup is the FIRST Streamlit command after imports.
+# ==============================================================================
+# --- Page Setup ---
+st.set_page_config(page_title="Health Program Command Center", page_icon="🌍", layout="wide")
+
 # --- Core Sentinel Imports ---
-# These are assumed to exist and work as described in the original file.
+# These are now correctly placed AFTER st.set_page_config
 from analytics import apply_ai_models, generate_chw_alerts, generate_prophet_forecast
 from config import settings
 from data_processing import load_health_records, load_iot_records
 from visualization import (create_empty_figure, plot_bar_chart,
                            plot_donut_chart, plot_line_chart)
-
-# --- Page Setup ---
-st.set_page_config(page_title="Field Command Center", page_icon="📡", layout="wide")
+# ==============================================================================
 
 # --- SME ACTIONABILITY UPGRADE: Logging Configuration ---
+# This is also correctly placed after the first Streamlit command.
 logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
 logging.getLogger("prophet").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -36,6 +41,7 @@ PROGRAM_DEFINITIONS = {
     "HIV & STIs": {"icon": "🎗️", "symptom": "fatigue", "test": "HIV Test"},
     "Anemia & NTDs": {"icon": "🩸", "symptom": "fatigue|weakness", "test": "CBC"},
 }
+
 
 # --- SME VISUALIZATION & KPI UPGRADE: Constants ---
 PLOTLY_TEMPLATE = "plotly_white"
