@@ -1,5 +1,5 @@
 # sentinel_project_root/pages/02_Clinic_Dashboard.py
-# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V28 - GATES FOUNDATION STRATEGIC UPGRADE)
+# SME PLATINUM STANDARD - INTEGRATED CLINIC COMMAND CENTER (V29 - DEPRECATION FIX)
 # FULLY ENABLED VERSION - All original code is preserved and expanded with new strategic content.
 
 import logging
@@ -11,6 +11,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from scipy.integrate import trapezoid # SME FIX: Replaced deprecated np.trapz with the correct Scipy function
 
 # --- Core Sentinel Imports ---
 # Assumed to exist and work as described
@@ -49,11 +50,13 @@ PROGRAM_DEFINITIONS = {
 def predict_diagnosis_hotspots(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or 'diagnosis' not in df.columns or 'encounter_date' not in df.columns:
         return pd.DataFrame(columns=['diagnosis', 'predicted_cases', 'resource_needed'])
-    diagnoses = df['diagnosis'].dropna().unique()
+    # Ensure encounter_date is datetime
+    df['encounter_date'] = pd.to_datetime(df['encounter_date'])
+    top_diagnoses = df['diagnosis'].dropna().unique()
     weekly_counts = df.groupby([pd.Grouper(key='encounter_date', freq='W-MON'), 'diagnosis']).size().unstack(fill_value=0)
     last_week_avg = weekly_counts.iloc[-1] if len(weekly_counts) >= 1 else weekly_counts.mean()
     resource_map = {"Malaria": "Malaria RDTs", "Tuberculosis": "TB Test Kits", "Anemia": "CBC Vials", "HIV": "HIV Test Kits", "Default": "General Supplies"}
-    predictions = [{'diagnosis': diag, 'predicted_cases': max(0, int(last_week_avg.get(diag, 0) * np.random.uniform(0.8, 1.3))), 'resource_needed': resource_map.get(diag, resource_map["Default"])} for diag in diagnoses]
+    predictions = [{'diagnosis': diag, 'predicted_cases': max(0, int(last_week_avg.get(diag, 0) * np.random.uniform(0.8, 1.3))), 'resource_needed': resource_map.get(diag, resource_map["Default"])} for diag in top_diagnoses]
     return pd.DataFrame(predictions)
 
 def generate_moving_average_forecast(df: pd.DataFrame, days_to_forecast: int, window: int) -> pd.DataFrame:
@@ -77,7 +80,6 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame]:
             'patient_id': [f'PAT_{i}' for i in np.random.randint(1000, 2000, 1000)],
         })
     
-    # Ensure all required columns exist, adding dummy data if necessary
     required_cols = {
         'ai_risk_score': np.random.uniform(0, 100, len(health_df)),
         'patient_wait_time': np.random.uniform(5, 60, len(health_df)),
@@ -111,9 +113,7 @@ def _render_custom_indicator(title: str, value: str, state: str, help_text: str)
     border_color = color_map.get(state, "#6c757d")
     st.markdown(f"""<div style="border: 1px solid #e1e4e8; border-left: 5px solid {border_color}; border-radius: 5px; padding: 10px; margin-bottom: 10px;"><div style="font-size: 0.9em; color: #586069;">{title}</div><div style="font-size: 1.5em; font-weight: bold; color: {border_color};">{value}</div></div>""", unsafe_allow_html=True, help=help_text)
 
-# ==============================================================================
-# ORIGINAL UI RENDERING COMPONENTS
-# ==============================================================================
+# --- UI Rendering Components ---
 def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: date, end_date: date):
     st.header("🚀 Clinic Overview")
     with st.container(border=True):
@@ -158,7 +158,8 @@ def render_overview_tab(df: pd.DataFrame, full_df: pd.DataFrame, start_date: dat
                 st.plotly_chart(fig, use_container_width=True)
                 with st.expander("📝 Show Recommended Actions"):
                     for _, row in predicted_trends.nlargest(3, 'predicted_cases').iterrows():
-                        st.markdown(f"- **Prepare for {row['predicted_cases']} `{row['diagnosis']}` cases.** Key resource: `{row['resource_needed']}`.")
+                        if row['predicted_cases'] > 0:
+                            st.markdown(f"- **Prepare for ~{row['predicted_cases']} `{row['diagnosis']}` cases.** Key resource: `{row['resource_needed']}`.")
                     st.markdown("- Review staffing schedules to align with predicted patient load.")
             else:
                 st.info("Insufficient data to generate diagnosis predictions.")
@@ -226,9 +227,6 @@ def render_efficiency_tab(df: pd.DataFrame):
         st.plotly_chart(fig_line, use_container_width=True)
         st.caption("Actionability: Consider reallocating staff to the peak hours identified above to reduce wait times.")
 
-# ==============================================================================
-# SME GATES FOUNDATION UPGRADE: Original render functions expanded with new content
-# ==============================================================================
 def render_demographics_tab(df: pd.DataFrame):
     st.header("🧑‍🤝‍🧑 Population Health Intelligence")
     st.markdown("Analyze demographic segments to identify high-risk groups and their specific clinical needs, guiding targeted interventions.")
@@ -251,12 +249,12 @@ def render_demographics_tab(df: pd.DataFrame):
     col1, col2 = st.columns(2, gap="large")
     with col1:
         st.subheader("Comparative Breakdown")
-        demo_counts = df_unique.groupby(['age_group', 'gender']).size().reset_index(name='count')
+        demo_counts = df_unique.groupby(['age_group', 'gender'], observed=True).size().reset_index(name='count')
         fig_vol = px.bar(demo_counts, x='age_group', y='count', color='gender', barmode='group', title="<b>Patient Volume by Age & Gender</b>", category_orders={'age_group': age_labels + ['Not Recorded']}, color_discrete_map=GENDER_COLORS)
         fig_vol.update_layout(template=PLOTLY_TEMPLATE, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig_vol, use_container_width=True)
         
-        risk_by_demo = df_unique.groupby(['age_group', 'gender'])['ai_risk_score'].mean().reset_index()
+        risk_by_demo = df_unique.groupby(['age_group', 'gender'], observed=True)['ai_risk_score'].mean().reset_index()
         fig_risk = px.bar(risk_by_demo, x='age_group', y='ai_risk_score', color='gender', barmode='group', title="<b>Average AI Risk Score by Age & Gender</b>", category_orders={'age_group': age_labels + ['Not Recorded']}, color_discrete_map=GENDER_COLORS)
         fig_risk.update_layout(template=PLOTLY_TEMPLATE, yaxis_title="Avg. Risk Score", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         fig_risk.update_yaxes(range=[0, 100])
@@ -265,7 +263,7 @@ def render_demographics_tab(df: pd.DataFrame):
     with col2:
         st.subheader("🎯 Actionable Insight Engine")
         
-        demo_agg = df_unique.groupby(['age_group', 'gender']).agg(patient_volume=('patient_id', 'count'), avg_risk_score=('ai_risk_score', 'mean'), high_risk_count=('ai_risk_score', lambda x: (x >= 65).sum())).reset_index()
+        demo_agg = df_unique.groupby(['age_group', 'gender'], observed=True).agg(patient_volume=('patient_id', 'count'), avg_risk_score=('ai_risk_score', 'mean'), high_risk_count=('ai_risk_score', lambda x: (x >= 65).sum())).reset_index()
         demo_agg['segment'] = demo_agg['gender'] + ', ' + demo_agg['age_group']
 
         if not demo_agg.empty:
@@ -280,7 +278,6 @@ def render_demographics_tab(df: pd.DataFrame):
             with st.expander("Show Population Health Data Engine"):
                 st.dataframe(demo_agg.sort_values('high_risk_count', ascending=False).set_index('segment'))
             
-            # --- SME GATES FOUNDATION UPGRADE: "Data for Policy" module added ---
             st.subheader("📖 Data for Policy & Program Design")
             st.info("Translating demographic insights into actionable policy and program design recommendations.", icon="💡")
 
@@ -295,9 +292,12 @@ def render_demographics_tab(df: pd.DataFrame):
                     diagnoses_in_critical_segment = df[df['patient_id'].isin(critical_patients_df['patient_id'])]['diagnosis'].value_counts().nlargest(3)
                     with st.container(border=True):
                         st.markdown("#### Generated Recommendations:")
-                        st.markdown(f"- **Policy Consideration:** Launch a targeted public health awareness campaign for **{diagnoses_in_critical_segment.index[0]}** prevention, specifically aimed at the **{critical_gender}, {critical_age}** demographic in this region.")
-                        st.markdown(f"- **Programmatic Action:** Allocate additional CHW resources for proactive screening within the **{critical_gender}, {critical_age}** cohort, focusing on symptoms related to **{diagnoses_in_critical_segment.index[0]}** and **{diagnoses_in_critical_segment.index[1]}**.")
-                        st.markdown(f"- **Supply Chain:** Pre-position test kits and treatments for **{diagnoses_in_critical_segment.index[0]}** at clinics serving this demographic to preempt stockouts.")
+                        if len(diagnoses_in_critical_segment) >= 2:
+                            st.markdown(f"- **Policy Consideration:** Launch a targeted public health awareness campaign for **{diagnoses_in_critical_segment.index[0]}** prevention, specifically aimed at the **{critical_gender}, {critical_age}** demographic in this region.")
+                            st.markdown(f"- **Programmatic Action:** Allocate additional CHW resources for proactive screening within the **{critical_gender}, {critical_age}** cohort, focusing on symptoms related to **{diagnoses_in_critical_segment.index[0]}** and **{diagnoses_in_critical_segment.index[1]}**.")
+                            st.markdown(f"- **Supply Chain:** Pre-position test kits and treatments for **{diagnoses_in_critical_segment.index[0]}** at clinics serving this demographic to preempt stockouts.")
+                        else:
+                            st.warning("Not enough diagnosis diversity in the critical segment to generate multi-faceted recommendations.")
                 else:
                     st.warning("Could not generate specific diagnosis breakdown for the critical segment.")
             else:
@@ -334,7 +334,8 @@ def render_forecasting_tab(df: pd.DataFrame):
             if final_forecast_df['ds'].dt.tz is not None: final_forecast_df['ds'] = final_forecast_df['ds'].dt.tz_localize(None)
             last_historical_date = df['encounter_date'].max().to_pydatetime().replace(tzinfo=None)
             future_fc = final_forecast_df[final_forecast_df['ds'] > last_historical_date]
-            total_predicted_patients, total_workload_hours = future_fc['yhat'].sum(), (future_fc['yhat'].sum() * avg_consult_time_min) / 60
+            total_predicted_patients = future_fc['yhat'].sum()
+            total_workload_hours = (total_predicted_patients * avg_consult_time_min) / 60
             required_fte = total_workload_hours / (staff_hours_per_day * forecast_days) if forecast_days > 0 else 0
             capacity_fte = st.number_input("Current Available Clinical FTE:", min_value=1.0, value=5.0, step=0.5, key="capacity_fte")
             utilization = (required_fte / capacity_fte * 100) if capacity_fte > 0 else 0
@@ -352,24 +353,16 @@ def render_forecasting_tab(df: pd.DataFrame):
             else: st.success(f"✅ **Healthy Capacity:** Workload is manageable at {utilization:.1f}% of capacity.")
         else: st.info("Run forecast to see capacity predictions.")
 
-    # --- SME GATES FOUNDATION UPGRADE: Investment ROI Analysis ---
     with st.expander("Show Investment ROI Analysis"):
         st.subheader("Cost of Inaction vs. Investment ROI")
         st.info("This module makes a data-driven financial case for sustainable staffing.", icon="💰")
-        if not final_forecast_df.empty:
-            # Re-calculating for clarity within this module
-            required_fte = 5.8 # Placeholder from above
-            capacity_fte = 5.0 # Placeholder from above
-            surplus_deficit = capacity_fte - required_fte
-
+        if not final_forecast_df.empty and 'required_fte' in locals():
+            surplus_deficit = locals().get('surplus_deficit', 0)
             if surplus_deficit < 0:
                 cost_per_fte_monthly = 2000 # Assumption
                 investment_needed = abs(surplus_deficit) * cost_per_fte_monthly
-                
-                # Assume 10% lower quality score due to burnout/overwork leads to tangible costs
-                cost_of_inaction = 0.10 * 50000 # 10% of a hypothetical monthly budget
+                cost_of_inaction = 0.10 * 50000 
                 roi = ((cost_of_inaction - investment_needed) / investment_needed) * 100 if investment_needed > 0 else 0
-                
                 st.markdown(f"The model predicts a staffing deficit of **{abs(surplus_deficit):.2f} FTEs** over the next 30 days.")
                 st.markdown(f"To maintain quality of care, an investment of **${investment_needed:,.0f}** is recommended to hire temporary or full-time staff.")
                 st.markdown(f"The estimated 'cost of inaction' (due to burnout, lower patient satisfaction, and reduced quality of care) is **~${cost_of_inaction:,.0f}**.")
@@ -393,13 +386,13 @@ def render_environment_tab(iot_df: pd.DataFrame):
     with col2: _render_custom_indicator("Rooms with High Noise (>70dB)", f"{high_noise_rooms} rooms", noise_state, "High noise levels can impact patient comfort and staff communication.")
     st.divider()
     st.subheader("Hourly CO₂ Trend (Ventilation Proxy)")
+    iot_df['timestamp'] = pd.to_datetime(iot_df['timestamp'])
     co2_trend = iot_df.set_index('timestamp').resample('h')['avg_co2_ppm'].mean().dropna()
     fig = px.line(co2_trend, title="<b>Hourly Average CO₂ Trend</b>", labels={'value': 'CO₂ (PPM)', 'timestamp': 'Time'})
     fig.add_hline(y=1000, line_dash="dot", line_color="orange", annotation_text="High Risk Threshold")
     fig.update_layout(template=PLOTLY_TEMPLATE, title_x=0.5, showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- SME GATES FOUNDATION UPGRADE: Scalability & Replication Blueprint ---
     st.divider()
     st.subheader("📄 Scalability & Replication Blueprint")
     st.info("This section summarizes the key environmental and operational parameters of a high-performing clinic, providing a data-driven template for scaling success to new locations.", icon="📋")
@@ -416,9 +409,6 @@ def render_environment_tab(iot_df: pd.DataFrame):
             st.markdown("- **Supply Chain:** Predictive modeling to maintain a minimum of 14 days of safety stock for key resources.")
 
 
-# ==============================================================================
-# SME GATES FOUNDATION UPGRADE: New Component for Health System Scorecard Tab
-# ==============================================================================
 def render_system_scorecard_tab(df: pd.DataFrame, iot_df: pd.DataFrame):
     st.header("🏆 Health System Scorecard")
     st.markdown("An executive summary translating operational metrics into a measure of overall health system strength, resilience, and quality.")
@@ -427,21 +417,20 @@ def render_system_scorecard_tab(df: pd.DataFrame, iot_df: pd.DataFrame):
         st.warning("Insufficient data to generate a Health System Scorecard.")
         return
 
-    # 1. Clinical Quality Score
     high_risk_patients = df[df['ai_risk_score'] >= 65]
     linkage_rate = (high_risk_patients['referral_status'] == 'Completed').mean() if not high_risk_patients.empty else 0
     wait_time_score = max(0, 1 - (df['patient_wait_time'].mean() / 60))
     quality_score = (linkage_rate * 0.7 + wait_time_score * 0.3) * 100
 
-    # 2. Patient Experience & Trust Score
     satisfaction_score = (df['patient_satisfaction'].mean() / 5)
     visits_per_patient = df['patient_id'].value_counts()
     lorenz_curve = np.cumsum(np.sort(visits_per_patient.values)) / visits_per_patient.sum()
-    gini = (0.5 - np.trapz(lorenz_curve, dx=1/len(lorenz_curve))) / 0.5 if len(lorenz_curve) > 1 else 1
+    # SME FIX: Use the corrected trapezoid function
+    area_under_lorenz = trapezoid(lorenz_curve, dx=1/len(lorenz_curve)) if len(lorenz_curve) > 1 else 0.5
+    gini = (0.5 - area_under_lorenz) / 0.5
     trust_score = (satisfaction_score * 0.6 + (1 - gini) * 0.4) * 100
 
-    # 3. Data & Infrastructure Maturity Score
-    cold_chain_uptime = 1.0 # Default
+    cold_chain_uptime = 1.0
     if not iot_df.empty and 'temperature' in iot_df.columns:
         cold_chain_uptime = 1 - ((iot_df['temperature'] < 2) | (iot_df['temperature'] > 8)).mean()
     data_completeness = 1 - (st.session_state.get('using_dummy_ai_risk_score', False) * 0.5 + st.session_state.get('using_dummy_patient_wait_time', False) * 0.5)
@@ -476,13 +465,12 @@ def main():
     full_health_df, full_iot_df = get_data()
     if full_health_df.empty: st.error("CRITICAL: No health data available. Dashboard cannot be rendered."); st.stop()
     
-    # Display dummy data warnings if applicable
-    if st.session_state.get('using_dummy_ai_risk_score'): st.warning("⚠️ **Risk Demo Mode:** `ai_risk_score` was not found and has been simulated.", icon="🤖")
-    if st.session_state.get('using_dummy_patient_wait_time'): st.warning("⚠️ **Efficiency Demo Mode:** Wait/consultation times were not found and have been simulated.", icon="⏱️")
+    for key, val in st.session_state.items():
+        if key.startswith('using_dummy_') and val:
+            st.warning(f"⚠️ **Demo Mode:** `{key.replace('using_dummy_', '')}` data was not found and has been simulated.", icon="🤖")
 
     with st.sidebar:
         st.header("Filters")
-        # Ensure encounter_date is datetime for min/max
         full_health_df['encounter_date'] = pd.to_datetime(full_health_df['encounter_date'])
         min_date, max_date = full_health_df['encounter_date'].min().date(), full_health_df['encounter_date'].max().date()
         start_date, end_date = st.date_input("Select Date Range:", value=(max(min_date, max_date - timedelta(days=29)), max_date), min_value=min_date, max_value=max_date, key="clinic_date_range")
@@ -496,7 +484,6 @@ def main():
     st.info(f"**Displaying Clinic Data For:** `{start_date:%d %b %Y}` to `{end_date:%d %b %Y}`")
     st.divider()
     
-    # --- SME GATES FOUNDATION UPGRADE: Add new scorecard tab to the config ---
     TABS_CONFIG = {
         "System Scorecard": {"icon": "🏆", "func": render_system_scorecard_tab, "args": [period_health_df, period_iot_df]},
         "Overview": {"icon": "🚀", "func": render_overview_tab, "args": [period_health_df, full_health_df, start_date, end_date]},
@@ -510,9 +497,8 @@ def main():
     
     all_tabs_list = list(TABS_CONFIG.items())
     program_items = list(program_tabs.items())
-    all_tabs_list.insert(2, ("Disease Programs", program_items)) # Insert as a single item
+    all_tabs_list.insert(2, ("Disease Programs", program_items))
     
-    # Create main tabs, handling the nested structure for programs
     main_tab_titles = [f"{conf['icon']} {name}" if name != "Disease Programs" else "🔬 Disease Programs" for name, conf in all_tabs_list]
     tabs = st.tabs(main_tab_titles)
 
